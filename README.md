@@ -22,6 +22,7 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 ## Features
 
 - Automatische Erkennung und Sperre bei Rate-Limit-Verstößen
+- **Progressive Sperren (Recidive)** — Wiederholungstäter werden stufenweise länger gesperrt (wie bei fail2ban)
 - Unterstützt **alle DNS-Protokolle**: DNS (53), DoH (443), DoT (853), DoQ (784/853/8853)
 - **IPv4 + IPv6**
 - Eigene iptables Chain — greift nicht in bestehende Regeln ein
@@ -79,6 +80,7 @@ sudo /opt/adguard-shield/adguard-shield.sh status             # Aktive Sperren a
 sudo /opt/adguard-shield/adguard-shield.sh history            # Ban-History anzeigen
 sudo /opt/adguard-shield/adguard-shield.sh unban IP           # Einzelne IP entsperren
 sudo /opt/adguard-shield/adguard-shield.sh flush              # Alle Sperren aufheben
+sudo /opt/adguard-shield/adguard-shield.sh reset-offenses     # Offense-Zähler zurücksetzen
 sudo /opt/adguard-shield/adguard-shield.sh test               # API-Verbindung testen
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-status   # Externe Blocklisten Status
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync     # Blocklisten manuell synchronisieren

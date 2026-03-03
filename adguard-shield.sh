@@ -9,7 +9,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 
 set -euo pipefail
 
@@ -78,6 +78,7 @@ log_ban_history() {
     local domain="${3:-}"
     local count="${4:-}"
     local reason="${5:-}"
+    local duration="${6:-}"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -88,12 +89,128 @@ log_ban_history() {
         echo "#───────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
     fi
 
-    local duration="-"
-    [[ "$action" == "BAN" ]] && duration="${BAN_DURATION}s"
+    if [[ -z "$duration" && "$action" == "BAN" ]]; then
+        duration="${BAN_DURATION}s"
+    fi
+    [[ -z "$duration" ]] && duration="-"
 
     printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %s\n" \
         "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "$duration" "${reason:-rate-limit}" \
         >> "$BAN_HISTORY_FILE"
+}
+
+# ─── Progressive Ban (Recidive) ─────────────────────────────────────────────
+# Liest die aktuelle Offense-Stufe einer IP aus der Offense-Datei
+get_offense_level() {
+    local client_ip="$1"
+    local offense_file="${STATE_DIR}/${client_ip//[:\/]/_}.offenses"
+
+    if [[ ! -f "$offense_file" ]]; then
+        echo "0"
+        return
+    fi
+
+    local level last_offense now reset_after
+    level=$(grep '^OFFENSE_LEVEL=' "$offense_file" | cut -d= -f2)
+    last_offense=$(grep '^LAST_OFFENSE_EPOCH=' "$offense_file" | cut -d= -f2)
+    now=$(date '+%s')
+    reset_after="${PROGRESSIVE_BAN_RESET_AFTER:-86400}"
+
+    # Prüfen ob der Zähler abgelaufen ist (Reset nach Zeitraum ohne Vergehen)
+    if [[ -n "$last_offense" && $((now - last_offense)) -gt "$reset_after" ]]; then
+        log "INFO" "Progressive Ban: Offense-Zähler für $client_ip zurückgesetzt (>${reset_after}s ohne Vergehen)"
+        rm -f "$offense_file"
+        echo "0"
+        return
+    fi
+
+    echo "${level:-0}"
+}
+
+# Erhöht die Offense-Stufe einer IP und gibt die neue Stufe zurück
+increment_offense_level() {
+    local client_ip="$1"
+    local offense_file="${STATE_DIR}/${client_ip//[:\/]/_}.offenses"
+    local current_level
+    current_level=$(get_offense_level "$client_ip")
+    local new_level=$((current_level + 1))
+    local now
+    now=$(date '+%s')
+    local now_readable
+    now_readable=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Erstes Vergehen merken (bevor Datei überschrieben wird)
+    local first_offense
+    first_offense=$(grep '^FIRST_OFFENSE=' "$offense_file" 2>/dev/null | cut -d= -f2)
+    [[ -z "$first_offense" ]] && first_offense="$now_readable"
+
+    cat > "$offense_file" << EOF
+CLIENT_IP=$client_ip
+OFFENSE_LEVEL=$new_level
+LAST_OFFENSE_EPOCH=$now
+LAST_OFFENSE=$now_readable
+FIRST_OFFENSE=$first_offense
+EOF
+
+    echo "$new_level"
+}
+
+# Berechnet die Sperrdauer basierend auf der Offense-Stufe
+calculate_ban_duration() {
+    local offense_level="$1"
+    local base_duration="${BAN_DURATION:-3600}"
+    local multiplier="${PROGRESSIVE_BAN_MULTIPLIER:-2}"
+    local max_level="${PROGRESSIVE_BAN_MAX_LEVEL:-5}"
+
+    # Progressive Bans deaktiviert? → Standard-Dauer
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" != "true" ]]; then
+        echo "$base_duration"
+        return
+    fi
+
+    # Permanente Sperre ab max_level (0 = nie permanent)
+    if [[ "$max_level" -gt 0 && "$offense_level" -ge "$max_level" ]]; then
+        echo "0"  # 0 = permanent
+        return
+    fi
+
+    # Exponentielle Steigerung: base × multiplier^(level-1)
+    # Stufe 1: base × 1, Stufe 2: base × mult, Stufe 3: base × mult², ...
+    if [[ "$offense_level" -le 1 ]]; then
+        echo "$base_duration"
+    else
+        local power=$((offense_level - 1))
+        local factor=1
+        for ((i=0; i<power; i++)); do
+            factor=$((factor * multiplier))
+        done
+        echo $((base_duration * factor))
+    fi
+}
+
+# Formatiert Sekunden in eine lesbare Dauer-Angabe
+format_duration() {
+    local seconds="$1"
+    if [[ "$seconds" -eq 0 ]]; then
+        echo "PERMANENT"
+        return
+    fi
+    if [[ "$seconds" -ge 86400 ]]; then
+        echo "$((seconds / 86400))d $((seconds % 86400 / 3600))h"
+    elif [[ "$seconds" -ge 3600 ]]; then
+        echo "$((seconds / 3600))h $((seconds % 3600 / 60))m"
+    elif [[ "$seconds" -ge 60 ]]; then
+        echo "$((seconds / 60))m $((seconds % 60))s"
+    else
+        echo "${seconds}s"
+    fi
+}
+
+# Setzt den Offense-Zähler einer IP zurück
+reset_offense_level() {
+    local client_ip="$1"
+    local offense_file="${STATE_DIR}/${client_ip//[:\/]/_}.offenses"
+    rm -f "$offense_file"
 }
 
 # ─── Verzeichnisse erstellen ──────────────────────────────────────────────────
@@ -173,8 +290,6 @@ ban_client() {
     local client_ip="$1"
     local domain="$2"
     local count="$3"
-    local ban_until
-    ban_until=$(date -d "+${BAN_DURATION} seconds" '+%s' 2>/dev/null || date -v "+${BAN_DURATION}S" '+%s')
 
     # Prüfen ob bereits gesperrt
     local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
@@ -183,13 +298,48 @@ ban_client() {
         return 0
     fi
 
+    # Progressive Ban: Offense-Level ermitteln und Sperrdauer berechnen
+    local offense_level=0
+    local effective_duration="$BAN_DURATION"
+    local is_permanent=false
+
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        offense_level=$(increment_offense_level "$client_ip")
+        effective_duration=$(calculate_ban_duration "$offense_level")
+
+        if [[ "$effective_duration" -eq 0 ]]; then
+            is_permanent=true
+        fi
+    fi
+
+    local ban_until
+    local ban_until_display
+    if [[ "$is_permanent" == "true" ]]; then
+        ban_until=0  # 0 = permanent
+        ban_until_display="PERMANENT"
+    else
+        ban_until=$(date -d "+${effective_duration} seconds" '+%s' 2>/dev/null || date -v "+${effective_duration}S" '+%s')
+        ban_until_display=$(date -d "@$ban_until" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$ban_until" '+%Y-%m-%d %H:%M:%S')
+    fi
+
+    local duration_display
+    duration_display=$(format_duration "$effective_duration")
+
     if [[ "$DRY_RUN" == "true" ]]; then
-        log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${RATE_LIMIT_WINDOW}s)"
-        log_ban_history "DRY" "$client_ip" "$domain" "$count" "dry-run"
+        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${RATE_LIMIT_WINDOW}s) für ${duration_display} [Stufe $offense_level]"
+        else
+            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${RATE_LIMIT_WINDOW}s)"
+        fi
+        log_ban_history "DRY" "$client_ip" "$domain" "$count" "dry-run" "${duration_display}"
         return 0
     fi
 
-    log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${RATE_LIMIT_WINDOW}s) für ${BAN_DURATION}s"
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${RATE_LIMIT_WINDOW}s) für ${duration_display} [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]"
+    else
+        log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${RATE_LIMIT_WINDOW}s) für ${duration_display}"
+    fi
 
     # IPv4 oder IPv6 erkennen
     if [[ "$client_ip" == *:* ]]; then
@@ -207,15 +357,20 @@ DOMAIN=$domain
 COUNT=$count
 BAN_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 BAN_UNTIL_EPOCH=$ban_until
-BAN_UNTIL=$(date -d "@$ban_until" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$ban_until" '+%Y-%m-%d %H:%M:%S')
+BAN_UNTIL=$ban_until_display
+BAN_DURATION=${effective_duration}
+OFFENSE_LEVEL=$offense_level
+IS_PERMANENT=$is_permanent
 EOF
 
     # Ban-History Eintrag
-    log_ban_history "BAN" "$client_ip" "$domain" "$count" "rate-limit"
+    local history_duration="${duration_display}"
+    [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]] && history_duration="${duration_display} (Stufe ${offense_level})"
+    log_ban_history "BAN" "$client_ip" "$domain" "$count" "rate-limit" "$history_duration"
 
     # Benachrichtigung senden
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
-        send_notification "ban" "$client_ip" "$domain" "$count"
+        send_notification "ban" "$client_ip" "$domain" "$count" "$offense_level" "$duration_display"
     fi
 }
 
@@ -261,6 +416,14 @@ check_expired_bans() {
         ban_until_epoch=$(grep '^BAN_UNTIL_EPOCH=' "$state_file" | cut -d= -f2)
         local client_ip
         client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
+        local is_permanent
+        is_permanent=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2)
+
+        # Permanente Sperren nicht automatisch aufheben
+        if [[ "$is_permanent" == "true" || "$ban_until_epoch" == "0" ]]; then
+            log "DEBUG" "Client $client_ip ist permanent gesperrt – überspringe"
+            continue
+        fi
 
         if [[ -n "$ban_until_epoch" && "$now" -ge "$ban_until_epoch" ]]; then
             unban_client "$client_ip" "expired"
@@ -274,12 +437,23 @@ send_notification() {
     local client_ip="$2"
     local domain="$3"
     local count="$4"
+    local offense_level="${5:-}"
+    local duration_display="${6:-}"
 
-    [[ -z "$NOTIFY_WEBHOOK_URL" ]] && return
+    # Ntfy benötigt keine Webhook-URL (nutzt NTFY_SERVER_URL + NTFY_TOPIC)
+    if [[ "$NOTIFY_TYPE" != "ntfy" && -z "$NOTIFY_WEBHOOK_URL" ]]; then
+        return
+    fi
 
     local message
     if [[ "$action" == "ban" ]]; then
-        message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${RATE_LIMIT_WINDOW}s). Sperre für ${BAN_DURATION}s."
+        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -n "$offense_level" ]]; then
+            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${RATE_LIMIT_WINDOW}s). Sperre für **${duration_display}** [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]."
+        else
+            local simple_dur
+            simple_dur=$(format_duration "${BAN_DURATION}")
+            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${RATE_LIMIT_WINDOW}s). Sperre für ${simple_dur}."
+        fi
     else
         message="✅ AdGuard Shield: Client **$client_ip** wurde entsperrt."
     fi
@@ -470,24 +644,71 @@ show_status() {
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 
+    # Progressive Ban Info
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        echo "  📈 Progressive Sperren: AKTIV"
+        echo "     Multiplikator: ×${PROGRESSIVE_BAN_MULTIPLIER:-2}"
+        echo "     Max-Stufe: ${PROGRESSIVE_BAN_MAX_LEVEL:-0} (0=kein Limit)"
+        echo "     Zähler-Reset: $(format_duration "${PROGRESSIVE_BAN_RESET_AFTER:-86400}") ohne Vergehen"
+        echo ""
+    fi
+
     # Aktive Sperren
     local ban_count=0
     if [[ -d "$STATE_DIR" ]]; then
         for state_file in "${STATE_DIR}"/*.ban; do
             [[ -f "$state_file" ]] || continue
             ban_count=$((ban_count + 1))
-            echo "  🚫 Gesperrt:"
-            while IFS='=' read -r key value; do
-                printf "     %-20s %s\n" "$key:" "$value"
-            done < "$state_file"
-            echo ""
+            local s_ip s_domain s_level s_perm s_dur s_until
+            s_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
+            s_domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2)
+            s_level=$(grep '^OFFENSE_LEVEL=' "$state_file" | cut -d= -f2)
+            s_perm=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2)
+            s_dur=$(grep '^BAN_DURATION=' "$state_file" | cut -d= -f2)
+            s_until=$(grep '^BAN_UNTIL=' "$state_file" | cut -d= -f2)
+
+            if [[ "$s_perm" == "true" ]]; then
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT, Stufe ${s_level:-?}]"
+            elif [[ -n "$s_level" && "$s_level" -gt 0 ]]; then
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [Stufe ${s_level}, $(format_duration "${s_dur:-$BAN_DURATION}"), bis $s_until]"
+            else
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [bis $s_until]"
+            fi
         done
     fi
 
+    echo ""
     if [[ $ban_count -eq 0 ]]; then
         echo "  ✅ Keine aktiven Sperren"
     else
         echo "  Gesamt: $ban_count aktive Sperren"
+    fi
+
+    # Offense-Informationen anzeigen (Wiederholungstäter)
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -d "$STATE_DIR" ]]; then
+        local offense_count=0
+        local offense_output=""
+        for offense_file in "${STATE_DIR}"/*.offenses; do
+            [[ -f "$offense_file" ]] || continue
+            local o_ip o_level o_last
+            o_ip=$(grep '^CLIENT_IP=' "$offense_file" | cut -d= -f2)
+            o_level=$(grep '^OFFENSE_LEVEL=' "$offense_file" | cut -d= -f2)
+            o_last=$(grep '^LAST_OFFENSE=' "$offense_file" | cut -d= -f2)
+            offense_count=$((offense_count + 1))
+            local next_dur
+            next_dur=$(calculate_ban_duration "$((o_level + 1))")
+            if [[ "$next_dur" -eq 0 ]]; then
+                offense_output+="     ⚠ $o_ip: Stufe $o_level (letztes Vergehen: $o_last) → nächste Sperre: PERMANENT\n"
+            else
+                offense_output+="     ⚠ $o_ip: Stufe $o_level (letztes Vergehen: $o_last) → nächste Sperre: $(format_duration "$next_dur")\n"
+            fi
+        done
+
+        if [[ $offense_count -gt 0 ]]; then
+            echo ""
+            echo "  📋 Wiederholungstäter ($offense_count IPs mit Vorgeschichte):"
+            echo -e "$offense_output"
+        fi
     fi
 
     echo ""
@@ -557,6 +778,21 @@ flush_all_bans() {
     log "INFO" "Alle Sperren aufgehoben"
 }
 
+# ─── Alle Offense-Zähler zurücksetzen ────────────────────────────────────────
+flush_all_offenses() {
+    local count=0
+    for offense_file in "${STATE_DIR}"/*.offenses; do
+        [[ -f "$offense_file" ]] || continue
+        local o_ip
+        o_ip=$(grep '^CLIENT_IP=' "$offense_file" | cut -d= -f2)
+        log "INFO" "Offense-Zähler zurückgesetzt: $o_ip"
+        rm -f "$offense_file"
+        count=$((count + 1))
+    done
+    log "INFO" "$count Offense-Zähler zurückgesetzt"
+    echo "$count Offense-Zähler zurückgesetzt"
+}
+
 # ─── Externer Blocklist-Worker starten ───────────────────────────────────────
 start_blocklist_worker() {
     if [[ "${EXTERNAL_BLOCKLIST_ENABLED:-false}" != "true" ]]; then
@@ -595,11 +831,16 @@ main_loop() {
     log "INFO" "═══════════════════════════════════════════════════════════"
     log "INFO" "AdGuard Shield v${VERSION} gestartet"
     log "INFO" "  Limit: ${RATE_LIMIT_MAX_REQUESTS} Anfragen pro ${RATE_LIMIT_WINDOW}s"
-    log "INFO" "  Sperrdauer: ${BAN_DURATION}s"
+    log "INFO" "  Sperrdauer: $(format_duration "${BAN_DURATION}")"
     log "INFO" "  Prüfintervall: ${CHECK_INTERVAL}s"
     log "INFO" "  Dry-Run: ${DRY_RUN}"
     log "INFO" "  Whitelist: ${WHITELIST}"
     log "INFO" "  Externe Blocklist: ${EXTERNAL_BLOCKLIST_ENABLED:-false}"
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        log "INFO" "  Progressive Sperren: AKTIV (×${PROGRESSIVE_BAN_MULTIPLIER:-2}, Max-Stufe: ${PROGRESSIVE_BAN_MAX_LEVEL:-0}, Reset: $(format_duration "${PROGRESSIVE_BAN_RESET_AFTER:-86400}"))"
+    else
+        log "INFO" "  Progressive Sperren: deaktiviert"
+    fi
     log "INFO" "═══════════════════════════════════════════════════════════"
 
     # Blocklist-Worker als Hintergrundprozess starten
@@ -680,6 +921,15 @@ case "${1:-start}" in
         flush_all_bans
         echo "Alle Sperren aufgehoben"
         ;;
+    reset-offenses)
+        init_directories
+        if [[ -n "${2:-}" ]]; then
+            reset_offense_level "$2"
+            echo "Offense-Zähler für $2 zurückgesetzt"
+        else
+            flush_all_offenses
+        fi
+        ;;
     unban)
         if [[ -z "${2:-}" ]]; then
             echo "Nutzung: $0 unban <IP-Adresse>" >&2
@@ -718,15 +968,16 @@ case "${1:-start}" in
         cat << USAGE
 AdGuard Shield v${VERSION}
 
-Nutzung: $0 {start|stop|status|history|flush|unban|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush}
+Nutzung: $0 {start|stop|status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush}
 
 Befehle:
   start              Startet den Monitor (inkl. Blocklist-Worker)
   stop               Stoppt den Monitor
-  status             Zeigt aktive Sperren und Regeln
+  status             Zeigt aktive Sperren, Regeln und Wiederholungstäter
   history [N]        Zeigt die letzten N Ban-Einträge (Standard: 50)
   flush              Hebt alle Sperren auf
   unban IP           Entsperrt eine bestimmte IP-Adresse
+  reset-offenses [IP] Setzt Offense-Zähler zurück (alle oder eine bestimmte IP)
   test               Testet die Verbindung zur AdGuard Home API
   dry-run            Startet im Testmodus (keine echten Sperren)
   blocklist-status   Zeigt Status der externen Blocklisten

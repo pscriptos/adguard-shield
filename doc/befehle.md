@@ -73,6 +73,12 @@ sudo /opt/adguard-shield/adguard-shield.sh test
 # Dry-Run (nur loggen, nichts sperren)
 sudo /opt/adguard-shield/adguard-shield.sh dry-run
 
+# Offense-Zähler für alle IPs zurücksetzen (Progressive Sperren)
+sudo /opt/adguard-shield/adguard-shield.sh reset-offenses
+
+# Offense-Zähler für eine bestimmte IP zurücksetzen
+sudo /opt/adguard-shield/adguard-shield.sh reset-offenses 192.168.1.100
+
 # Externe Blocklist - Status anzeigen
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-status
 

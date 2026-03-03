@@ -34,11 +34,13 @@
 3. Die Anfragen werden pro Client+Domain-Kombination gezählt
 4. Monitor erkennt: 45 > 30 (Limit überschritten)
 5. Prüfung: Ist der Client auf der Whitelist? → Nein
-6. iptables-Regel wird erstellt: `DROP` für `192.168.1.50` auf allen DNS-Ports
-7. State-Datei wird angelegt: `/var/lib/adguard-shield/192.168.1.50.ban`
-8. Ban-History Eintrag wird in `/var/log/adguard-shield-bans.log` geschrieben
-9. Log-Eintrag + optionale Webhook-Benachrichtigung
-10. Nach 3600 Sekunden (1 Stunde): automatische Entsperrung + History-Eintrag
+6. **Progressive Sperren:** Offense-Level wird geprüft/erhöht, Sperrdauer berechnet
+7. iptables-Regel wird erstellt: `DROP` für `192.168.1.50` auf allen DNS-Ports
+8. State-Datei wird angelegt: `/var/lib/adguard-shield/192.168.1.50.ban`
+9. Offense-Datei wird aktualisiert: `/var/lib/adguard-shield/192.168.1.50.offenses`
+10. Ban-History Eintrag wird in `/var/log/adguard-shield-bans.log` geschrieben
+11. Log-Eintrag + optionale Webhook-Benachrichtigung
+12. Nach Ablauf der (progressiven) Sperrdauer: automatische Entsperrung + History-Eintrag
 
 ## iptables Strategie
 
@@ -82,12 +84,31 @@ COUNT=45
 BAN_TIME=2026-03-03 14:30:00
 BAN_UNTIL_EPOCH=1741012200
 BAN_UNTIL=2026-03-03 15:30:00
+BAN_DURATION=3600
+OFFENSE_LEVEL=1
+IS_PERMANENT=false
+```
+
+Zusätzlich wird für jede IP ein Offense-Tracker gespeichert:
+
+```
+/var/lib/adguard-shield/192.168.1.50.offenses
+```
+
+Inhalt:
+```
+CLIENT_IP=192.168.1.50
+OFFENSE_LEVEL=2
+LAST_OFFENSE_EPOCH=1741008600
+LAST_OFFENSE=2026-03-03 14:30:00
+FIRST_OFFENSE=2026-03-03 12:15:00
 ```
 
 Das ermöglicht:
 - Persistenz über Script-Neustarts hinweg
 - Statusabfragen jederzeit möglich
 - Automatisches Aufräumen per Cron-Job
+- Progressive Sperrzeiten über mehrere Ban-Zyklen hinweg
 
 ## Dateistruktur nach Installation
 
@@ -105,6 +126,7 @@ Das ermöglicht:
 
 /var/lib/adguard-shield/
 ├── *.ban                          # State-Dateien aktiver Sperren
+├── *.offenses                     # Offense-Zähler (Progressive Sperren)
 └── external-blocklist/            # Cache für externe Blocklisten
 
 /var/log/

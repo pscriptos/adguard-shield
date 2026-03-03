@@ -41,10 +41,33 @@ Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austausche
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
-| `BAN_DURATION` | `3600` | Sperrdauer in Sekunden (3600 = 1 Stunde) |
+| `BAN_DURATION` | `3600` | Basis-Sperrdauer in Sekunden (3600 = 1 Stunde) |
 | `IPTABLES_CHAIN` | `ADGUARD_SHIELD` | Name der iptables Chain |
-| `BLOCKED_PORTS` | `53 443 853 784 8853` | Ports die gesperrt werden |
+| `BLOCKED_PORTS` | `53 443 853` | Ports die gesperrt werden (IPv4 + IPv6) |
 | `WHITELIST` | `127.0.0.1,::1` | IPs die nie gesperrt werden (kommagetrennt) |
+
+### Progressive Sperren (Recidive)
+
+Wiederholungstäter werden wie bei fail2ban stufenweise länger gesperrt. Wird eine IP nach dem Ablauf ihrer Sperre erneut auffällig, steigt die Sperrdauer exponentiell.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `PROGRESSIVE_BAN_ENABLED` | `true` | Progressive Sperren aktivieren |
+| `PROGRESSIVE_BAN_MULTIPLIER` | `2` | Multiplikator pro Stufe (2 = Verdopplung) |
+| `PROGRESSIVE_BAN_MAX_LEVEL` | `5` | Ab dieser Stufe wird permanent gesperrt (0 = nie) |
+| `PROGRESSIVE_BAN_RESET_AFTER` | `86400` | Zähler-Reset nach X Sekunden ohne Vergehen (86400 = 24h) |
+
+#### Beispiel bei Standardwerten
+
+| Vergehen | Stufe | Sperrdauer | Berechnung |
+|----------|-------|------------|------------|
+| 1. Mal   | 1     | 1 Stunde   | 3600 × 1   |
+| 2. Mal   | 2     | 2 Stunden  | 3600 × 2   |
+| 3. Mal   | 3     | 4 Stunden  | 3600 × 4   |
+| 4. Mal   | 4     | 8 Stunden  | 3600 × 8   |
+| 5. Mal   | 5     | **PERMANENT** | Max-Stufe erreicht |
+
+> **Hinweis:** Der Offense-Zähler wird automatisch zurückgesetzt, wenn eine IP für den konfigurierten Zeitraum (`PROGRESSIVE_BAN_RESET_AFTER`) kein erneutes Vergehen begeht. Permanente Sperren werden **nicht** automatisch aufgehoben – sie müssen manuell mit `unban` oder `flush` entfernt werden.
 
 ### Logging
 
@@ -59,9 +82,13 @@ Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austausche
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
-| `NOTIFY_ENABLED` | `false` | Webhook-Benachrichtigungen aktivieren |
-| `NOTIFY_WEBHOOK_URL` | *(leer)* | Webhook-URL |
-| `NOTIFY_TYPE` | `generic` | Typ: `discord`, `slack`, `gotify`, `generic` |
+| `NOTIFY_ENABLED` | `false` | Benachrichtigungen aktivieren |
+| `NOTIFY_TYPE` | `ntfy` | Typ: `ntfy`, `discord`, `slack`, `gotify`, `generic` |
+| `NOTIFY_WEBHOOK_URL` | *(leer)* | Webhook-URL (nur für discord, slack, gotify, generic) |
+| `NTFY_SERVER_URL` | `https://ntfy.sh` | Ntfy Server-URL |
+| `NTFY_TOPIC` | *(leer)* | Ntfy Topic-Name |
+| `NTFY_TOKEN` | *(leer)* | Optionaler Ntfy Access-Token |
+| `NTFY_PRIORITY` | `4` | Ntfy Priorität (1–5) |
 
 ### Erweitert
 
@@ -75,7 +102,7 @@ Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austausche
 Ermöglicht das Einbinden externer IP-Blocklisten (z.B. gehostete Textdateien mit einer IP pro Zeile). Der Worker läuft als Hintergrundprozess und prüft periodisch auf Änderungen.
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|}--------------|
+|-----------|----------|--------------|
 | `EXTERNAL_BLOCKLIST_ENABLED` | `false` | Aktiviert den externen Blocklist-Worker |
 | `EXTERNAL_BLOCKLIST_URLS` | *(leer)* | URL(s) zu Textdateien mit IPs (kommagetrennt) |
 | `EXTERNAL_BLOCKLIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.) |
@@ -115,16 +142,14 @@ sudo systemctl restart adguard-shield
 ```
 ## Gesperrte Ports im Detail
 
-Bei einem Rate-Limit-Verstoß werden **alle** DNS-Protokoll-Ports für den Client gesperrt:
+Bei einem Rate-Limit-Verstoß werden **alle** DNS-Protokoll-Ports für den Client gesperrt (IPv4 via `iptables` und IPv6 via `ip6tables`):
 
 | Port | Protokoll | Beschreibung |
 |------|-----------|-------------|
 | 53   | UDP/TCP   | Standard DNS |
 | 443  | TCP       | DNS-over-HTTPS (DoH) |
-| 853  | TCP       | DNS-over-TLS (DoT) |
-| 853  | UDP       | DNS-over-QUIC (DoQ) |
-| 784  | UDP       | DNS-over-QUIC (alternativ) |
-| 8853 | UDP       | DNS-over-QUIC (alternativ) |
+| 853  | TCP       | DNS-over-TLS (`tls://dns1.techniverse.net:853`) |
+| 853  | UDP       | DNS-over-QUIC (`quic://dns1.techniverse.net:853`) |
 
 ## Whitelist richtig pflegen
 
