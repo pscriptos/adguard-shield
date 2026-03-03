@@ -63,6 +63,8 @@ sudo systemctl status adguard-shield
 
 > **Hinweis:** Bei der Installation werden alle benötigten Abhängigkeiten automatisch installiert und der Service wird für den Autostart beim Booten registriert.
 
+[![asciicast](https://asciinema.techniverse.net/a/77.svg)](https://asciinema.techniverse.net/a/77)
+
 ## Wichtigste Befehle
 
 ```bash
