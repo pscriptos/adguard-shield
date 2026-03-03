@@ -103,7 +103,6 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
     ├── benachrichtigungen.md        # Webhook-Setup (Discord, Slack, Gotify, Ntfy)
     └── tipps-und-troubleshooting.md
 ```
-```
 
 ## Dokumentation
 
