@@ -13,8 +13,6 @@
 
 # AdGuard Shield
 
-> **Autor:** Patrick Asmus | **E-Mail:** support@techniverse.net | **Version:** 1.0.0
-
 Automatischer Schutz für deinen AdGuard Home DNS-Server gegen übermäßige Anfragen einzelner Clients. Überwacht die AdGuard Home API, erkennt Rate-Limit-Verstöße und sperrt missbrauchende Clients per iptables — für alle DNS-Protokolle (DNS, DoH, DoT, DoQ).
 
 ## Was macht das Tool?
