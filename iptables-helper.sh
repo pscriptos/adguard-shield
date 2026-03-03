@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/adguard-ratelimit.conf"
+CONFIG_FILE="${SCRIPT_DIR}/adguard-shield.conf"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "FEHLER: Konfigurationsdatei nicht gefunden: $CONFIG_FILE" >&2
@@ -212,7 +212,7 @@ case "${1:-help}" in
         ;;
     *)
         cat << USAGE
-iptables Helper für AdGuard Rate-Limit
+iptables Helper für AdGuard Shield
 
 Nutzung: $0 {create|remove|flush|ban|unban|status|save|restore}
 

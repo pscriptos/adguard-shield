@@ -3,8 +3,20 @@
 Die Konfigurationsdatei liegt nach der Installation unter:
 
 ```
-/opt/adguard-ratelimit/adguard-ratelimit.conf
+/opt/adguard-shield/adguard-shield.conf
 ```
+
+## Automatische Konfigurations-Migration
+
+Bei einem **Update** (`sudo bash install.sh update`) wird die Konfiguration automatisch migriert:
+
+1. Die aktuelle Konfiguration wird als **Backup** gespeichert: `adguard-shield.conf.old`
+2. Neue Parameter (die in der alten Konfig noch nicht existieren) werden **automatisch** zur bestehenden Konfiguration hinzugefügt
+3. Alle bestehenden Einstellungen bleiben **unverändert** erhalten
+
+Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austauschen oder vergleichen.
+
+> **Hinweis:** Nach einem Update empfiehlt es sich, die eventuell neu hinzugefügten Parameter zu prüfen und bei Bedarf anzupassen.
 
 ## Alle Parameter
 
@@ -30,7 +42,7 @@ Die Konfigurationsdatei liegt nach der Installation unter:
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
 | `BAN_DURATION` | `3600` | Sperrdauer in Sekunden (3600 = 1 Stunde) |
-| `IPTABLES_CHAIN` | `ADGUARD_RATELIMIT` | Name der iptables Chain |
+| `IPTABLES_CHAIN` | `ADGUARD_SHIELD` | Name der iptables Chain |
 | `BLOCKED_PORTS` | `53 443 853 784 8853` | Ports die gesperrt werden |
 | `WHITELIST` | `127.0.0.1,::1` | IPs die nie gesperrt werden (kommagetrennt) |
 
@@ -38,10 +50,10 @@ Die Konfigurationsdatei liegt nach der Installation unter:
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
-| `LOG_FILE` | `/var/log/adguard-ratelimit.log` | Pfad zur Log-Datei |
+| `LOG_FILE` | `/var/log/adguard-shield.log` | Pfad zur Log-Datei |
 | `LOG_LEVEL` | `INFO` | Log-Level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_MAX_SIZE_MB` | `50` | Max. Log-Größe bevor rotiert wird |
-| `BAN_HISTORY_FILE` | `/var/log/adguard-ratelimit-bans.log` | Datei für die Ban-History (alle Sperren/Entsperrungen) |
+| `BAN_HISTORY_FILE` | `/var/log/adguard-shield-bans.log` | Datei für die Ban-History (alle Sperren/Entsperrungen) |
 
 ### Benachrichtigungen
 
@@ -55,8 +67,8 @@ Die Konfigurationsdatei liegt nach der Installation unter:
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
-| `STATE_DIR` | `/var/lib/adguard-ratelimit` | Verzeichnis für State-Dateien |
-| `PID_FILE` | `/var/run/adguard-ratelimit.pid` | PID-Datei |
+| `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für State-Dateien |
+| `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei |
 | `DRY_RUN` | `false` | Testmodus — nur loggen, nicht sperren |
 ### Externe Blocklist
 
@@ -69,7 +81,7 @@ Ermöglicht das Einbinden externer IP-Blocklisten (z.B. gehostete Textdateien mi
 | `EXTERNAL_BLOCKLIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.) |
 | `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden (0 = permanent bis IP aus Liste entfernt) |
 | `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs automatisch entsperren wenn aus Liste entfernt |
-| `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-ratelimit/external-blocklist` | Lokaler Cache für heruntergeladene Listen |
+| `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-shield/external-blocklist` | Lokaler Cache für heruntergeladene Listen |
 
 #### Externe Blocklist einrichten
 
@@ -99,7 +111,7 @@ EXTERNAL_BLOCKLIST_URLS="https://example.com/list1.txt,https://other.com/list2.t
 4. Service neustarten:
 
 ```bash
-sudo systemctl restart adguard-ratelimit
+sudo systemctl restart adguard-shield
 ```
 ## Gesperrte Ports im Detail
 

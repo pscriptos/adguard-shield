@@ -9,19 +9,22 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="1.0.0"
+VERSION="0.3.0"
 
 set -euo pipefail
 
+# Fehler-Trap: Bei unerwartetem Abbruch Fehlerdetails ausgeben
+trap 'echo "[$(date "+%Y-%m-%d %H:%M:%S")] [ERROR] Unerwarteter Fehler in Zeile $LINENO (Exit-Code: $?)" >&2' ERR
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/adguard-ratelimit.conf"
+CONFIG_FILE="${SCRIPT_DIR}/adguard-shield.conf"
 
 # ─── Konfiguration laden ───────────────────────────────────────────────────────
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "FEHLER: Konfigurationsdatei nicht gefunden: $CONFIG_FILE" >&2
     exit 1
 fi
-# shellcheck source=adguard-ratelimit.conf
+# shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
 
 # ─── Abhängigkeiten prüfen ────────────────────────────────────────────────────
@@ -276,9 +279,9 @@ send_notification() {
 
     local message
     if [[ "$action" == "ban" ]]; then
-        message="🚫 DNS Rate-Limit: Client **$client_ip** gesperrt (${count}x $domain in ${RATE_LIMIT_WINDOW}s). Sperre für ${BAN_DURATION}s."
+        message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${RATE_LIMIT_WINDOW}s). Sperre für ${BAN_DURATION}s."
     else
-        message="✅ DNS Rate-Limit: Client **$client_ip** wurde entsperrt."
+        message="✅ AdGuard Shield: Client **$client_ip** wurde entsperrt."
     fi
 
     case "$NOTIFY_TYPE" in
@@ -294,7 +297,7 @@ send_notification() {
             ;;
         gotify)
             curl -s -X POST "$NOTIFY_WEBHOOK_URL" \
-                -F "title=AdGuard Rate-Limit" \
+                -F "title=AdGuard Shield" \
                 -F "message=$message" \
                 -F "priority=5" &>/dev/null &
             ;;
@@ -321,7 +324,7 @@ send_ntfy_notification() {
 
     local ntfy_url="${NTFY_SERVER_URL:-https://ntfy.sh}"
     local priority="${NTFY_PRIORITY:-4}"
-    local title="AdGuard Rate-Limit"
+    local title="AdGuard Shield"
     local tags
 
     if [[ "$action" == "ban" ]]; then
@@ -354,9 +357,8 @@ send_ntfy_notification() {
 
 # ─── AdGuard Home API abfragen ──────────────────────────────────────────────
 query_adguard_log() {
-    local time_from
-    time_from=$(date -u -d "-${RATE_LIMIT_WINDOW} seconds" '+%Y-%m-%dT%H:%M:%S.000Z' 2>/dev/null \
-        || date -u -v "-${RATE_LIMIT_WINDOW}S" '+%Y-%m-%dT%H:%M:%S.000Z')
+    # Hinweis: Zeitfilterung erfolgt client-seitig in analyze_queries(),
+    # da die AdGuard API keinen "newer_than" Parameter unterstützt.
 
     local response
     response=$(curl -s -u "${ADGUARD_USER}:${ADGUARD_PASS}" \
@@ -385,17 +387,44 @@ analyze_queries() {
     now_epoch=$(date '+%s')
     local window_start=$((now_epoch - RATE_LIMIT_WINDOW))
 
+    # Anzahl der API-Einträge loggen
+    local entry_count
+    entry_count=$(echo "$api_response" | jq '.data // [] | length' 2>/dev/null || echo "0")
+    log "INFO" "API-Abfrage: ${entry_count} Einträge erhalten, prüfe Zeitfenster ${RATE_LIMIT_WINDOW}s..."
+
     # Extrahiere Client-IP + Domain Paare aus dem Zeitfenster
     # und zähle die Häufigkeit pro (client, domain) Kombination
-    local violations
+    # Unterstützt .question.name (alte API) und .question.host (neue API)
+    # Unterstützt Timestamps mit UTC ("Z") und Zeitzonen-Offset ("+01:00")
+    local violations=""
     violations=$(echo "$api_response" | jq -r --argjson window_start "$window_start" '
+        # ISO 8601 Timestamp zu Unix-Epoch konvertieren
+        # Unterstützt: "2026-03-03T20:01:48Z", "2026-03-03T20:01:48.123Z",
+        #              "2026-03-03T20:01:48+01:00", "2026-03-03T20:01:48.123+01:00"
+        def to_epoch:
+            sub("\\.[0-9]+(?=[+-Z])"; "") |
+            if endswith("Z") then
+                fromdateiso8601
+            elif test("[+-][0-9]{2}:[0-9]{2}$") then
+                # Zeitzonen-Offset per String-Slicing extrahieren (zuverlässiger als Regex)
+                # Letzten 6 Zeichen = "+01:00" bzw. "-05:00"
+                (.[:-6]) as $base |
+                (.[-6:-5]) as $sign |
+                (.[-5:-3] | tonumber) as $h |
+                (.[-2:] | tonumber) as $m |
+                ($base + "Z" | fromdateiso8601) +
+                (if $sign == "+" then -1 else 1 end * ($h * 3600 + $m * 60))
+            else
+                fromdateiso8601
+            end;
+
         .data // [] | 
         [.[] | 
             select(.time != null) |
+            select((.time | to_epoch) >= $window_start) |
             {
                 client: (.client // .client_info.ip // "unknown"),
-                domain: (.question.name // "unknown" | rtrimstr(".")),
-                time_epoch: (.time | split(".")[0] | sub("T"; " ") | sub("Z$"; "") )
+                domain: ((.question.name // .question.host // "unknown") | rtrimstr("."))
             }
         ] |
         group_by(.client + "|" + .domain) |
@@ -407,10 +436,13 @@ analyze_queries() {
         .[] |
         select(.count > 0) |
         "\(.client)|\(.domain)|\(.count)"
-    ' 2>/dev/null)
+    ') || {
+        log "ERROR" "jq Analyse fehlgeschlagen - API-Antwort-Format prüfen (ist AdGuard Home erreichbar?)"
+        return
+    }
 
     if [[ -z "$violations" ]]; then
-        log "DEBUG" "Keine Anfragen im Zeitfenster gefunden"
+        log "INFO" "Keine Anfragen im Zeitfenster gefunden"
         return
     fi
 
@@ -418,7 +450,7 @@ analyze_queries() {
     while IFS='|' read -r client domain count; do
         [[ -z "$client" || -z "$domain" || -z "$count" ]] && continue
 
-        log "DEBUG" "Client: $client, Domain: $domain, Anfragen: $count"
+        log "INFO" "Client: $client, Domain: $domain, Anfragen: $count/$RATE_LIMIT_MAX_REQUESTS"
 
         if [[ "$count" -gt "$RATE_LIMIT_MAX_REQUESTS" ]]; then
             if is_whitelisted "$client"; then
@@ -434,7 +466,7 @@ analyze_queries() {
 # ─── Status anzeigen ─────────────────────────────────────────────────────────
 show_status() {
     echo "═══════════════════════════════════════════════════════════════"
-    echo "  AdGuard Home Rate-Limit Monitor - Status"
+    echo "  AdGuard Shield - Status"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 
@@ -476,7 +508,7 @@ show_status() {
 show_history() {
     local lines="${1:-50}"
     echo "═══════════════════════════════════════════════════════════════"
-    echo "  AdGuard Home Rate-Limit - Ban History (letzte $lines Einträge)"
+    echo "  AdGuard Shield - Ban History (letzte $lines Einträge)"
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 
@@ -593,6 +625,7 @@ trap cleanup SIGTERM SIGINT SIGHUP
 # ─── Kommandozeilen-Argumente ────────────────────────────────────────────────
 case "${1:-start}" in
     start)
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] AdGuard Shield v${VERSION} wird gestartet..."
         check_dependencies
         check_already_running
         init_directories

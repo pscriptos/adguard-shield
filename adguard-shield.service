@@ -1,0 +1,37 @@
+[Unit]
+Description=AdGuard Shield - DNS Rate-Limit Monitor
+Documentation=https://git.techniverse.net/scriptos/adguard-shield
+After=network.target AdGuardHome.service
+Wants=AdGuardHome.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+ExecStart=/opt/adguard-shield/adguard-shield.sh start
+ExecStop=/opt/adguard-shield/adguard-shield.sh stop
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Neustart-Verhalten
+Restart=on-failure
+RestartSec=10
+
+# Sicherheits-Hardening
+ProtectSystem=full
+ReadWritePaths=/var/log /var/lib/adguard-shield /var/lib/adguard-shield/external-blocklist /var/run
+ProtectHome=true
+NoNewPrivileges=false
+PrivateTmp=true
+
+# iptables benötigt CAP_NET_ADMIN + CAP_NET_RAW
+# Weitere Capabilities für Dateizugriff, Signale und Prozessverwaltung
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_CHOWN
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=adguard-shield
+
+[Install]
+WantedBy=multi-user.target

@@ -1,43 +1,86 @@
 # Befehle & Nutzung
 
+## Installer / Updater
+
+Der Installer bietet ein interaktives Menü wenn er ohne Argumente aufgerufen wird:
+
+```bash
+# Interaktives Menü anzeigen
+sudo bash install.sh
+
+# Neuinstallation
+sudo bash install.sh install
+
+# Update (mit automatischer Konfigurations-Migration)
+sudo bash install.sh update
+
+# Deinstallation
+sudo bash install.sh uninstall
+
+# Installationsstatus anzeigen
+sudo bash install.sh status
+
+# Hilfe anzeigen
+sudo bash install.sh --help
+```
+
+### Update-Verhalten
+
+Beim Update passiert automatisch:
+1. Alle Scripts werden aktualisiert
+2. Die bestehende Konfiguration wird als `adguard-shield.conf.old` gesichert
+3. Neue Konfigurationsparameter werden automatisch zur bestehenden Konfig hinzugefügt
+4. Bestehende Einstellungen bleiben **immer** erhalten
+5. Der systemd Service wird per `daemon-reload` neu geladen
+6. Der Service wird automatisch neu gestartet (falls er lief)
+
+### Voraussetzungen
+
+Folgende Pakete werden bei der Installation automatisch installiert (via `apt`):
+- `curl` — API-Kommunikation mit AdGuard Home
+- `jq` — JSON-Verarbeitung der API-Antworten
+- `iptables` — Firewall-Regeln für IP-Sperren
+- `gawk` — Textverarbeitung
+- `systemd` — Service-Management
+
 ## Monitor (Hauptscript)
 
 ```bash
 # Starten
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh start
+sudo /opt/adguard-shield/adguard-shield.sh start
 
 # Stoppen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh stop
+sudo /opt/adguard-shield/adguard-shield.sh stop
 
 # Status + aktive Sperren anzeigen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh status
+sudo /opt/adguard-shield/adguard-shield.sh status
 
 # Ban-History anzeigen (letzte 50 Einträge)
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh history
+sudo /opt/adguard-shield/adguard-shield.sh history
 
 # Ban-History anzeigen (letzte 100 Einträge)
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh history 100
+sudo /opt/adguard-shield/adguard-shield.sh history 100
 
 # Alle Sperren aufheben
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh flush
+sudo /opt/adguard-shield/adguard-shield.sh flush
 
 # Einzelne IP entsperren
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh unban 192.168.1.100
+sudo /opt/adguard-shield/adguard-shield.sh unban 192.168.1.100
 
 # API-Verbindung testen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh test
+sudo /opt/adguard-shield/adguard-shield.sh test
 
 # Dry-Run (nur loggen, nichts sperren)
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh dry-run
+sudo /opt/adguard-shield/adguard-shield.sh dry-run
 
 # Externe Blocklist - Status anzeigen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-status
+sudo /opt/adguard-shield/adguard-shield.sh blocklist-status
 
 # Externe Blocklist - Einmalige Synchronisation
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-sync
+sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync
 
 # Externe Blocklist - Alle Sperren der externen Liste aufheben
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-flush
+sudo /opt/adguard-shield/adguard-shield.sh blocklist-flush
 ```
 
 ## iptables Helper
@@ -46,26 +89,26 @@ Für die manuelle Verwaltung der Firewall-Regeln:
 
 ```bash
 # Chain erstellen
-sudo /opt/adguard-ratelimit/iptables-helper.sh create
+sudo /opt/adguard-shield/iptables-helper.sh create
 
 # Alle Regeln anzeigen
-sudo /opt/adguard-ratelimit/iptables-helper.sh status
+sudo /opt/adguard-shield/iptables-helper.sh status
 
 # IP manuell sperren
-sudo /opt/adguard-ratelimit/iptables-helper.sh ban 192.168.1.100
+sudo /opt/adguard-shield/iptables-helper.sh ban 192.168.1.100
 
 # IP entsperren
-sudo /opt/adguard-ratelimit/iptables-helper.sh unban 192.168.1.100
+sudo /opt/adguard-shield/iptables-helper.sh unban 192.168.1.100
 
 # Alle Regeln leeren
-sudo /opt/adguard-ratelimit/iptables-helper.sh flush
+sudo /opt/adguard-shield/iptables-helper.sh flush
 
 # Chain komplett entfernen
-sudo /opt/adguard-ratelimit/iptables-helper.sh remove
+sudo /opt/adguard-shield/iptables-helper.sh remove
 
 # Regeln speichern / wiederherstellen
-sudo /opt/adguard-ratelimit/iptables-helper.sh save
-sudo /opt/adguard-ratelimit/iptables-helper.sh restore
+sudo /opt/adguard-shield/iptables-helper.sh save
+sudo /opt/adguard-shield/iptables-helper.sh restore
 ```
 
 ## Externer Blocklist-Worker
@@ -74,51 +117,55 @@ Der Worker kann auch standalone gesteuert werden:
 
 ```bash
 # Worker manuell starten (normalerweise automatisch per Hauptscript)
-sudo /opt/adguard-ratelimit/external-blocklist-worker.sh start
+sudo /opt/adguard-shield/external-blocklist-worker.sh start
 
 # Worker stoppen
-sudo /opt/adguard-ratelimit/external-blocklist-worker.sh stop
+sudo /opt/adguard-shield/external-blocklist-worker.sh stop
 
 # Einmalige Synchronisation (z.B. nach Konfigurationsänderung)
-sudo /opt/adguard-ratelimit/external-blocklist-worker.sh sync
+sudo /opt/adguard-shield/external-blocklist-worker.sh sync
 
 # Status anzeigen
-sudo /opt/adguard-ratelimit/external-blocklist-worker.sh status
+sudo /opt/adguard-shield/external-blocklist-worker.sh status
 
 # Alle externen Sperren aufheben
-sudo /opt/adguard-ratelimit/external-blocklist-worker.sh flush
+sudo /opt/adguard-shield/external-blocklist-worker.sh flush
 ```
 
 ## systemd Service
 
+Der Service wird bei der Installation automatisch für den **Autostart beim Booten** aktiviert.
+
 ```bash
 # Start / Stop / Restart
-sudo systemctl start adguard-ratelimit
-sudo systemctl stop adguard-ratelimit
-sudo systemctl restart adguard-ratelimit
+sudo systemctl start adguard-shield
+sudo systemctl stop adguard-shield
+sudo systemctl restart adguard-shield
 
 # Status
-sudo systemctl status adguard-ratelimit
+sudo systemctl status adguard-shield
 
 # Autostart aktivieren / deaktivieren
-sudo systemctl enable adguard-ratelimit
-sudo systemctl disable adguard-ratelimit
+sudo systemctl enable adguard-shield
+sudo systemctl disable adguard-shield
 ```
+
+> **Hinweis:** Nach einem Update wird der Service automatisch neu gestartet. Ein manueller Neustart ist nicht nötig.
 
 ## Logs
 
 ```bash
 # systemd Journal
-sudo journalctl -u adguard-ratelimit -f
+sudo journalctl -u adguard-shield -f
 
 # Log-Datei direkt
-sudo tail -f /var/log/adguard-ratelimit.log
+sudo tail -f /var/log/adguard-shield.log
 
 # Nur Sperr-Einträge
-sudo grep "SPERRE" /var/log/adguard-ratelimit.log
+sudo grep "SPERRE" /var/log/adguard-shield.log
 
 # Nur Entsperr-Einträge
-sudo grep "ENTSPERRE" /var/log/adguard-ratelimit.log
+sudo grep "ENTSPERRE" /var/log/adguard-shield.log
 ```
 
 ## Cron-basiertes Entsperren
@@ -130,5 +177,14 @@ Als Alternative oder Ergänzung zum Haupt-Monitor:
 sudo crontab -e
 
 # Alle 5 Minuten abgelaufene Sperren prüfen
-*/5 * * * * /opt/adguard-ratelimit/unban-expired.sh
+*/5 * * * * /opt/adguard-shield/unban-expired.sh
+```
+
+## Hilfe
+
+Alle verfügbaren Befehle und Optionen des Installers anzeigen:
+
+```bash
+sudo bash install.sh --help
+sudo bash install.sh -h
 ```

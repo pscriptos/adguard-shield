@@ -13,14 +13,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/adguard-ratelimit.conf"
+CONFIG_FILE="${SCRIPT_DIR}/adguard-shield.conf"
 
 # ─── Konfiguration laden ───────────────────────────────────────────────────────
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "FEHLER: Konfigurationsdatei nicht gefunden: $CONFIG_FILE" >&2
     exit 1
 fi
-# shellcheck source=adguard-ratelimit.conf
+# shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
 
 # ─── Worker PID-File ──────────────────────────────────────────────────────────

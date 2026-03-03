@@ -38,67 +38,80 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 ## Voraussetzungen
 
 - Linux Server mit AdGuard Home (bare metal)
-- `curl`, `jq`, `iptables` / `ip6tables`
-- Root-Zugriff
+- Root-Zugriff (`sudo`)
 - AdGuard Home Web-API erreichbar (Standard: Port 3000)
+- Pakete: `curl`, `jq`, `iptables`, `gawk`, `systemd` — werden bei der Installation **automatisch** installiert
 
 ## Schnellstart
 
 ```bash
 # 1. Repository klonen
-git clone <repo-url> /tmp/adguard-security
-cd /tmp/adguard-security
+git clone https://git.techniverse.net/scriptos/adguard-shield.git /tmp/adguard-shield
+cd /tmp/adguard-shield
 
-# 2. Installer ausführen (fragt interaktiv nach Zugangsdaten & Einstellungen)
+# 2. Installer aufrufen (interaktives Menü)
+sudo bash install.sh
+
+# Oder direkt installieren:
 sudo bash install.sh install
 
 # 3. Erst im Dry-Run testen (loggt nur, sperrt nichts)
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh dry-run
+sudo /opt/adguard-shield/adguard-shield.sh dry-run
 
 # 4. Wenn alles passt — Service starten
-sudo systemctl start adguard-ratelimit
-sudo systemctl status adguard-ratelimit
+sudo systemctl start adguard-shield
+sudo systemctl status adguard-shield
 ```
+
+> **Hinweis:** Bei der Installation werden alle benötigten Abhängigkeiten automatisch installiert und der Service wird für den Autostart beim Booten registriert.
 
 ## Wichtigste Befehle
 
 ```bash
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh status             # Aktive Sperren anzeigen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh history            # Ban-History anzeigen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh unban IP           # Einzelne IP entsperren
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh flush              # Alle Sperren aufheben
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh test               # API-Verbindung testen
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-status   # Externe Blocklisten Status
-sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-sync     # Blocklisten manuell synchronisieren
-sudo journalctl -u adguard-ratelimit -f                             # Logs live verfolgen
+# Installer-Menü
+sudo bash install.sh                  # Interaktives Menü (Install/Update/Uninstall/Status)
+sudo bash install.sh --help           # Hilfe anzeigen
+sudo bash install.sh update           # Update mit automatischer Konfigurations-Migration
+sudo bash install.sh status           # Installationsstatus prüfen
+
+# Monitor
+sudo /opt/adguard-shield/adguard-shield.sh status             # Aktive Sperren anzeigen
+sudo /opt/adguard-shield/adguard-shield.sh history            # Ban-History anzeigen
+sudo /opt/adguard-shield/adguard-shield.sh unban IP           # Einzelne IP entsperren
+sudo /opt/adguard-shield/adguard-shield.sh flush              # Alle Sperren aufheben
+sudo /opt/adguard-shield/adguard-shield.sh test               # API-Verbindung testen
+sudo /opt/adguard-shield/adguard-shield.sh blocklist-status   # Externe Blocklisten Status
+sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync     # Blocklisten manuell synchronisieren
+sudo journalctl -u adguard-shield -f                             # Logs live verfolgen
 ```
 
 ## Projektstruktur
 
 ```
-├── adguard-ratelimit.sh              # Haupt-Monitor-Script
-├── adguard-ratelimit.conf            # Konfiguration
-├── adguard-ratelimit.service         # systemd Unit
-├── external-blocklist-worker.sh      # Externer Blocklist-Worker
-├── iptables-helper.sh               # Manuelle iptables-Verwaltung
-├── unban-expired.sh                 # Cron-basiertes Entsperren
-├── install.sh                       # Installer / Uninstaller
+├── adguard-shield.sh              # Haupt-Monitor-Script
+├── adguard-shield.conf            # Konfiguration
+├── adguard-shield.service         # systemd Unit
+├── external-blocklist-worker.sh   # Externer Blocklist-Worker
+├── iptables-helper.sh             # Manuelle iptables-Verwaltung
+├── unban-expired.sh               # Cron-basiertes Entsperren
+├── install.sh                     # Installer / Updater / Uninstaller
 ├── README.md
 └── doc/
-    ├── architektur.md                # Architektur & Funktionsweise
-    ├── konfiguration.md              # Alle Parameter erklärt
-    ├── befehle.md                    # Vollständige Befehlsreferenz
-    ├── benachrichtigungen.md         # Webhook-Setup (Discord, Slack, Gotify)
+    ├── architektur.md               # Architektur & Funktionsweise
+    ├── konfiguration.md             # Alle Parameter erklärt + Konfig-Migration
+    ├── befehle.md                   # Vollständige Befehlsreferenz inkl. Installer
+    ├── benachrichtigungen.md        # Webhook-Setup (Discord, Slack, Gotify, Ntfy)
     └── tipps-und-troubleshooting.md
+```
 ```
 
 ## Dokumentation
 
 | Dokument | Inhalt |
 |----------|--------|
-| [Architektur](doc/architektur.md) | Wie das Tool funktioniert, iptables-Strategie, Ablauf einer Sperre |
-| [Konfiguration](doc/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, externe Blocklisten |
-| [Befehle](doc/befehle.md) | Vollständige Befehlsreferenz für Monitor, iptables-Helper und systemd |
+| [Architektur](doc/architektur.md) | Wie das Tool funktioniert, iptables-Strategie, Konfig-Migration |
+| [Konfiguration](doc/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, automatische Migration |
+| [Befehle](doc/befehle.md) | Vollständige Befehlsreferenz für Installer, Monitor, iptables-Helper und systemd |
 | [Benachrichtigungen](doc/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
 | [Tipps & Troubleshooting](doc/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Deinstallation |
 

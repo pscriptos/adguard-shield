@@ -5,20 +5,20 @@
 # Wird z.B. alle 5 Minuten per Cron aufgerufen um abgelaufene Sperren zu prüfen.
 #
 # Crontab-Eintrag:
-#   */5 * * * * /opt/adguard-ratelimit/unban-expired.sh
+#   */5 * * * * /opt/adguard-shield/unban-expired.sh
 ###############################################################################
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/adguard-ratelimit.conf"
+CONFIG_FILE="${SCRIPT_DIR}/adguard-shield.conf"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     exit 1
 fi
 source "$CONFIG_FILE"
 
-BAN_HISTORY_FILE="${BAN_HISTORY_FILE:-/var/log/adguard-ratelimit-bans.log}"
+BAN_HISTORY_FILE="${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')] [UNBAN-TIMER]"
 NOW=$(date '+%s')
 

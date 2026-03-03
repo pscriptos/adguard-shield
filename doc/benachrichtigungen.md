@@ -4,7 +4,7 @@ Das Tool kann bei Sperren und Entsperrungen Benachrichtigungen an verschiedene D
 
 ## Aktivierung
 
-In der Konfiguration (`adguard-ratelimit.conf`):
+In der Konfiguration (`adguard-shield.conf`):
 
 ```bash
 NOTIFY_ENABLED=true
@@ -18,7 +18,7 @@ NOTIFY_WEBHOOK_URL="<url>"
 NOTIFY_ENABLED=true
 NOTIFY_TYPE="ntfy"
 NTFY_SERVER_URL="https://ntfy.sh"
-NTFY_TOPIC="adguard-ratelimit"
+NTFY_TOPIC="adguard-shield"
 NTFY_TOKEN=""
 NTFY_PRIORITY="4"
 ```
@@ -94,7 +94,7 @@ Sendet einen POST mit JSON-Body:
 
 ```json
 {
-  "message": "🚫 DNS Rate-Limit: Client 192.168.1.50 gesperrt ...",
+  "message": "🚫 AdGuard Shield: Client 192.168.1.50 gesperrt ...",
   "action": "ban",
   "client": "192.168.1.50",
   "domain": "microsoft.com"
@@ -104,7 +104,7 @@ Sendet einen POST mit JSON-Body:
 ## Beispiel-Nachrichten
 
 **Sperre:**
-> 🚫 DNS Rate-Limit: Client **192.168.1.50** gesperrt (45x microsoft.com in 60s). Sperre für 3600s.
+> 🚫 AdGuard Shield: Client **192.168.1.50** gesperrt (45x microsoft.com in 60s). Sperre für 3600s.
 
 **Entsperrung:**
-> ✅ DNS Rate-Limit: Client **192.168.1.50** wurde entsperrt.
+> ✅ AdGuard Shield: Client **192.168.1.50** wurde entsperrt.
