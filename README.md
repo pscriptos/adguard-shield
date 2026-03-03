@@ -1,11 +1,131 @@
-# template_repository
+```
+ ▄▄▄      ▓█████▄   ▄████  █    ██  ▄▄▄       ██▀███  ▓█████▄      ██████  ██░ ██  ██▓▓█████  ██▓    ▓█████▄ 
+▒████▄    ▒██▀ ██▌ ██▒ ▀█▒ ██  ▓██▒▒████▄    ▓██ ▒ ██▒▒██▀ ██▌   ▒██    ▒ ▓██░ ██▒▓██▒▓█   ▀ ▓██▒    ▒██▀ ██▌
+▒██  ▀█▄  ░██   █▌▒██░▄▄▄░▓██  ▒██░▒██  ▀█▄  ▓██ ░▄█ ▒░██   █▌   ░ ▓██▄   ▒██▀▀██░▒██▒▒███   ▒██░    ░██   █▌
+░██▄▄▄▄██ ░▓█▄   ▌░▓█  ██▓▓▓█  ░██░░██▄▄▄▄██ ▒██▀▀█▄  ░▓█▄   ▌     ▒   ██▒░▓█ ░██ ░██░▒▓█  ▄ ▒██░    ░▓█▄   ▌
+ ▓█   ▓██▒░▒████▓ ░▒▓███▀▒▒▒█████▓  ▓█   ▓██▒░██▓ ▒██▒░▒████▓    ▒██████▒▒░▓█▒░██▓░██░░▒████▒░██████▒░▒████▓ 
+ ▒▒   ▓▒█░ ▒▒▓  ▒  ░▒   ▒ ░▒▓▒ ▒ ▒  ▒▒   ▓▒█░░ ▒▓ ░▒▓░ ▒▒▓  ▒    ▒ ▒▓▒ ▒ ░ ▒ ░░▒░▒░▓  ░░ ▒░ ░░ ▒░▓  ░ ▒▒▓  ▒ 
+  ▒   ▒▒ ░ ░ ▒  ▒   ░   ░ ░░▒░ ░ ░   ▒   ▒▒ ░  ░▒ ░ ▒░ ░ ▒  ▒    ░ ░▒  ░ ░ ▒ ░▒░ ░ ▒ ░ ░ ░  ░░ ░ ▒  ░ ░ ▒  ▒ 
+  ░   ▒    ░ ░  ░ ░ ░   ░  ░░░ ░ ░   ░   ▒     ░░   ░  ░ ░  ░    ░  ░  ░   ░  ░░ ░ ▒ ░   ░     ░ ░    ░ ░  ░ 
+      ░  ░   ░          ░    ░           ░  ░   ░        ░             ░   ░  ░  ░ ░     ░  ░    ░  ░   ░    
+           ░                                           ░                                              ░      
+```
 
+# AdGuard Shield
 
+> **Autor:** Patrick Asmus | **E-Mail:** support@techniverse.net | **Version:** 1.0.0
 
+Automatischer Schutz für deinen AdGuard Home DNS-Server gegen übermäßige Anfragen einzelner Clients. Überwacht die AdGuard Home API, erkennt Rate-Limit-Verstöße und sperrt missbrauchende Clients per iptables — für alle DNS-Protokolle (DNS, DoH, DoT, DoQ).
 
-Wichtig: Link für Lizenz anpassen.
+## Was macht das Tool?
 
+Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wird er automatisch auf Firewall-Ebene für alle DNS-Ports gesperrt. Nach einer konfigurierbaren Zeitspanne wird die Sperre automatisch aufgehoben.
 
+## Features
+
+- Automatische Erkennung und Sperre bei Rate-Limit-Verstößen
+- Unterstützt **alle DNS-Protokolle**: DNS (53), DoH (443), DoT (853), DoQ (784/853/8853)
+- **IPv4 + IPv6**
+- Eigene iptables Chain — greift nicht in bestehende Regeln ein
+- Automatisches Entsperren nach konfigurierbarer Dauer
+- **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
+- **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
+- Whitelist für vertrauenswürdige IPs
+- Dry-Run Modus zum gefahrlosen Testen
+- Benachrichtigungen (Discord, Slack, Gotify, Ntfy)
+- systemd Service für dauerhaften Betrieb
+
+## Voraussetzungen
+
+- Linux Server mit AdGuard Home (bare metal)
+- `curl`, `jq`, `iptables` / `ip6tables`
+- Root-Zugriff
+- AdGuard Home Web-API erreichbar (Standard: Port 3000)
+
+## Schnellstart
+
+```bash
+# 1. Repository klonen
+git clone <repo-url> /tmp/adguard-security
+cd /tmp/adguard-security
+
+# 2. Installer ausführen (fragt interaktiv nach Zugangsdaten & Einstellungen)
+sudo bash install.sh install
+
+# 3. Erst im Dry-Run testen (loggt nur, sperrt nichts)
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh dry-run
+
+# 4. Wenn alles passt — Service starten
+sudo systemctl start adguard-ratelimit
+sudo systemctl status adguard-ratelimit
+```
+
+## Wichtigste Befehle
+
+```bash
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh status             # Aktive Sperren anzeigen
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh history            # Ban-History anzeigen
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh unban IP           # Einzelne IP entsperren
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh flush              # Alle Sperren aufheben
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh test               # API-Verbindung testen
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-status   # Externe Blocklisten Status
+sudo /opt/adguard-ratelimit/adguard-ratelimit.sh blocklist-sync     # Blocklisten manuell synchronisieren
+sudo journalctl -u adguard-ratelimit -f                             # Logs live verfolgen
+```
+
+## Projektstruktur
+
+```
+├── adguard-ratelimit.sh              # Haupt-Monitor-Script
+├── adguard-ratelimit.conf            # Konfiguration
+├── adguard-ratelimit.service         # systemd Unit
+├── external-blocklist-worker.sh      # Externer Blocklist-Worker
+├── iptables-helper.sh               # Manuelle iptables-Verwaltung
+├── unban-expired.sh                 # Cron-basiertes Entsperren
+├── install.sh                       # Installer / Uninstaller
+├── README.md
+└── doc/
+    ├── architektur.md                # Architektur & Funktionsweise
+    ├── konfiguration.md              # Alle Parameter erklärt
+    ├── befehle.md                    # Vollständige Befehlsreferenz
+    ├── benachrichtigungen.md         # Webhook-Setup (Discord, Slack, Gotify)
+    └── tipps-und-troubleshooting.md
+```
+
+## Dokumentation
+
+| Dokument | Inhalt |
+|----------|--------|
+| [Architektur](doc/architektur.md) | Wie das Tool funktioniert, iptables-Strategie, Ablauf einer Sperre |
+| [Konfiguration](doc/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, externe Blocklisten |
+| [Befehle](doc/befehle.md) | Vollständige Befehlsreferenz für Monitor, iptables-Helper und systemd |
+| [Benachrichtigungen](doc/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
+| [Tipps & Troubleshooting](doc/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Deinstallation |
+
+## Lizenz
+
+[MIT](LICENSE)
+
+---
+
+## 👥 Techniverse Community
+
+Lust auf Austausch rund um Matrix, Selfhosting und andere smarte IT-Lösungen?
+In der **Techniverse Community** triffst du Gleichgesinnte, kannst Fragen stellen oder einfach nerdigen Talk genießen. 🚀
+
+👉 **[Jetzt der Gruppe auf Matrix beitreten](https://matrix.to/#/#community:techniverse.net)**
+~ Direkte Raumadresse: `#community:techniverse.net`
+
+👉 **[Für lockere Gespräche abseits der Kernthemen komm in den Talkraum](https://matrix.to/#/#talk:techniverse.net)**
+~ Direkte Raumadresse: `#talk:techniverse.net`
+
+Wir freuen uns, wenn du dabei bist!
+
+---
+
+📝 **Blog:** [www.cleveradmin.de](https://www.cleveradmin.de)
+🌐 **Webseite:** [www.patrick-asmus.de](https://www.patrick-asmus.de)
+📧 **E-Mail:** [support@techniverse.net](mailto:support@techniverse.net)
 
 <p align="center">
   <img src="https://assets.techniverse.net/f1/git/graphics/gray0-catonline.svg" alt="">
