@@ -49,11 +49,29 @@ sudo /opt/adguard-shield/adguard-shield.sh start
    ```bash
    sudo /opt/adguard-shield/adguard-shield.sh history | grep 192.168.1.100
    ```
-3. IP zur Whitelist hinzufügen in `adguard-shield.conf`
-3. Service neustarten:
+3. Offense-Zähler für die IP zurücksetzen (damit die progressive Sperre wieder bei Stufe 1 beginnt):
+   ```bash
+   sudo /opt/adguard-shield/adguard-shield.sh reset-offenses 192.168.1.100
+   ```
+4. IP zur Whitelist hinzufügen in `adguard-shield.conf`
+5. Service neustarten:
    ```bash
    sudo systemctl restart adguard-shield
    ```
+
+### Client wurde permanent gesperrt (Progressive Sperren)
+
+Wenn eine IP die maximale Stufe der progressiven Sperren erreicht hat, wird sie permanent gesperrt und nicht automatisch aufgehoben.
+
+1. IP entsperren:
+   ```bash
+   sudo /opt/adguard-shield/adguard-shield.sh unban 192.168.1.100
+   ```
+2. Offense-Zähler zurücksetzen:
+   ```bash
+   sudo /opt/adguard-shield/adguard-shield.sh reset-offenses 192.168.1.100
+   ```
+3. Prüfen ob die IP auf die Whitelist gehört, oder die Progressive-Ban-Einstellungen anpassen (`PROGRESSIVE_BAN_MAX_LEVEL` erhöhen oder auf `0` setzen für keine permanenten Sperren)
 
 ### Sperren überleben Reboot nicht
 

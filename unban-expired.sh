@@ -51,6 +51,12 @@ for state_file in "${STATE_DIR}"/*.ban; do
     ban_until_epoch=$(grep '^BAN_UNTIL_EPOCH=' "$state_file" | cut -d= -f2)
     client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
     domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2)
+    is_permanent=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2)
+
+    # Permanente Sperren nicht automatisch aufheben
+    if [[ "$is_permanent" == "true" || "$ban_until_epoch" == "0" ]]; then
+        continue
+    fi
 
     if [[ -n "$ban_until_epoch" && "$NOW" -ge "$ban_until_epoch" ]]; then
         echo "$LOG_PREFIX Entsperre abgelaufene Sperre: $client_ip" >> "$LOG_FILE"
