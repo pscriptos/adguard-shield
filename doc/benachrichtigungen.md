@@ -1,6 +1,6 @@
 # Webhook-Benachrichtigungen
 
-Das Tool kann bei Sperren und Entsperrungen Benachrichtigungen an verschiedene Dienste senden.
+Das Tool kann beim Starten und Stoppen des Services sowie bei Sperren und Entsperrungen Benachrichtigungen an verschiedene Dienste senden.
 
 ## Aktivierung
 
@@ -102,6 +102,12 @@ Sendet einen POST mit JSON-Body:
 ```
 
 ## Beispiel-Nachrichten
+
+**Service gestartet:**
+> 🟢 AdGuard Shield v0.4.0 wurde gestartet.
+
+**Service gestoppt:**
+> 🔴 AdGuard Shield v0.4.0 wurde gestoppt.
 
 **Sperre:**
 > 🚫 AdGuard Shield: Client **192.168.1.50** gesperrt (45x microsoft.com in 60s). Sperre für 3600s.

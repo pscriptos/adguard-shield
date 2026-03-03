@@ -9,7 +9,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="0.4.0"
+VERSION="0.3.1"
 
 set -euo pipefail
 
@@ -228,6 +228,12 @@ write_pid() {
 
 cleanup() {
     log "INFO" "AdGuard Shield wird beendet..."
+    # Service-Stop-Benachrichtigung senden
+    if [[ "${NOTIFY_ENABLED:-false}" == "true" ]]; then
+        send_notification "service_stop" "" "" ""
+        # Kurz warten damit die Benachrichtigung gesendet wird (curl läuft im Hintergrund)
+        sleep 1
+    fi
     stop_blocklist_worker
     rm -f "$PID_FILE"
     exit 0
@@ -454,6 +460,10 @@ send_notification() {
             simple_dur=$(format_duration "${BAN_DURATION}")
             message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${RATE_LIMIT_WINDOW}s). Sperre für ${simple_dur}."
         fi
+    elif [[ "$action" == "service_start" ]]; then
+        message="🟢 AdGuard Shield v${VERSION} wurde gestartet."
+    elif [[ "$action" == "service_stop" ]]; then
+        message="🔴 AdGuard Shield v${VERSION} wurde gestoppt."
     else
         message="✅ AdGuard Shield: Client **$client_ip** wurde entsperrt."
     fi
@@ -480,7 +490,7 @@ send_notification() {
             ;;
         generic)
             curl -s -H "Content-Type: application/json" \
-                -d "{\"message\": \"$message\", \"action\": \"$action\", \"client\": \"$client_ip\", \"domain\": \"$domain\"}" \
+                -d "{\"message\": \"$message\", \"action\": \"$action\", \"client\": \"${client_ip:-}\", \"domain\": \"${domain:-}\"}" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
     esac
@@ -503,6 +513,10 @@ send_ntfy_notification() {
 
     if [[ "$action" == "ban" ]]; then
         tags="rotating_light,ban"
+    elif [[ "$action" == "service_start" ]]; then
+        tags="green_circle,start"
+    elif [[ "$action" == "service_stop" ]]; then
+        tags="red_circle,stop"
     else
         tags="white_check_mark,unban"
     fi
@@ -842,6 +856,11 @@ main_loop() {
         log "INFO" "  Progressive Sperren: deaktiviert"
     fi
     log "INFO" "═══════════════════════════════════════════════════════════"
+
+    # Service-Start-Benachrichtigung senden
+    if [[ "${NOTIFY_ENABLED:-false}" == "true" ]]; then
+        send_notification "service_start" "" "" ""
+    fi
 
     # Blocklist-Worker als Hintergrundprozess starten
     start_blocklist_worker
