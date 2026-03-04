@@ -87,6 +87,30 @@ Das ist normal — iptables-Regeln sind flüchtig. Der **Service** erstellt die 
 - `RATE_LIMIT_WINDOW` vergrößern (z.B. 120 Sekunden)
 - Windows-Clients fragen manche Domains von Natur aus sehr oft an — Whitelist nutzen
 
+### Subdomain-Flood-Erkennung sperrt legitime Clients
+
+Manche Dienste (z.B. CDNs, Cloud-Dienste, Microsoft 365) nutzen von Natur aus viele verschiedene Subdomains. Falls ein legitimer Client fälschlicherweise durch die Subdomain-Flood-Erkennung gesperrt wird:
+
+1. Client sofort entsperren:
+   ```bash
+   sudo /opt/adguard-shield/adguard-shield.sh unban <IP>
+   ```
+2. Schwellwert erhöhen — z.B. von 50 auf 100 oder 150:
+   ```bash
+   SUBDOMAIN_FLOOD_MAX_UNIQUE=100
+   ```
+3. Zeitfenster vergrößern — z.B. auf 120 Sekunden:
+   ```bash
+   SUBDOMAIN_FLOOD_WINDOW=120
+   ```
+4. Oder die IP zur Whitelist hinzufügen
+5. Im Zweifelsfall die Erkennung temporär deaktivieren:
+   ```bash
+   SUBDOMAIN_FLOOD_ENABLED=false
+   ```
+
+> **Tipp:** Im Dry-Run-Modus (`sudo /opt/adguard-shield/adguard-shield.sh dry-run`) kann man beobachten, welche Clients die Subdomain-Flood-Erkennung auslösen würden, ohne sie wirklich zu sperren.
+
 ### Monitor startet nicht (PID-File)
 
 ```bash
