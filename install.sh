@@ -6,7 +6,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="0.3.1"
+VERSION="0.4.0"
 
 set -euo pipefail
 
@@ -306,7 +306,7 @@ migrate_config() {
                 echo -n "$current_comment_block" >> "$existing_conf"
                 echo "$line" >> "$existing_conf"
                 echo -e "  ➕ Neuer Parameter hinzugefügt: ${GREEN}$key${NC}"
-                ((new_keys_added++))
+                new_keys_added=$((new_keys_added + 1))
             fi
         fi
 

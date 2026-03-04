@@ -37,6 +37,39 @@ Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austausche
 | `CHECK_INTERVAL` | `10` | Wie oft die Logs geprüft werden (Sekunden) |
 | `API_QUERY_LIMIT` | `500` | Anzahl API-Einträge pro Abfrage (max 5000) |
 
+### Subdomain-Flood-Erkennung (Random Subdomain Attack)
+
+Erkennt Bot-Angriffe, bei denen massenhaft zufällige Subdomains einer Domain abgefragt werden (z.B. `abc123.microsoft.com`, `xyz456.microsoft.com`, ...). Dabei wird pro Client gezählt, wie viele **eindeutige** Subdomains einer Basisdomain (z.B. `microsoft.com`) im Zeitfenster aufgerufen werden.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `SUBDOMAIN_FLOOD_ENABLED` | `true` | Subdomain-Flood-Erkennung aktivieren |
+| `SUBDOMAIN_FLOOD_MAX_UNIQUE` | `50` | Max. eindeutige Subdomains pro Basisdomain/Client im Zeitfenster |
+| `SUBDOMAIN_FLOOD_WINDOW` | `60` | Zeitfenster in Sekunden |
+
+#### Wie funktioniert die Erkennung?
+
+1. Aus jeder DNS-Anfrage wird die **Basisdomain** extrahiert (z.B. `microsoft.com` aus `abc.microsoft.com`)
+2. Pro Client wird gezählt, wie viele **verschiedene** Subdomains einer Basisdomain im Zeitfenster abgefragt wurden
+3. Überschreitet die Anzahl eindeutiger Subdomains den Schwellwert, wird der Client gesperrt
+
+#### Beispiel
+
+Ein Bot fragt innerhalb von 60 Sekunden folgende Domains ab:
+
+```
+hbidcw.microsoft.com
+ftdzewf.microsoft.com
+xk9z3a.microsoft.com
+... (50+ verschiedene Subdomains)
+```
+
+→ Alle Anfragen haben die gleiche Basisdomain `microsoft.com`. Sobald mehr als 50 eindeutige Subdomains erkannt werden, wird der Client gesperrt.
+
+> **Hinweis:** Nur echte Subdomains werden gezählt. Anfragen direkt an `microsoft.com` (ohne Subdomain) lösen diese Erkennung nicht aus. Multi-Part-TLDs wie `.co.uk`, `.com.au` etc. werden korrekt behandelt.
+
+> **Tipp:** Der Schwellwert `SUBDOMAIN_FLOOD_MAX_UNIQUE` sollte hoch genug sein, um legitime Clients nicht zu stören (z.B. CDNs nutzen oft viele Subdomains). Ein Wert von 50–100 ist in den meisten Fällen sinnvoll.
+
 ### Sperr-Einstellungen
 
 | Parameter | Standard | Beschreibung |
