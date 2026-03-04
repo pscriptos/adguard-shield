@@ -29,6 +29,7 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 - Eigene iptables Chain — greift nicht in bestehende Regeln ein
 - Automatisches Entsperren nach konfigurierbarer Dauer
 - **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
+- **AbuseIPDB Reporting** — permanent gesperrte IPs automatisch an AbuseIPDB melden
 - **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
 - Whitelist für vertrauenswürdige IPs
 - Dry-Run Modus zum gefahrlosen Testen

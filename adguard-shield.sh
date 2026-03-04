@@ -231,6 +231,58 @@ format_protocol() {
     esac
 }
 
+# ─── AbuseIPDB Reporting ─────────────────────────────────────────────────────
+# Meldet eine IP an AbuseIPDB (nur bei permanenten Sperren)
+report_to_abuseipdb() {
+    local client_ip="$1"
+    local domain="$2"
+    local count="$3"
+    local reason="${4:-rate-limit}"
+
+    if [[ "${ABUSEIPDB_ENABLED:-false}" != "true" ]]; then
+        return 0
+    fi
+
+    if [[ -z "${ABUSEIPDB_API_KEY:-}" ]]; then
+        log "WARN" "AbuseIPDB: API-Key nicht konfiguriert (ABUSEIPDB_API_KEY ist leer)"
+        return 1
+    fi
+
+    # Kommentar für AbuseIPDB erstellen (englisch)
+    local comment
+    if [[ "$reason" == "subdomain-flood" ]]; then
+        comment="DNS flooding on our DNS server: ${count}x ${domain} (random subdomain attack). Permanently banned by AdGuard Shield."
+    else
+        comment="DNS flooding on our DNS server: ${count}x ${domain}. Permanently banned by AdGuard Shield."
+    fi
+
+    local categories="${ABUSEIPDB_CATEGORIES:-4}"
+
+    log "INFO" "AbuseIPDB: Melde IP $client_ip (${comment})"
+
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        --connect-timeout 10 \
+        --max-time 15 \
+        -X POST "https://api.abuseipdb.com/api/v2/report" \
+        -H "Key: ${ABUSEIPDB_API_KEY}" \
+        -H "Accept: application/json" \
+        --data-urlencode "ip=${client_ip}" \
+        --data-urlencode "categories=${categories}" \
+        --data-urlencode "comment=${comment}" \
+        2>/dev/null) || true
+
+    if [[ "$http_code" == "200" || "$http_code" == "429" ]]; then
+        if [[ "$http_code" == "429" ]]; then
+            log "WARN" "AbuseIPDB: Rate-Limit erreicht für $client_ip (HTTP 429) – Report wird später erneut versucht"
+        else
+            log "INFO" "AbuseIPDB: IP $client_ip erfolgreich gemeldet (HTTP $http_code)"
+        fi
+    else
+        log "ERROR" "AbuseIPDB: Meldung fehlgeschlagen für $client_ip (HTTP ${http_code:-timeout})"
+    fi
+}
+
 # ─── Verzeichnisse erstellen ──────────────────────────────────────────────────
 init_directories() {
     mkdir -p "$STATE_DIR"
@@ -400,6 +452,11 @@ EOF
     # Benachrichtigung senden
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
         send_notification "ban" "$client_ip" "$domain" "$count" "$offense_level" "$duration_display" "$reason" "$window" "$protocol"
+    fi
+
+    # AbuseIPDB Report (nur bei permanenter Sperre)
+    if [[ "$is_permanent" == "true" ]]; then
+        report_to_abuseipdb "$client_ip" "$domain" "$count" "$reason" &
     fi
 }
 
@@ -1055,6 +1112,11 @@ main_loop() {
         log "INFO" "  Subdomain-Flood-Schutz: AKTIV (max ${SUBDOMAIN_FLOOD_MAX_UNIQUE:-50} Subdomains/${SUBDOMAIN_FLOOD_WINDOW:-60}s)"
     else
         log "INFO" "  Subdomain-Flood-Schutz: deaktiviert"
+    fi
+    if [[ "${ABUSEIPDB_ENABLED:-false}" == "true" ]]; then
+        log "INFO" "  AbuseIPDB Reporting: AKTIV (Kategorien: ${ABUSEIPDB_CATEGORIES:-4})"
+    else
+        log "INFO" "  AbuseIPDB Reporting: deaktiviert"
     fi
     log "INFO" "═══════════════════════════════════════════════════════════"
 

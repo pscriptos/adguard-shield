@@ -142,7 +142,44 @@ Ermöglicht das Einbinden externer IP-Blocklisten (z.B. gehostete Textdateien mi
 | `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden (0 = permanent bis IP aus Liste entfernt) |
 | `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs automatisch entsperren wenn aus Liste entfernt |
 | `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-shield/external-blocklist` | Lokaler Cache für heruntergeladene Listen |
+### AbuseIPDB Reporting
 
+Meldet permanent gesperrte IPs automatisch an [AbuseIPDB](https://www.abuseipdb.com/). Damit wird die IP in einer öffentlichen Datenbank als missbräuchlich markiert und andere Administratoren können davon profitieren.
+
+> **Wichtig:** Es werden **nur permanent gesperrte IPs** gemeldet — also erst wenn die maximale Progressive-Ban-Stufe erreicht ist. Einzelne temporäre Sperren lösen keinen AbuseIPDB-Report aus.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|---------------|
+| `ABUSEIPDB_ENABLED` | `false` | AbuseIPDB-Reporting aktivieren |
+| `ABUSEIPDB_API_KEY` | *(leer)* | API-Key von [abuseipdb.com/account/api](https://www.abuseipdb.com/account/api) |
+| `ABUSEIPDB_CATEGORIES` | `4` | Report-Kategorien (4 = DDoS Attack). Siehe [Kategorien](https://www.abuseipdb.com/categories) |
+
+#### AbuseIPDB einrichten
+
+1. Erstelle einen kostenlosen Account auf [abuseipdb.com](https://www.abuseipdb.com/)
+2. Erstelle einen API-Key unter [Account → API](https://www.abuseipdb.com/account/api)
+3. Aktiviere das Reporting in der Konfiguration:
+
+```bash
+ABUSEIPDB_ENABLED=true
+ABUSEIPDB_API_KEY="dein-api-key-hier"
+ABUSEIPDB_CATEGORIES="4"
+```
+
+4. Service neustarten:
+
+```bash
+sudo systemctl restart adguard-shield
+```
+
+#### Was wird gemeldet?
+
+Der Report an AbuseIPDB enthält (auf Englisch):
+
+- **Bei Rate-Limit:** `DNS flooding on our DNS server: 100x microsoft.com. Permanently banned by AdGuard Shield.`
+- **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com (random subdomain attack). Permanently banned by AdGuard Shield.`
+
+Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
 #### Externe Blocklist einrichten
 
 1. Erstelle eine Textdatei auf einem Webserver mit einer IP pro Zeile:
