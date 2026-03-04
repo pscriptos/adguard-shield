@@ -184,6 +184,29 @@ Bei einem Rate-Limit-Verstoß werden **alle** DNS-Protokoll-Ports für den Clien
 | 853  | TCP       | DNS-over-TLS (`tls://dns1.techniverse.net:853`) |
 | 853  | UDP       | DNS-over-QUIC (`quic://dns1.techniverse.net:853`) |
 
+## Protokoll-Erkennung
+
+AdGuard Shield erkennt **automatisch**, welches DNS-Protokoll ein Client verwendet. Diese Information wird aus dem Feld `client_proto` der AdGuard Home Query Log API extrahiert und an folgenden Stellen angezeigt:
+
+- **Log-Datei**: Jede Anfrage wird mit dem verwendeten Protokoll geloggt
+- **Ban-History**: Die Protokoll-Spalte zeigt, über welches Protokoll die Anfragen kamen
+- **Status-Anzeige**: Aktive Sperren zeigen das verwendete Protokoll an
+- **Benachrichtigungen**: Push-Nachrichten enthalten das Protokoll
+
+### Unterstützte Protokolle
+
+| API-Wert | Anzeige | Beschreibung |
+|----------|---------|-------------|
+| *(leer)* | `DNS` | Klassisches DNS über UDP/TCP (Port 53) |
+| `doh` | `DoH` | DNS-over-HTTPS (Port 443) |
+| `dot` | `DoT` | DNS-over-TLS (Port 853) |
+| `doq` | `DoQ` | DNS-over-QUIC (Port 853/UDP) |
+| `dnscrypt` | `DNSCrypt` | DNSCrypt-Protokoll |
+
+Verwendet ein Client mehrere Protokolle gleichzeitig (z.B. DoH und DNS), werden alle erkannten Protokolle kommagetrennt angezeigt (z.B. `DNS,DoH`).
+
+> **Wichtig:** Alle Protokolle werden gleichermaßen überwacht und gegen das Rate-Limit geprüft. Ein DoH-Flood wird genauso erkannt und gesperrt wie ein klassischer DNS-Flood – die Erkennung basiert auf den AdGuard Home Logdaten, nicht auf Netzwerk-Traffic.
+
 ## Whitelist richtig pflegen
 
 Die Whitelist sollte mindestens enthalten:

@@ -29,17 +29,20 @@ log_ban_history() {
     local domain="${3:-}"
     local count="${4:-}"
     local reason="${5:-}"
+    local protocol="${6:-}"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
     if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
         echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#─────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
+        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
+        echo "#────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
     fi
 
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "-" "${reason:-expired}" \
+    [[ -z "$protocol" ]] && protocol="-"
+
+    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
+        "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "-" "$protocol" "${reason:-expired}" \
         >> "$BAN_HISTORY_FILE"
 }
 
@@ -52,6 +55,7 @@ for state_file in "${STATE_DIR}"/*.ban; do
     client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
     domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2)
     is_permanent=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2)
+    protocol=$(grep '^PROTOCOL=' "$state_file" | cut -d= -f2)
 
     # Permanente Sperren nicht automatisch aufheben
     if [[ "$is_permanent" == "true" || "$ban_until_epoch" == "0" ]]; then
@@ -69,7 +73,7 @@ for state_file in "${STATE_DIR}"/*.ban; do
         fi
 
         # Ban-History Eintrag
-        log_ban_history "UNBAN" "$client_ip" "$domain" "-" "expired-cron"
+        log_ban_history "UNBAN" "$client_ip" "$domain" "-" "expired-cron" "${protocol:-}"
 
         rm -f "$state_file"
         unban_count=$((unban_count + 1))

@@ -79,23 +79,25 @@ log_ban_history() {
     local count="${4:-}"
     local reason="${5:-}"
     local duration="${6:-}"
+    local protocol="${7:-}"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
     # Header schreiben falls Datei neu ist
     if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
         echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#───────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
+        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
+        echo "#──────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
     fi
 
     if [[ -z "$duration" && "$action" == "BAN" ]]; then
         duration="${BAN_DURATION}s"
     fi
     [[ -z "$duration" ]] && duration="-"
+    [[ -z "$protocol" ]] && protocol="-"
 
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "$duration" "${reason:-rate-limit}" \
+    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
+        "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "$duration" "$protocol" "${reason:-rate-limit}" \
         >> "$BAN_HISTORY_FILE"
 }
 
@@ -213,6 +215,22 @@ reset_offense_level() {
     rm -f "$offense_file"
 }
 
+# ─── Protokoll-Erkennung ─────────────────────────────────────────────────────
+# Wandelt AdGuard Home client_proto Werte in lesbare Protokoll-Namen um
+# API-Werte: "" = Plain DNS, "doh" = DNS-over-HTTPS, "dot" = DNS-over-TLS,
+#            "doq" = DNS-over-QUIC, "dnscrypt" = DNSCrypt
+format_protocol() {
+    local proto="$1"
+    case "${proto,,}" in
+        doh)      echo "DoH"      ;;
+        dot)      echo "DoT"      ;;
+        doq)      echo "DoQ"      ;;
+        dnscrypt) echo "DNSCrypt" ;;
+        ""|dns)   echo "DNS"      ;;
+        *)        echo "${proto:-DNS}" ;;
+    esac
+}
+
 # ─── Verzeichnisse erstellen ──────────────────────────────────────────────────
 init_directories() {
     mkdir -p "$STATE_DIR"
@@ -298,6 +316,7 @@ ban_client() {
     local count="$3"
     local reason="${4:-rate-limit}"
     local window="${5:-$RATE_LIMIT_WINDOW}"
+    local protocol="${6:-DNS}"
 
     # Prüfen ob bereits gesperrt
     local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
@@ -335,18 +354,18 @@ ban_client() {
 
     if [[ "$DRY_RUN" == "true" ]]; then
         if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
-            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s) für ${duration_display} [Stufe $offense_level] [${reason}]"
+            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [Stufe $offense_level] [${reason}]"
         else
-            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s) [${reason}]"
+            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s via $protocol) [${reason}]"
         fi
-        log_ban_history "DRY" "$client_ip" "$domain" "$count" "dry-run (${reason})" "${duration_display}"
+        log_ban_history "DRY" "$client_ip" "$domain" "$count" "dry-run (${reason})" "${duration_display}" "$protocol"
         return 0
     fi
 
     if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
-        log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${window}s) für ${duration_display} [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}] [${reason}]"
+        log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}] [${reason}]"
     else
-        log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${window}s) für ${duration_display} [${reason}]"
+        log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [${reason}]"
     fi
 
     # IPv4 oder IPv6 erkennen
@@ -370,16 +389,17 @@ BAN_DURATION=${effective_duration}
 OFFENSE_LEVEL=$offense_level
 IS_PERMANENT=$is_permanent
 REASON=$reason
+PROTOCOL=$protocol
 EOF
 
     # Ban-History Eintrag
     local history_duration="${duration_display}"
     [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]] && history_duration="${duration_display} (Stufe ${offense_level})"
-    log_ban_history "BAN" "$client_ip" "$domain" "$count" "$reason" "$history_duration"
+    log_ban_history "BAN" "$client_ip" "$domain" "$count" "$reason" "$history_duration" "$protocol"
 
     # Benachrichtigung senden
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
-        send_notification "ban" "$client_ip" "$domain" "$count" "$offense_level" "$duration_display" "$reason" "$window"
+        send_notification "ban" "$client_ip" "$domain" "$count" "$offense_level" "$duration_display" "$reason" "$window" "$protocol"
     fi
 }
 
@@ -389,11 +409,14 @@ unban_client() {
     local reason="${2:-expired}"
     local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
 
-    # Domain aus State lesen bevor wir löschen
+    # Domain und Protokoll aus State lesen bevor wir löschen
     local domain="-"
+    local protocol="-"
     if [[ -f "$state_file" ]]; then
         domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2 || true)
+        protocol=$(grep '^PROTOCOL=' "$state_file" | cut -d= -f2 || true)
     fi
+    [[ -z "$protocol" ]] && protocol="-"
 
     log "INFO" "ENTSPERRE Client: $client_ip ($reason)"
 
@@ -406,7 +429,7 @@ unban_client() {
     rm -f "$state_file"
 
     # Ban-History Eintrag
-    log_ban_history "UNBAN" "$client_ip" "$domain" "-" "$reason"
+    log_ban_history "UNBAN" "$client_ip" "$domain" "-" "$reason" "-" "$protocol"
 
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
         send_notification "unban" "$client_ip" "" ""
@@ -450,6 +473,7 @@ send_notification() {
     local duration_display="${6:-}"
     local reason="${7:-rate-limit}"
     local window="${8:-$RATE_LIMIT_WINDOW}"
+    local protocol="${9:-DNS}"
 
     # Ntfy benötigt keine Webhook-URL (nutzt NTFY_SERVER_URL + NTFY_TOPIC)
     if [[ "$NOTIFY_TYPE" != "ntfy" && -z "$NOTIFY_WEBHOOK_URL" ]]; then
@@ -462,11 +486,11 @@ send_notification() {
     local message
     if [[ "$action" == "ban" ]]; then
         if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -n "$offense_level" ]]; then
-            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s, ${reason_label}). Sperre für **${duration_display}** [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]."
+            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s via **$protocol**, ${reason_label}). Sperre für **${duration_display}** [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]."
         else
             local simple_dur
             simple_dur=$(format_duration "${BAN_DURATION}")
-            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s, ${reason_label}). Sperre für ${simple_dur}."
+            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s via **$protocol**, ${reason_label}). Sperre für ${simple_dur}."
         fi
     elif [[ "$action" == "service_start" ]]; then
         message="🟢 AdGuard Shield v${VERSION} wurde gestartet."
@@ -588,10 +612,11 @@ analyze_queries() {
     entry_count=$(echo "$api_response" | jq '.data // [] | length' 2>/dev/null || echo "0")
     log "INFO" "API-Abfrage: ${entry_count} Einträge erhalten, prüfe Zeitfenster ${RATE_LIMIT_WINDOW}s..."
 
-    # Extrahiere Client-IP + Domain Paare aus dem Zeitfenster
+    # Extrahiere Client-IP + Domain + Protokoll Paare aus dem Zeitfenster
     # und zähle die Häufigkeit pro (client, domain) Kombination
     # Unterstützt .question.name (alte API) und .question.host (neue API)
     # Unterstützt Timestamps mit UTC ("Z") und Zeitzonen-Offset ("+01:00")
+    # Protokoll: client_proto aus der API → ""/dns = Plain DNS, doh, dot, doq, dnscrypt
     local violations=""
     violations=$(echo "$api_response" | jq -r --argjson window_start "$window_start" '
         # ISO 8601 Timestamp zu Unix-Epoch konvertieren
@@ -620,18 +645,20 @@ analyze_queries() {
             select((.time | to_epoch) >= $window_start) |
             {
                 client: (.client // .client_info.ip // "unknown"),
-                domain: ((.question.name // .question.host // "unknown") | rtrimstr("."))
+                domain: ((.question.name // .question.host // "unknown") | rtrimstr(".")),
+                proto: (.client_proto // "")
             }
         ] |
         group_by(.client + "|" + .domain) |
         map({
             client: .[0].client,
             domain: .[0].domain,
-            count: length
+            count: length,
+            protocols: ([.[].proto | if . == "" then "dns" else . end] | unique | join(","))
         }) |
         .[] |
         select(.count > 0) |
-        "\(.client)|\(.domain)|\(.count)"
+        "\(.client)|\(.domain)|\(.count)|\(.protocols)"
     ') || {
         log "ERROR" "jq Analyse fehlgeschlagen - API-Antwort-Format prüfen (ist AdGuard Home erreichbar?)"
         return
@@ -643,18 +670,31 @@ analyze_queries() {
     fi
 
     # Prüfe jede Kombination gegen das Limit
-    while IFS='|' read -r client domain count; do
+    while IFS='|' read -r client domain count protocols; do
         [[ -z "$client" || -z "$domain" || -z "$count" ]] && continue
 
-        log "INFO" "Client: $client, Domain: $domain, Anfragen: $count/$RATE_LIMIT_MAX_REQUESTS"
+        # Protokoll-Namen formatieren für die Anzeige
+        local proto_display=""
+        if [[ -n "$protocols" ]]; then
+            local -a proto_parts=()
+            IFS=',' read -ra raw_protos <<< "$protocols"
+            for p in "${raw_protos[@]}"; do
+                proto_parts+=("$(format_protocol "$p")")
+            done
+            proto_display=$(IFS=','; echo "${proto_parts[*]}")
+        else
+            proto_display="DNS"
+        fi
+
+        log "INFO" "Client: $client, Domain: $domain, Anfragen: $count/$RATE_LIMIT_MAX_REQUESTS, Protokoll: $proto_display"
 
         if [[ "$count" -gt "$RATE_LIMIT_MAX_REQUESTS" ]]; then
             if is_whitelisted "$client"; then
-                log "INFO" "Client $client ist auf der Whitelist - keine Sperre (${count}x $domain)"
+                log "INFO" "Client $client ist auf der Whitelist - keine Sperre (${count}x $domain via $proto_display)"
                 continue
             fi
 
-            ban_client "$client" "$domain" "$count"
+            ban_client "$client" "$domain" "$count" "rate-limit" "$RATE_LIMIT_WINDOW" "$proto_display"
         fi
     done <<< "$violations"
 }
@@ -717,7 +757,8 @@ analyze_subdomain_flood() {
             {
                 client: (.client // .client_info.ip // "unknown"),
                 domain: $domain,
-                base_domain: $base
+                base_domain: $base,
+                proto: (.client_proto // "")
             }
         ] |
         # Nur Einträge mit echten Subdomains (domain != base_domain)
@@ -728,11 +769,12 @@ analyze_subdomain_flood() {
             base_domain: .[0].base_domain,
             unique_subdomains: ([.[].domain] | unique | length),
             total_queries: length,
-            example_domains: ([.[].domain] | unique | .[0:3] | join(", "))
+            example_domains: ([.[].domain] | unique | .[0:3] | join(", ")),
+            protocols: ([.[].proto | if . == "" then "dns" else . end] | unique | join(","))
         }) |
         .[] |
         select(.unique_subdomains > $max_unique) |
-        "\(.client)|\(.base_domain)|\(.unique_subdomains)|\(.total_queries)|\(.example_domains)"
+        "\(.client)|\(.base_domain)|\(.unique_subdomains)|\(.total_queries)|\(.example_domains)|\(.protocols)"
     ') || {
         log "ERROR" "jq Subdomain-Flood-Analyse fehlgeschlagen"
         return
@@ -744,13 +786,26 @@ analyze_subdomain_flood() {
     fi
 
     # Gefundene Verstöße verarbeiten
-    while IFS='|' read -r client base_domain unique_count total_count examples; do
+    while IFS='|' read -r client base_domain unique_count total_count examples protocols; do
         [[ -z "$client" || -z "$base_domain" || -z "$unique_count" ]] && continue
 
-        log "WARN" "Subdomain-Flood erkannt: $client → ${unique_count} eindeutige Subdomains von $base_domain (${total_count} Anfragen, z.B. $examples)"
+        # Protokoll-Namen formatieren
+        local proto_display=""
+        if [[ -n "$protocols" ]]; then
+            local -a proto_parts=()
+            IFS=',' read -ra raw_protos <<< "$protocols"
+            for p in "${raw_protos[@]}"; do
+                proto_parts+=("$(format_protocol "$p")")
+            done
+            proto_display=$(IFS=','; echo "${proto_parts[*]}")
+        else
+            proto_display="DNS"
+        fi
+
+        log "WARN" "Subdomain-Flood erkannt: $client → ${unique_count} eindeutige Subdomains von $base_domain (${total_count} Anfragen via $proto_display, z.B. $examples)"
 
         if is_whitelisted "$client"; then
-            log "INFO" "Client $client ist auf der Whitelist - keine Sperre (Subdomain-Flood: ${unique_count}x $base_domain)"
+            log "INFO" "Client $client ist auf der Whitelist - keine Sperre (Subdomain-Flood: ${unique_count}x $base_domain via $proto_display)"
             continue
         fi
 
@@ -761,7 +816,7 @@ analyze_subdomain_flood() {
             continue
         fi
 
-        ban_client "$client" "*.${base_domain}" "$unique_count" "subdomain-flood" "$window"
+        ban_client "$client" "*.${base_domain}" "$unique_count" "subdomain-flood" "$window" "$proto_display"
     done <<< "$violations"
 }
 
@@ -795,7 +850,7 @@ show_status() {
         for state_file in "${STATE_DIR}"/*.ban; do
             [[ -f "$state_file" ]] || continue
             ban_count=$((ban_count + 1))
-            local s_ip s_domain s_level s_perm s_dur s_until s_reason s_count
+            local s_ip s_domain s_level s_perm s_dur s_until s_reason s_count s_proto
             s_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2 || true)
             s_domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2 || true)
             s_level=$(grep '^OFFENSE_LEVEL=' "$state_file" | cut -d= -f2 || true)
@@ -804,7 +859,9 @@ show_status() {
             s_until=$(grep '^BAN_UNTIL=' "$state_file" | cut -d= -f2 || true)
             s_reason=$(grep '^REASON=' "$state_file" | cut -d= -f2 || true)
             s_count=$(grep '^COUNT=' "$state_file" | cut -d= -f2 || true)
+            s_proto=$(grep '^PROTOCOL=' "$state_file" | cut -d= -f2 || true)
             s_reason="${s_reason:-rate-limit}"
+            s_proto="${s_proto:-?}"
 
             local reason_tag=""
             [[ "$s_reason" == "subdomain-flood" ]] && reason_tag=" (Subdomain-Flood)"
@@ -818,12 +875,14 @@ show_status() {
                 fi
             fi
 
+            local proto_tag=" via ${s_proto}"
+
             if [[ "$s_perm" == "true" ]]; then
-                echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT, Stufe ${s_level:-?}${count_info}]${reason_tag}"
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT, Stufe ${s_level:-?}${count_info}${proto_tag}]${reason_tag}"
             elif [[ -n "$s_level" && "$s_level" -gt 0 ]]; then
-                echo "  🚫 Gesperrt: $s_ip → $s_domain [Stufe ${s_level}, $(format_duration "${s_dur:-$BAN_DURATION}"), bis $s_until${count_info}]${reason_tag}"
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [Stufe ${s_level}, $(format_duration "${s_dur:-$BAN_DURATION}"), bis $s_until${count_info}${proto_tag}]${reason_tag}"
             else
-                echo "  🚫 Gesperrt: $s_ip → $s_domain [bis $s_until${count_info}]${reason_tag}"
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [bis $s_until${count_info}${proto_tag}]${reason_tag}"
             fi
         done
     fi
