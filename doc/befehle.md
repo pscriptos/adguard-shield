@@ -43,15 +43,31 @@ Folgende Pakete werden bei der Installation automatisch installiert (via `apt`):
 - `gawk` — Textverarbeitung
 - `systemd` — Service-Management
 
-## Monitor (Hauptscript)
+## systemd Service
+
+AdGuard Shield wird als systemd Service betrieben. **Zum Starten, Stoppen und Neustarten immer `systemctl` verwenden:**
 
 ```bash
-# Starten
-sudo /opt/adguard-shield/adguard-shield.sh start
+# Start / Stop / Restart
+sudo systemctl start adguard-shield
+sudo systemctl stop adguard-shield
+sudo systemctl restart adguard-shield
 
-# Stoppen
-sudo /opt/adguard-shield/adguard-shield.sh stop
+# Status
+sudo systemctl status adguard-shield
 
+# Autostart aktivieren / deaktivieren
+sudo systemctl enable adguard-shield
+sudo systemctl disable adguard-shield
+```
+
+> **Hinweis:** Der Service wird bei der Installation automatisch für den Autostart beim Booten aktiviert. Nach einem Update wird der Service automatisch neu gestartet — ein manueller Neustart ist nicht nötig.
+
+## Monitor — Verwaltungsbefehle
+
+Die folgenden Befehle dienen der **Verwaltung und Diagnose** und können jederzeit ausgeführt werden, auch während der Service läuft:
+
+```bash
 # Status + aktive Sperren anzeigen
 sudo /opt/adguard-shield/adguard-shield.sh status
 
@@ -70,7 +86,7 @@ sudo /opt/adguard-shield/adguard-shield.sh unban 192.168.1.100
 # API-Verbindung testen
 sudo /opt/adguard-shield/adguard-shield.sh test
 
-# Dry-Run (nur loggen, nichts sperren)
+# Dry-Run (nur loggen, nichts sperren — läuft im Vordergrund!)
 sudo /opt/adguard-shield/adguard-shield.sh dry-run
 
 # Offense-Zähler für alle IPs zurücksetzen (Progressive Sperren)
@@ -88,6 +104,8 @@ sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync
 # Externe Blocklist - Alle Sperren der externen Liste aufheben
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-flush
 ```
+
+> **⚠ Wichtig:** Zum Starten und Stoppen des Monitors **nicht** `adguard-shield.sh start` bzw. `stop` verwenden! Diese Befehle starten den Prozess im **Vordergrund** — die Ausgabe wird live angezeigt und `Strg+C` beendet den gesamten Prozess. Stattdessen immer `sudo systemctl start/stop/restart adguard-shield` nutzen.
 
 ## iptables Helper
 
@@ -137,26 +155,6 @@ sudo /opt/adguard-shield/external-blocklist-worker.sh status
 # Alle externen Sperren aufheben
 sudo /opt/adguard-shield/external-blocklist-worker.sh flush
 ```
-
-## systemd Service
-
-Der Service wird bei der Installation automatisch für den **Autostart beim Booten** aktiviert.
-
-```bash
-# Start / Stop / Restart
-sudo systemctl start adguard-shield
-sudo systemctl stop adguard-shield
-sudo systemctl restart adguard-shield
-
-# Status
-sudo systemctl status adguard-shield
-
-# Autostart aktivieren / deaktivieren
-sudo systemctl enable adguard-shield
-sudo systemctl disable adguard-shield
-```
-
-> **Hinweis:** Nach einem Update wird der Service automatisch neu gestartet. Ein manueller Neustart ist nicht nötig.
 
 ## Logs
 

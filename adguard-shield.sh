@@ -987,21 +987,29 @@ case "${1:-start}" in
         cat << USAGE
 AdGuard Shield v${VERSION}
 
-Nutzung: $0 {start|stop|status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush}
+Service-Steuerung (empfohlen):
+  sudo systemctl start adguard-shield
+  sudo systemctl stop adguard-shield
+  sudo systemctl restart adguard-shield
+  sudo systemctl status adguard-shield
 
-Befehle:
-  start              Startet den Monitor (inkl. Blocklist-Worker)
-  stop               Stoppt den Monitor
+Nutzung: $0 {status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush}
+
+Verwaltungsbefehle:
   status             Zeigt aktive Sperren, Regeln und Wiederholungstäter
   history [N]        Zeigt die letzten N Ban-Einträge (Standard: 50)
   flush              Hebt alle Sperren auf
   unban IP           Entsperrt eine bestimmte IP-Adresse
   reset-offenses [IP] Setzt Offense-Zähler zurück (alle oder eine bestimmte IP)
   test               Testet die Verbindung zur AdGuard Home API
-  dry-run            Startet im Testmodus (keine echten Sperren)
+  dry-run            Startet im Testmodus (keine echten Sperren, Vordergrund!)
   blocklist-status   Zeigt Status der externen Blocklisten
   blocklist-sync     Einmalige Synchronisation der externen Blocklisten
   blocklist-flush    Entfernt alle Sperren der externen Blocklisten
+
+Interne Befehle (nicht direkt verwenden — nur über systemd):
+  start              Startet den Monitor im Vordergrund
+  stop               Stoppt den Monitor
 
 Konfiguration: $CONFIG_FILE
 Log-Datei:     $LOG_FILE
