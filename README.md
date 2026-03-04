@@ -22,12 +22,14 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 ## Features
 
 - Automatische Erkennung und Sperre bei Rate-Limit-Verstößen
+- **Subdomain-Flood-Erkennung** — erkennt Random-Subdomain-Attacken (z.B. `abc123.microsoft.com`, `xyz456.microsoft.com`, ...)
 - **Progressive Sperren (Recidive)** — Wiederholungstäter werden stufenweise länger gesperrt (wie bei fail2ban)
 - Unterstützt **alle DNS-Protokolle**: DNS (53), DoH (443), DoT (853), DoQ (784/853/8853)
 - **IPv4 + IPv6**
 - Eigene iptables Chain — greift nicht in bestehende Regeln ein
 - Automatisches Entsperren nach konfigurierbarer Dauer
 - **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
+- **AbuseIPDB Reporting** — permanent gesperrte IPs automatisch an AbuseIPDB melden
 - **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
 - Whitelist für vertrauenswürdige IPs
 - Dry-Run Modus zum gefahrlosen Testen

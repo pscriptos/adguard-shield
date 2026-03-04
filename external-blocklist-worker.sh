@@ -53,15 +53,15 @@ log_ban_history() {
 
     if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
         echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#───────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
+        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
+        echo "#──────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
     fi
 
     local duration="permanent"
     [[ "$EXTERNAL_BLOCKLIST_BAN_DURATION" -gt 0 ]] && duration="${EXTERNAL_BLOCKLIST_BAN_DURATION}s"
 
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "-" "-" "$duration" "$reason" \
+    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
+        "$timestamp" "$action" "$client_ip" "-" "-" "$duration" "-" "$reason" \
         >> "$BAN_HISTORY_FILE"
 }
 

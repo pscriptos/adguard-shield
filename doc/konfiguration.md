@@ -37,6 +37,39 @@ Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austausche
 | `CHECK_INTERVAL` | `10` | Wie oft die Logs geprüft werden (Sekunden) |
 | `API_QUERY_LIMIT` | `500` | Anzahl API-Einträge pro Abfrage (max 5000) |
 
+### Subdomain-Flood-Erkennung (Random Subdomain Attack)
+
+Erkennt Bot-Angriffe, bei denen massenhaft zufällige Subdomains einer Domain abgefragt werden (z.B. `abc123.microsoft.com`, `xyz456.microsoft.com`, ...). Dabei wird pro Client gezählt, wie viele **eindeutige** Subdomains einer Basisdomain (z.B. `microsoft.com`) im Zeitfenster aufgerufen werden.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `SUBDOMAIN_FLOOD_ENABLED` | `true` | Subdomain-Flood-Erkennung aktivieren |
+| `SUBDOMAIN_FLOOD_MAX_UNIQUE` | `50` | Max. eindeutige Subdomains pro Basisdomain/Client im Zeitfenster |
+| `SUBDOMAIN_FLOOD_WINDOW` | `60` | Zeitfenster in Sekunden |
+
+#### Wie funktioniert die Erkennung?
+
+1. Aus jeder DNS-Anfrage wird die **Basisdomain** extrahiert (z.B. `microsoft.com` aus `abc.microsoft.com`)
+2. Pro Client wird gezählt, wie viele **verschiedene** Subdomains einer Basisdomain im Zeitfenster abgefragt wurden
+3. Überschreitet die Anzahl eindeutiger Subdomains den Schwellwert, wird der Client gesperrt
+
+#### Beispiel
+
+Ein Bot fragt innerhalb von 60 Sekunden folgende Domains ab:
+
+```
+hbidcw.microsoft.com
+ftdzewf.microsoft.com
+xk9z3a.microsoft.com
+... (50+ verschiedene Subdomains)
+```
+
+→ Alle Anfragen haben die gleiche Basisdomain `microsoft.com`. Sobald mehr als 50 eindeutige Subdomains erkannt werden, wird der Client gesperrt.
+
+> **Hinweis:** Nur echte Subdomains werden gezählt. Anfragen direkt an `microsoft.com` (ohne Subdomain) lösen diese Erkennung nicht aus. Multi-Part-TLDs wie `.co.uk`, `.com.au` etc. werden korrekt behandelt.
+
+> **Tipp:** Der Schwellwert `SUBDOMAIN_FLOOD_MAX_UNIQUE` sollte hoch genug sein, um legitime Clients nicht zu stören (z.B. CDNs nutzen oft viele Subdomains). Ein Wert von 50–100 ist in den meisten Fällen sinnvoll.
+
 ### Sperr-Einstellungen
 
 | Parameter | Standard | Beschreibung |
@@ -109,7 +142,44 @@ Ermöglicht das Einbinden externer IP-Blocklisten (z.B. gehostete Textdateien mi
 | `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden (0 = permanent bis IP aus Liste entfernt) |
 | `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs automatisch entsperren wenn aus Liste entfernt |
 | `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-shield/external-blocklist` | Lokaler Cache für heruntergeladene Listen |
+### AbuseIPDB Reporting
 
+Meldet permanent gesperrte IPs automatisch an [AbuseIPDB](https://www.abuseipdb.com/). Damit wird die IP in einer öffentlichen Datenbank als missbräuchlich markiert und andere Administratoren können davon profitieren.
+
+> **Wichtig:** Es werden **nur permanent gesperrte IPs** gemeldet — also erst wenn die maximale Progressive-Ban-Stufe erreicht ist. Einzelne temporäre Sperren lösen keinen AbuseIPDB-Report aus.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|---------------|
+| `ABUSEIPDB_ENABLED` | `false` | AbuseIPDB-Reporting aktivieren |
+| `ABUSEIPDB_API_KEY` | *(leer)* | API-Key von [abuseipdb.com/account/api](https://www.abuseipdb.com/account/api) |
+| `ABUSEIPDB_CATEGORIES` | `4` | Report-Kategorien (4 = DDoS Attack). Siehe [Kategorien](https://www.abuseipdb.com/categories) |
+
+#### AbuseIPDB einrichten
+
+1. Erstelle einen kostenlosen Account auf [abuseipdb.com](https://www.abuseipdb.com/)
+2. Erstelle einen API-Key unter [Account → API](https://www.abuseipdb.com/account/api)
+3. Aktiviere das Reporting in der Konfiguration:
+
+```bash
+ABUSEIPDB_ENABLED=true
+ABUSEIPDB_API_KEY="dein-api-key-hier"
+ABUSEIPDB_CATEGORIES="4"
+```
+
+4. Service neustarten:
+
+```bash
+sudo systemctl restart adguard-shield
+```
+
+#### Was wird gemeldet?
+
+Der Report an AbuseIPDB enthält (auf Englisch):
+
+- **Bei Rate-Limit:** `DNS flooding on our DNS server: 100x microsoft.com. Permanently banned by AdGuard Shield.`
+- **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com (random subdomain attack). Permanently banned by AdGuard Shield.`
+
+Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
 #### Externe Blocklist einrichten
 
 1. Erstelle eine Textdatei auf einem Webserver mit einer IP pro Zeile:
@@ -150,6 +220,29 @@ Bei einem Rate-Limit-Verstoß werden **alle** DNS-Protokoll-Ports für den Clien
 | 443  | TCP       | DNS-over-HTTPS (DoH) |
 | 853  | TCP       | DNS-over-TLS (`tls://dns1.techniverse.net:853`) |
 | 853  | UDP       | DNS-over-QUIC (`quic://dns1.techniverse.net:853`) |
+
+## Protokoll-Erkennung
+
+AdGuard Shield erkennt **automatisch**, welches DNS-Protokoll ein Client verwendet. Diese Information wird aus dem Feld `client_proto` der AdGuard Home Query Log API extrahiert und an folgenden Stellen angezeigt:
+
+- **Log-Datei**: Jede Anfrage wird mit dem verwendeten Protokoll geloggt
+- **Ban-History**: Die Protokoll-Spalte zeigt, über welches Protokoll die Anfragen kamen
+- **Status-Anzeige**: Aktive Sperren zeigen das verwendete Protokoll an
+- **Benachrichtigungen**: Push-Nachrichten enthalten das Protokoll
+
+### Unterstützte Protokolle
+
+| API-Wert | Anzeige | Beschreibung |
+|----------|---------|-------------|
+| *(leer)* | `DNS` | Klassisches DNS über UDP/TCP (Port 53) |
+| `doh` | `DoH` | DNS-over-HTTPS (Port 443) |
+| `dot` | `DoT` | DNS-over-TLS (Port 853) |
+| `doq` | `DoQ` | DNS-over-QUIC (Port 853/UDP) |
+| `dnscrypt` | `DNSCrypt` | DNSCrypt-Protokoll |
+
+Verwendet ein Client mehrere Protokolle gleichzeitig (z.B. DoH und DNS), werden alle erkannten Protokolle kommagetrennt angezeigt (z.B. `DNS,DoH`).
+
+> **Wichtig:** Alle Protokolle werden gleichermaßen überwacht und gegen das Rate-Limit geprüft. Ein DoH-Flood wird genauso erkannt und gesperrt wie ein klassischer DNS-Flood – die Erkennung basiert auf den AdGuard Home Logdaten, nicht auf Netzwerk-Traffic.
 
 ## Whitelist richtig pflegen
 

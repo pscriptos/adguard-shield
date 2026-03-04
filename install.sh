@@ -6,7 +6,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="0.3.1"
+VERSION="0.4.0"
 
 set -euo pipefail
 
@@ -40,6 +40,11 @@ print_header() {
     echo -e "${GREEN}  Version: ${VERSION}${NC}"
     echo -e "${BLUE}  Autor:   Patrick Asmus${NC}"
     echo -e "${BLUE}  E-Mail:  support@techniverse.net${NC}"
+    echo -e "${BLUE}───────────────────────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${BLUE}  Web:     https://www.patrick-asmus.de${NC}"
+    echo -e "${BLUE}  Blog:    https://www.cleveradmin.de${NC}"
+    echo -e "${BLUE}───────────────────────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${BLUE}  Repo:    https://git.techniverse.net/scriptos/adguard-shield${NC}"
     echo ""
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
     echo ""
@@ -77,8 +82,15 @@ print_help() {
     echo -e "  ${CYAN}sudo bash install.sh uninstall${NC}                         # Deinstallation"
     echo -e "  ${CYAN}sudo bash install.sh status${NC}                           # Status prüfen"
     echo ""
+    echo -e "${BOLD}Service-Befehle:${NC}"
+    echo -e "  ${CYAN}sudo systemctl start adguard-shield${NC}                    # Service starten"
+    echo -e "  ${CYAN}sudo systemctl stop adguard-shield${NC}                     # Service stoppen"
+    echo -e "  ${CYAN}sudo systemctl restart adguard-shield${NC}                  # Service neustarten"
+    echo -e "  ${CYAN}sudo systemctl status adguard-shield${NC}                   # Service-Status"
+    echo -e "  ${CYAN}sudo journalctl -u adguard-shield -f${NC}                   # Logs live verfolgen"
+    echo ""
     echo -e "${BOLD}Monitor-Befehle (nach Installation):${NC}"
-    echo -e "  ${CYAN}sudo /opt/adguard-shield/adguard-shield.sh start${NC}       # Monitor starten"
+    echo -e "  ${CYAN}sudo /opt/adguard-shield/adguard-shield.sh start${NC}       # Monitor im Vordergrund starten"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/adguard-shield.sh stop${NC}        # Monitor stoppen"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/adguard-shield.sh status${NC}      # Status & aktive Sperren"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/adguard-shield.sh history${NC}     # Ban-History anzeigen"
@@ -96,13 +108,6 @@ print_help() {
     echo -e "  ${CYAN}sudo /opt/adguard-shield/iptables-helper.sh remove${NC}     # Chain komplett entfernen"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/iptables-helper.sh save${NC}       # Regeln speichern"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/iptables-helper.sh restore${NC}    # Regeln wiederherstellen"
-    echo ""
-    echo -e "${BOLD}Service-Befehle:${NC}"
-    echo -e "  ${CYAN}sudo systemctl start adguard-shield${NC}                    # Service starten"
-    echo -e "  ${CYAN}sudo systemctl stop adguard-shield${NC}                     # Service stoppen"
-    echo -e "  ${CYAN}sudo systemctl restart adguard-shield${NC}                  # Service neustarten"
-    echo -e "  ${CYAN}sudo systemctl status adguard-shield${NC}                   # Service-Status"
-    echo -e "  ${CYAN}sudo journalctl -u adguard-shield -f${NC}                   # Logs live verfolgen"
     echo ""
     echo -e "${BOLD}Voraussetzungen:${NC}"
     echo "  - Linux Server (Debian/Ubuntu empfohlen)"
@@ -301,7 +306,7 @@ migrate_config() {
                 echo -n "$current_comment_block" >> "$existing_conf"
                 echo "$line" >> "$existing_conf"
                 echo -e "  ➕ Neuer Parameter hinzugefügt: ${GREEN}$key${NC}"
-                ((new_keys_added++))
+                new_keys_added=$((new_keys_added + 1))
             fi
         fi
 
@@ -391,17 +396,60 @@ test_connection() {
 
     source "$INSTALL_DIR/adguard-shield.conf"
 
-    local response
-    response=$(curl -s -o /dev/null -w "%{http_code}" \
-        -u "${ADGUARD_USER}:${ADGUARD_PASS}" \
-        --connect-timeout 5 \
-        "${ADGUARD_URL}/control/querylog?limit=1" 2>/dev/null)
+    # ── Schritt 1: Base-URL Erreichbarkeit prüfen ────────────────────────
+    echo -e "  ${CYAN}1)${NC} Prüfe Erreichbarkeit von ${BOLD}${ADGUARD_URL}${NC} ..."
 
-    if [[ "$response" == "200" ]]; then
-        echo -e "  ✅ Verbindung erfolgreich! (HTTP $response)"
+    local base_http_code
+    local base_curl_exit
+    base_http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        --connect-timeout 5 --max-time 10 \
+        -k "${ADGUARD_URL}" 2>/dev/null) || base_curl_exit=$?
+    base_curl_exit=${base_curl_exit:-0}
+
+    if [[ "$base_curl_exit" -ne 0 ]]; then
+        # curl konnte keine Verbindung aufbauen
+        echo -e "  ❌ Base-URL nicht erreichbar! (curl Exit-Code: $base_curl_exit)"
+        case "$base_curl_exit" in
+            6)  echo -e "     ${YELLOW}→ DNS-Auflösung fehlgeschlagen. Hostname prüfen!${NC}" ;;
+            7)  echo -e "     ${YELLOW}→ Verbindung abgelehnt. Läuft AdGuard Home? Port korrekt?${NC}" ;;
+            28) echo -e "     ${YELLOW}→ Timeout. Host nicht erreichbar oder Firewall blockiert.${NC}" ;;
+            35|51|60) echo -e "     ${YELLOW}→ SSL/TLS-Fehler. Zertifikat oder HTTPS-Konfiguration prüfen.${NC}" ;;
+            *)  echo -e "     ${YELLOW}→ Unbekannter Fehler. Manuell testen: curl -v ${ADGUARD_URL}${NC}" ;;
+        esac
+        echo ""
+        echo -e "  ${YELLOW}Troubleshooting:${NC}"
+        echo -e "     curl -ikv ${ADGUARD_URL}"
+        echo ""
+        return 1
+    fi
+
+    if [[ "$base_http_code" == "000" ]]; then
+        echo -e "  ❌ Base-URL nicht erreichbar (keine HTTP-Antwort)"
+        echo -e "     ${YELLOW}→ Manuell testen: curl -ikv ${ADGUARD_URL}${NC}"
+        echo ""
+        return 1
+    fi
+
+    echo -e "  ✅ Base-URL erreichbar (HTTP $base_http_code)"
+
+    # ── Schritt 2: API-Endpunkt mit Authentifizierung testen ─────────────
+    echo -e "  ${CYAN}2)${NC} Teste API-Authentifizierung ..."
+
+    local api_response
+    api_response=$(curl -s -o /dev/null -w "%{http_code}" \
+        -u "${ADGUARD_USER}:${ADGUARD_PASS}" \
+        --connect-timeout 5 --max-time 10 \
+        -k "${ADGUARD_URL}/control/querylog?limit=1" 2>/dev/null)
+
+    if [[ "$api_response" == "200" ]]; then
+        echo -e "  ✅ API-Authentifizierung erfolgreich! (HTTP $api_response)"
+    elif [[ "$api_response" == "401" || "$api_response" == "403" ]]; then
+        echo -e "  ❌ Authentifizierung fehlgeschlagen (HTTP $api_response)"
+        echo -e "     ${YELLOW}→ Benutzername oder Passwort falsch!${NC}"
+        echo -e "     ${YELLOW}→ Prüfe ADGUARD_USER und ADGUARD_PASS in: $INSTALL_DIR/adguard-shield.conf${NC}"
     else
-        echo -e "  ❌ Verbindung fehlgeschlagen (HTTP $response)"
-        echo -e "  ${YELLOW}Bitte prüfe URL und Zugangsdaten in: $INSTALL_DIR/adguard-shield.conf${NC}"
+        echo -e "  ❌ API-Verbindung fehlgeschlagen (HTTP $api_response)"
+        echo -e "     ${YELLOW}→ Bitte prüfe URL und Zugangsdaten in: $INSTALL_DIR/adguard-shield.conf${NC}"
     fi
     echo ""
 }
