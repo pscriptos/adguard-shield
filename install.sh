@@ -39,10 +39,12 @@ print_header() {
     echo -e "${NC}"
     echo -e "${GREEN}  Version: ${VERSION}${NC}"
     echo -e "${BLUE}  Autor:   Patrick Asmus${NC}"
+    echo -e
     echo -e "${BLUE}  E-Mail:  support@techniverse.net${NC}"
     echo -e "${BLUE}  Web:     https://www.patrick-asmus.de${NC}"
-    echo -e "${BLUE}  Blog:    https://www.cleveradmin.de${NC}"
+    echo ""
     echo -e "${BLUE}───────────────────────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+    echo ""
     echo -e "${BLUE}  Repo:    https://git.techniverse.net/scriptos/adguard-shield${NC}"
     echo ""
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
