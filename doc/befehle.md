@@ -34,6 +34,18 @@ Beim Update passiert automatisch:
 5. Der systemd Service wird per `daemon-reload` neu geladen
 6. Der Service wird automatisch neu gestartet (falls er lief)
 
+### API-Verbindungstest nach Installation
+
+Nach der Installation wird automatisch ein **zweistufiger Verbindungstest** durchgeführt:
+
+1. **Base-URL Erreichbarkeit** — Prüft ob die konfigurierte `ADGUARD_URL` erreichbar ist (DNS, TCP, HTTP). Bei Fehlern werden spezifische Hinweise angezeigt (z.B. DNS-Fehler, Timeout, SSL-Problem).
+2. **API-Authentifizierung** — Testet ob die hinterlegten Zugangsdaten (`ADGUARD_USER` / `ADGUARD_PASS`) korrekt sind, indem der API-Endpunkt `/control/querylog` abgefragt wird.
+
+> **Hinweis:** Dieser Test kann auch jederzeit manuell ausgeführt werden:
+> ```bash
+> sudo /opt/adguard-shield/adguard-shield.sh test
+> ```
+
 ### Voraussetzungen
 
 Folgende Pakete werden bei der Installation automatisch installiert (via `apt`):

@@ -25,10 +25,84 @@ sudo /opt/adguard-shield/adguard-shield.sh test
 - Falsche Zugangsdaten (`ADGUARD_USER` / `ADGUARD_PASS`)
 - AdGuard Home läuft nicht
 - Firewall blockiert lokale Verbindung
+- DNS-Auflösung des Hostnames fehlgeschlagen
+- SSL/TLS-Zertifikatfehler (bei HTTPS)
 
-**Lösung:** URL manuell testen:
+#### Schritt-für-Schritt Diagnose
+
+**1. Base-URL Erreichbarkeit prüfen (ohne Auth):**
 ```bash
-curl -s -u admin:passwort http://127.0.0.1:3000/control/querylog?limit=1
+# Vollständige Diagnose mit HTTP-Headern und Verbindungsdetails
+curl -ikv https://dns1.domain.com 2>&1
+
+# Nur HTTP-Statuscode prüfen (schnell)
+curl -s -o /dev/null -w "%{http_code}\n" -k https://dns1.domain.com
+```
+
+> `-i` zeigt HTTP-Response-Header, `-k` ignoriert SSL-Fehler, `-v` zeigt Verbindungsdetails (DNS, TLS-Handshake, etc.)
+
+**2. DNS-Auflösung testen:**
+```bash
+# Hostname auflösen
+dig +short dns1.domain.com
+
+# Oder mit nslookup
+nslookup dns1.domain.com
+```
+
+**3. Port-Erreichbarkeit testen:**
+```bash
+# TCP-Verbindung zum Port prüfen (z.B. Port 3000)
+nc -zv 127.0.0.1 3000
+
+# Oder mit curl
+curl -v telnet://127.0.0.1:3000
+```
+
+**4. API-Endpunkt mit Authentifizierung testen:**
+```bash
+# Query-Log abfragen (mit Auth + Response-Header)
+curl -i -u admin:passwort https://dns1.domain.com/control/querylog?limit=1
+
+# Nur HTTP-Status zurückgeben
+curl -s -o /dev/null -w "%{http_code}\n" -u admin:passwort https://dns1.domain.com/control/querylog?limit=1
+```
+
+**5. AdGuard Home Status-API prüfen:**
+```bash
+# Allgemeinen Status abfragen (benötigt keine Auth)
+curl -ik https://dns1.domain.com/control/status
+```
+
+#### Typische Fehlercodes
+
+| HTTP-Code | Bedeutung | Lösung |
+|-----------|-----------|--------|
+| `000` | Keine Verbindung | Host nicht erreichbar, DNS-Fehler oder Firewall |
+| `200` | Erfolg | Alles in Ordnung ✅ |
+| `301/302` | Weiterleitung | URL prüfen — evtl. fehlt `https://` oder Port |
+| `401` | Nicht autorisiert | `ADGUARD_USER` / `ADGUARD_PASS` prüfen |
+| `403` | Zugriff verweigert | Zugangsdaten oder IP-Beschränkung in AdGuard Home |
+| `404` | Nicht gefunden | URL falsch oder AdGuard Home Version zu alt |
+| `502/503` | Service nicht verfügbar | AdGuard Home läuft nicht oder wird gerade neu gestartet |
+
+#### curl Exit-Codes
+
+| Exit-Code | Bedeutung |
+|-----------|-----------|
+| `6` | DNS-Auflösung fehlgeschlagen — Hostname prüfen |
+| `7` | Verbindung abgelehnt — Läuft AdGuard Home? Port korrekt? |
+| `28` | Timeout — Host nicht erreichbar oder Firewall blockiert |
+| `35` | SSL/TLS-Handshake fehlgeschlagen |
+| `51` | SSL-Zertifikat: Hostname stimmt nicht überein |
+| `60` | SSL-Zertifikat: nicht vertrauenswürdig (selbstsigniert?) |
+
+> **Tipp:** Bei selbstsignierten Zertifikaten `-k` an curl anhängen, um SSL-Fehler zu ignorieren. AdGuard Shield verwendet intern automatisch `-k` bei der API-Kommunikation.
+
+**Lösung:** URL und Zugangsdaten in der Konfiguration anpassen:
+```bash
+sudo nano /opt/adguard-shield/adguard-shield.conf
+sudo systemctl restart adguard-shield
 ```
 
 ### iptables-Fehler: "Permission denied"

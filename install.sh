@@ -396,17 +396,60 @@ test_connection() {
 
     source "$INSTALL_DIR/adguard-shield.conf"
 
-    local response
-    response=$(curl -s -o /dev/null -w "%{http_code}" \
-        -u "${ADGUARD_USER}:${ADGUARD_PASS}" \
-        --connect-timeout 5 \
-        "${ADGUARD_URL}/control/querylog?limit=1" 2>/dev/null)
+    # ── Schritt 1: Base-URL Erreichbarkeit prüfen ────────────────────────
+    echo -e "  ${CYAN}1)${NC} Prüfe Erreichbarkeit von ${BOLD}${ADGUARD_URL}${NC} ..."
 
-    if [[ "$response" == "200" ]]; then
-        echo -e "  ✅ Verbindung erfolgreich! (HTTP $response)"
+    local base_http_code
+    local base_curl_exit
+    base_http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        --connect-timeout 5 --max-time 10 \
+        -k "${ADGUARD_URL}" 2>/dev/null) || base_curl_exit=$?
+    base_curl_exit=${base_curl_exit:-0}
+
+    if [[ "$base_curl_exit" -ne 0 ]]; then
+        # curl konnte keine Verbindung aufbauen
+        echo -e "  ❌ Base-URL nicht erreichbar! (curl Exit-Code: $base_curl_exit)"
+        case "$base_curl_exit" in
+            6)  echo -e "     ${YELLOW}→ DNS-Auflösung fehlgeschlagen. Hostname prüfen!${NC}" ;;
+            7)  echo -e "     ${YELLOW}→ Verbindung abgelehnt. Läuft AdGuard Home? Port korrekt?${NC}" ;;
+            28) echo -e "     ${YELLOW}→ Timeout. Host nicht erreichbar oder Firewall blockiert.${NC}" ;;
+            35|51|60) echo -e "     ${YELLOW}→ SSL/TLS-Fehler. Zertifikat oder HTTPS-Konfiguration prüfen.${NC}" ;;
+            *)  echo -e "     ${YELLOW}→ Unbekannter Fehler. Manuell testen: curl -v ${ADGUARD_URL}${NC}" ;;
+        esac
+        echo ""
+        echo -e "  ${YELLOW}Troubleshooting:${NC}"
+        echo -e "     curl -ikv ${ADGUARD_URL}"
+        echo ""
+        return 1
+    fi
+
+    if [[ "$base_http_code" == "000" ]]; then
+        echo -e "  ❌ Base-URL nicht erreichbar (keine HTTP-Antwort)"
+        echo -e "     ${YELLOW}→ Manuell testen: curl -ikv ${ADGUARD_URL}${NC}"
+        echo ""
+        return 1
+    fi
+
+    echo -e "  ✅ Base-URL erreichbar (HTTP $base_http_code)"
+
+    # ── Schritt 2: API-Endpunkt mit Authentifizierung testen ─────────────
+    echo -e "  ${CYAN}2)${NC} Teste API-Authentifizierung ..."
+
+    local api_response
+    api_response=$(curl -s -o /dev/null -w "%{http_code}" \
+        -u "${ADGUARD_USER}:${ADGUARD_PASS}" \
+        --connect-timeout 5 --max-time 10 \
+        -k "${ADGUARD_URL}/control/querylog?limit=1" 2>/dev/null)
+
+    if [[ "$api_response" == "200" ]]; then
+        echo -e "  ✅ API-Authentifizierung erfolgreich! (HTTP $api_response)"
+    elif [[ "$api_response" == "401" || "$api_response" == "403" ]]; then
+        echo -e "  ❌ Authentifizierung fehlgeschlagen (HTTP $api_response)"
+        echo -e "     ${YELLOW}→ Benutzername oder Passwort falsch!${NC}"
+        echo -e "     ${YELLOW}→ Prüfe ADGUARD_USER und ADGUARD_PASS in: $INSTALL_DIR/adguard-shield.conf${NC}"
     else
-        echo -e "  ❌ Verbindung fehlgeschlagen (HTTP $response)"
-        echo -e "  ${YELLOW}Bitte prüfe URL und Zugangsdaten in: $INSTALL_DIR/adguard-shield.conf${NC}"
+        echo -e "  ❌ API-Verbindung fehlgeschlagen (HTTP $api_response)"
+        echo -e "     ${YELLOW}→ Bitte prüfe URL und Zugangsdaten in: $INSTALL_DIR/adguard-shield.conf${NC}"
     fi
     echo ""
 }
