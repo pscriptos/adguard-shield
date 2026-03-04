@@ -196,6 +196,135 @@ sudo crontab -e
 */5 * * * * /opt/adguard-shield/unban-expired.sh
 ```
 
+## DNS-Abfragen zum Testen (von einem Linux-Client)
+
+> **⚠ WARNUNG — Bitte unbedingt lesen:**
+>
+> Die folgenden Befehle dienen **ausschließlich zu Testzwecken**, um die eigene AdGuard-Shield-Installation zu überprüfen. Sie simulieren erhöhtes DNS-Aufkommen und können dazu genutzt werden, die Erkennungs- und Sperrmechanismen zu validieren.
+>
+> **DNS-Flooding ist illegal!** Das massenhafte Senden von DNS-Anfragen an fremde Server oder Infrastruktur ohne ausdrückliche Genehmigung kann als **Denial-of-Service-Angriff (DoS)** gewertet werden und ist in den meisten Ländern **strafbar**. Die Konsequenzen reichen von Abmahnungen über Strafanzeigen bis hin zu empfindlichen Geld- und Freiheitsstrafen.
+>
+> **Diese Befehle dürfen nur gegen den eigenen DNS-Server in einer kontrollierten Testumgebung eingesetzt werden.** Die Nutzung gegen fremde Server ist ausdrücklich untersagt. Jede Verantwortung liegt beim Anwender.
+
+### Voraussetzungen
+
+Die folgenden Tools müssen auf dem **Linux-Client** installiert sein (nicht auf dem Server):
+
+```bash
+# Für DNS-Abfragen (dig)
+sudo apt install dnsutils
+
+# Für DoH-Abfragen (curl)
+sudo apt install curl
+
+# Für DoT-Abfragen (knotc)
+sudo apt install knot-dnsutils
+
+# Für DoQ-Abfragen
+# https://github.com/natesales/q — Releases herunterladen oder via Go installieren:
+go install github.com/natesales/q@latest
+```
+
+> **Hinweis:** In den folgenden Befehlen muss die IP-Adresse `203.0.113.50` durch die **eigene DNS-Server-IP** und `microsoft.com` durch die gewünschte **Ziel-Domain** ersetzt werden.
+
+---
+
+### Klassisches DNS (Port 53/UDP)
+
+#### Direkte Abfragen (gleiche Domain, viele Anfragen)
+
+200 parallele DNS-Anfragen für dieselbe Domain — jede mit einem zufälligen DNS-Cookie, um Caching zu umgehen:
+
+```bash
+for i in {1..200}; do \
+  dig @203.0.113.50 microsoft.com +short +cookie=$(openssl rand -hex 8) > /dev/null & \
+done; wait
+```
+
+#### Zufällige Subdomain-Abfragen (NXDOMAIN-Flood)
+
+200 parallele Anfragen mit zufällig generierten Subdomains — simuliert typisches Verhalten von DNS-basierten Angriffen:
+
+```bash
+for i in {1..200}; do \
+  dig @203.0.113.50 $(openssl rand -hex 6).microsoft.com +short > /dev/null & \
+done; wait
+```
+
+---
+
+### DNS over HTTPS (DoH)
+
+DoH-Anfragen werden über HTTPS (Port 443) gesendet. Die meisten AdGuard-Home-Instanzen bieten DoH unter `/dns-query` an:
+
+#### Direkte Abfragen via DoH
+
+```bash
+for i in {1..200}; do \
+  curl -s -H "accept: application/dns-json" \
+    "https://203.0.113.50/dns-query?name=microsoft.com&type=A" > /dev/null & \
+done; wait
+```
+
+#### Zufällige Subdomain-Abfragen via DoH
+
+```bash
+for i in {1..200}; do \
+  curl -s -H "accept: application/dns-json" \
+    "https://203.0.113.50/dns-query?name=$(openssl rand -hex 6).microsoft.com&type=A" > /dev/null & \
+done; wait
+```
+
+> **Hinweis:** Falls der Server ein selbstsigniertes Zertifikat verwendet, muss `-k` (unsicherer Modus) an `curl` angehängt werden.
+
+---
+
+### DNS over TLS (DoT)
+
+DoT verwendet TLS über Port 853. Mit `kdig` (aus dem Paket `knot-dnsutils`):
+
+#### Direkte Abfragen via DoT
+
+```bash
+for i in {1..200}; do \
+  kdig @203.0.113.50 microsoft.com +tls +short > /dev/null & \
+done; wait
+```
+
+#### Zufällige Subdomain-Abfragen via DoT
+
+```bash
+for i in {1..200}; do \
+  kdig @203.0.113.50 $(openssl rand -hex 6).microsoft.com +tls +short > /dev/null & \
+done; wait
+```
+
+---
+
+### DNS over QUIC (DoQ)
+
+DoQ verwendet das QUIC-Protokoll über Port 853/UDP. Mit dem Tool [`q`](https://github.com/natesales/q):
+
+#### Direkte Abfragen via DoQ
+
+```bash
+for i in {1..200}; do \
+  q microsoft.com A @quic://203.0.113.50 --short > /dev/null & \
+done; wait
+```
+
+#### Zufällige Subdomain-Abfragen via DoQ
+
+```bash
+for i in {1..200}; do \
+  q $(openssl rand -hex 6).microsoft.com A @quic://203.0.113.50 --short > /dev/null & \
+done; wait
+```
+
+---
+
+> **⚠ Abschließender Hinweis:** Alle oben genannten Befehle sind **ausschließlich für das Testen der eigenen Infrastruktur** gedacht. Wer diese Befehle gegen fremde DNS-Server oder Dienste einsetzt, macht sich unter Umständen **strafbar**. Sei verantwortungsvoll — teste nur, was dir gehört.
+
 ## Hilfe
 
 Alle verfügbaren Befehle und Optionen des Installers anzeigen:
