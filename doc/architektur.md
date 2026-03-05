@@ -9,14 +9,14 @@
 └──────────┬──────────┘
            │
            ▼
-┌─────────────────────┐     ┌──────────────────────┐
-│   AdGuard Home      │────▶│   Query Log (API)    │
-│   DNS Server        │     └──────────┬───────────┘
+┌─────────────────────┐      ┌──────────────────────┐
+│   AdGuard Home      │────▶ │   Query Log (API)   │
+│   DNS Server        │      └──────────┬───────────┘
 └─────────────────────┘                │
                                        ▼
                             ┌──────────────────────┐
-                            │  adguard-shield.sh │
-                            │  (Monitor Script)     │
+                            │  adguard-shield.sh   │
+                            │  (Monitor Script)    │
                             └──────────┬───────────┘
                                        │
                         ┌──────────────┼──────────────┐
@@ -166,7 +166,7 @@ Der Installer (`install.sh`) bietet ein interaktives Menü und folgende Funktion
 ```
 ┌─────────────────────────┐     ┌─────────────────────────┐
 │   Bestehende Konfig     │     │   Neue Konfig (Repo)    │
-│   (Benutzer-Settings)   │     │   (mit neuen Parametern) │
+│   (Benutzer-Settings)   │     │  (mit neuen Parametern) │
 └───────────┬─────────────┘     └───────────┬─────────────┘
             │                               │
             ▼                               ▼
@@ -180,7 +180,7 @@ Der Installer (`install.sh`) bietet ein interaktives Menü und folgende Funktion
                             ▼
               ┌──────────────────────────┐
               │  Aktualisierte Konfig    │
-              │  (alte Werte + neue Keys) │
+              │ (alte Werte + neue Keys) │
               └──────────────────────────┘
 ```
 
