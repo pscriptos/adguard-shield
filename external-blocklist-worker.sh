@@ -39,7 +39,7 @@ log() {
         local timestamp
         timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
         local log_entry="[$timestamp] [$level] [BLOCKLIST-WORKER] $message"
-        echo "$log_entry" | tee -a "$LOG_FILE"
+        echo "$log_entry" | tee -a "$LOG_FILE" >&2
     fi
 }
 
@@ -115,6 +115,16 @@ ban_ip() {
 
     # Bereits gesperrt?
     if [[ -f "$state_file" ]]; then
+        # iptables-Regel prüfen und ggf. nachziehen (z.B. nach Neustart verloren gegangen)
+        if [[ "$ip" == *:* ]]; then
+            if ! ip6tables -C "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null; then
+                ip6tables -I "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
+            fi
+        else
+            if ! iptables -C "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null; then
+                iptables -I "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
+            fi
+        fi
         log "DEBUG" "IP $ip bereits über externe Blocklist gesperrt"
         return 0
     fi
@@ -163,8 +173,8 @@ EOF
 
     log_ban_history "BAN" "$ip" "external-blocklist"
 
-    # Benachrichtigung senden
-    if [[ "$NOTIFY_ENABLED" == "true" ]]; then
+    # Benachrichtigung senden (nur wenn EXTERNAL_BLOCKLIST_NOTIFY=true)
+    if [[ "$NOTIFY_ENABLED" == "true" && "${EXTERNAL_BLOCKLIST_NOTIFY:-false}" == "true" ]]; then
         send_notification "ban" "$ip"
     fi
 }
@@ -188,7 +198,7 @@ unban_ip() {
     rm -f "$state_file"
     log_ban_history "UNBAN" "$ip" "$reason"
 
-    if [[ "$NOTIFY_ENABLED" == "true" ]]; then
+    if [[ "$NOTIFY_ENABLED" == "true" && "${EXTERNAL_BLOCKLIST_NOTIFY:-false}" == "true" ]]; then
         send_notification "unban" "$ip"
     fi
 }
@@ -198,7 +208,10 @@ send_notification() {
     local action="$1"
     local ip="$2"
 
-    [[ -z "${NOTIFY_WEBHOOK_URL:-}" ]] && return
+    # ntfy benötigt keine NOTIFY_WEBHOOK_URL, alle anderen schon
+    if [[ "${NOTIFY_TYPE:-generic}" != "ntfy" && -z "${NOTIFY_WEBHOOK_URL:-}" ]]; then
+        return
+    fi
 
     local message
     if [[ "$action" == "ban" ]]; then
@@ -382,6 +395,9 @@ parse_blocklist_ips() {
     [[ -f "$cache_file" ]] || return
 
     while IFS= read -r line; do
+        line="${line%$'\r'}"              # Windows-Zeilenenden (CRLF) entfernen
+        line="${line#$'\xef\xbb\xbf'}"   # UTF-8 BOM entfernen (erste Zeile)
+
         # Leerzeilen und Kommentarzeilen überspringen
         [[ -z "$line" ]]                    && continue
         [[ "$line" =~ ^[[:space:]]*# ]]     && continue
@@ -439,7 +455,7 @@ parse_blocklist_ips() {
                 continue
             fi
             local resolved
-            resolved=$(getent ahosts "$line" 2>/dev/null | awk '{print $1}' | sort -u)
+            resolved=$(getent ahosts "$line" 2>/dev/null | awk '{print $1}' | sort -u) || resolved=""
             if [[ -z "$resolved" ]]; then
                 log "WARN" "Hostname konnte nicht aufgelöst werden: $line"
                 continue
@@ -537,8 +553,12 @@ sync_blocklists() {
             continue
         fi
 
+        local _state_file_before="${STATE_DIR}/ext_${ip//[:/]/_}.ban"
+        local _was_new=false
+        [[ ! -f "$_state_file_before" ]] && _was_new=true
+
         ban_ip "$ip"
-        new_bans=$((new_bans + 1))
+        [[ "$_was_new" == "true" ]] && new_bans=$((new_bans + 1))
     done < "$unique_ips_file"
 
     # ─── Entfernte IPs entsperren ────────────────────────────────────────────

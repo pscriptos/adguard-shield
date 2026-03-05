@@ -160,6 +160,7 @@ Ermöglicht das Einbinden externer Blocklisten, die IPv4-Adressen, IPv6-Adressen
 | `EXTERNAL_BLOCKLIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.) |
 | `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden (0 = permanent bis IP aus Liste entfernt) |
 | `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs automatisch entsperren wenn aus Liste entfernt |
+| `EXTERNAL_BLOCKLIST_NOTIFY` | `false` | Webhook-Benachrichtigungen bei Blocklist-Sperren senden. Bei großen Listen unbedingt auf `false` lassen — beim ersten Sync kommen sonst hunderte Nachrichten auf einmal. |
 | `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-shield/external-blocklist` | Lokaler Cache für heruntergeladene Listen |
 ### AbuseIPDB Reporting
 
@@ -226,6 +227,28 @@ malware.example.net
 ```
 
 > **Hinweis zur Hostname-Auflösung:** Da AdGuard Shield idealerweise auf demselben Host wie der DNS-Resolver läuft, verwendet der Worker automatisch den lokalen Resolver. Hostnamen die bereits von AdGuard geblockt werden (Antwort `0.0.0.0`) werden übersprungen und nicht importiert.
+
+#### Dateiformat der Blocklist
+
+Beim Erstellen eigener Blocklisten müssen zwei Dinge beachtet werden:
+
+- **Zeichenkodierung:** Datei in **UTF-8 ohne BOM** speichern. Dateien mit BOM (z.B. Standard-Einstellung in Notepad++) führen dazu, dass der erste Eintrag als ungültig erkannt wird.
+- **Zeilenenden:** Datei mit **Unix-Zeilenenden (LF)** speichern, nicht Windows (CRLF). CRLF-Zeilenenden führen dazu, dass alle Einträge als ungültig abgelehnt werden.
+
+In **Notepad++:** Kodierung → „UTF-8 (ohne BOM)" und Bearbeiten → Zeilenende-Konvertierung → Unix (LF).  
+In **VS Code:** Unten rechts auf `CRLF` klicken → `LF` auswählen; Zeichenkodierung ebenfalls unten rechts prüfen.
+
+> **Empfehlung:** IP-Adressen und Hostnamen in **getrennten Listen** pflegen. Bei Hostname-Listen löst der Worker jeden Eintrag per DNS auf — das ist langsamer als direkte IP-Listen und liefert je nach DNS-Antwort mehrere IPs pro Eintrag. Getrennte Listen sind außerdem übersichtlicher und einfacher zu pflegen.
+
+#### Synchronisierungsverhalten
+
+Der Worker synchronisiert die Blocklisten:
+
+- **Beim Service-Start:** Der erste Sync läuft **sofort** beim Start — ohne Wartezeit. Danach beginnt erst das periodische Intervall (`EXTERNAL_BLOCKLIST_INTERVAL`).
+- **Automatisch im Hintergrund:** Alle `EXTERNAL_BLOCKLIST_INTERVAL` Sekunden (Standard: 300s = 5 Min.) wird geprüft, ob sich die Liste geändert hat. Unveränderte Listen (HTTP 304 oder gleicher Inhalt) werden nicht erneut verarbeitet.
+- **Manuell:** `sudo adguard-shield.sh blocklist-sync` erzwingt sofort einen Sync, unabhängig vom laufenden Worker.
+
+> **Nach einem Neustart** (Server oder Service) werden fehlende iptables-Regeln beim nächsten Sync automatisch nachgezogen.
 
 2. Aktiviere die Blocklist in der Konfiguration:
 

@@ -6,7 +6,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.5.0"
+VERSION="v0.5.1"
 
 set -euo pipefail
 
@@ -139,7 +139,7 @@ show_menu() {
     echo -e "  ${CYAN}5)${NC} Hilfe           — Hilfe & Befehlsübersicht anzeigen"
     echo -e "  ${CYAN}0)${NC} Beenden"
     echo ""
-    read -rp "  Auswahl [0-5]: " choice
+    read -rep "  Auswahl [0-5]: " choice
     echo ""
 
     case "$choice" in
@@ -350,7 +350,7 @@ install_service() {
     echo ""
 
     # Interaktiv: Autostart beim Booten?
-    read -rp "  Soll AdGuard Shield beim Booten automatisch starten? [J/n]: " autostart
+    read -rep "  Soll AdGuard Shield beim Booten automatisch starten? [J/n]: " autostart
     if [[ "${autostart,,}" != "n" ]]; then
         systemctl enable adguard-shield.service
         echo -e "  ✅ Autostart aktiviert"
@@ -369,17 +369,17 @@ configure() {
     local conf="$INSTALL_DIR/adguard-shield.conf"
 
     # AdGuard URL
-    read -rp "  AdGuard Home URL [http://127.0.0.1:3000]: " adguard_url
+    read -rep "  AdGuard Home URL [http://127.0.0.1:3000]: " adguard_url
     adguard_url="${adguard_url:-http://127.0.0.1:3000}"
     sed -i "s|^ADGUARD_URL=.*|ADGUARD_URL=\"$adguard_url\"|" "$conf"
 
     # Benutzername
-    read -rp "  AdGuard Home Benutzername [admin]: " adguard_user
+    read -rep "  AdGuard Home Benutzername [admin]: " adguard_user
     adguard_user="${adguard_user:-admin}"
     sed -i "s|^ADGUARD_USER=.*|ADGUARD_USER=\"$adguard_user\"|" "$conf"
 
     # Passwort
-    read -rsp "  AdGuard Home Passwort: " adguard_pass
+    read -resp "  AdGuard Home Passwort: " adguard_pass
     echo ""
     if [[ -n "$adguard_pass" ]]; then
         # Einfache Quotes damit $-Zeichen im Passwort nicht expandiert werden
@@ -387,17 +387,17 @@ configure() {
     fi
 
     # Rate Limit
-    read -rp "  Max. Anfragen pro Domain/Client pro Minute [30]: " rate_limit
+    read -rep "  Max. Anfragen pro Domain/Client pro Minute [30]: " rate_limit
     rate_limit="${rate_limit:-30}"
     sed -i "s|^RATE_LIMIT_MAX_REQUESTS=.*|RATE_LIMIT_MAX_REQUESTS=$rate_limit|" "$conf"
 
     # Sperrdauer
-    read -rp "  Sperrdauer in Sekunden [3600]: " ban_duration
+    read -rep "  Sperrdauer in Sekunden [3600]: " ban_duration
     ban_duration="${ban_duration:-3600}"
     sed -i "s|^BAN_DURATION=.*|BAN_DURATION=$ban_duration|" "$conf"
 
     # Whitelist
-    read -rp "  Whitelist IPs (kommagetrennt) [127.0.0.1,::1]: " whitelist
+    read -rep "  Whitelist IPs (kommagetrennt) [127.0.0.1,::1]: " whitelist
     whitelist="${whitelist:-127.0.0.1,::1}"
     sed -i "s|^WHITELIST=.*|WHITELIST=\"$whitelist\"|" "$conf"
 
@@ -575,7 +575,7 @@ do_install() {
     if [[ -d "$INSTALL_DIR" ]] && [[ -f "$INSTALL_DIR/adguard-shield.sh" ]]; then
         echo -e "${YELLOW}AdGuard Shield ist bereits installiert!${NC}"
         echo ""
-        read -rp "  Möchtest du stattdessen ein Update durchführen? [j/N]: " do_upd
+        read -rep "  Möchtest du stattdessen ein Update durchführen? [j/N]: " do_upd
         if [[ "${do_upd,,}" == "j" ]]; then
             do_update
             return
@@ -600,7 +600,7 @@ do_install() {
 
     # Interaktiv: Service jetzt starten?
     echo -e "${YELLOW}Service starten:${NC}"
-    read -rp "  Soll der AdGuard Shield Service jetzt gestartet werden? [J/n]: " start_now
+    read -rep "  Soll der AdGuard Shield Service jetzt gestartet werden? [J/n]: " start_now
     if [[ "${start_now,,}" != "n" ]]; then
         systemctl start adguard-shield
         echo -e "  ✅ Service gestartet"
@@ -644,7 +644,7 @@ do_update() {
     if systemctl is-enabled adguard-shield &>/dev/null; then
         echo -e "  ℹ️  Autostart ist bereits aktiviert"
     else
-        read -rp "  Soll AdGuard Shield beim Booten automatisch starten? [J/n]: " autostart
+        read -rep "  Soll AdGuard Shield beim Booten automatisch starten? [J/n]: " autostart
         if [[ "${autostart,,}" != "n" ]]; then
             systemctl enable adguard-shield.service
             echo -e "  ✅ Autostart aktiviert"
@@ -661,7 +661,7 @@ do_update() {
     fi
 
     if [[ "$service_was_active" == "true" ]]; then
-        read -rp "  Soll der Service jetzt neu gestartet werden? [J/n]: " restart_now
+        read -rep "  Soll der Service jetzt neu gestartet werden? [J/n]: " restart_now
         if [[ "${restart_now,,}" != "n" ]]; then
             systemctl restart adguard-shield
             echo -e "  ✅ Service wurde neu gestartet"
@@ -670,7 +670,7 @@ do_update() {
             echo -e "  ${YELLOW}Bitte manuell neustarten: sudo systemctl restart adguard-shield${NC}"
         fi
     else
-        read -rp "  Soll der Service jetzt gestartet werden? [J/n]: " start_now
+        read -rep "  Soll der Service jetzt gestartet werden? [J/n]: " start_now
         if [[ "${start_now,,}" != "n" ]]; then
             systemctl start adguard-shield
             echo -e "  ✅ Service gestartet"
@@ -709,7 +709,7 @@ do_uninstall() {
     echo ""
 
     # Sicherheitsabfrage
-    read -rp "  Wirklich deinstallieren? [j/N]: " confirm
+    read -rep "  Wirklich deinstallieren? [j/N]: " confirm
     if [[ "${confirm,,}" != "j" ]]; then
         echo -e "${GREEN}Deinstallation abgebrochen.${NC}"
         exit 0
@@ -735,7 +735,7 @@ do_uninstall() {
     fi
 
     # Dateien entfernen
-    read -rp "  Konfiguration und Logs behalten? [j/N]: " keep
+    read -rep "  Konfiguration und Logs behalten? [j/N]: " keep
     if [[ "${keep,,}" == "j" ]]; then
         rm -f "$INSTALL_DIR/adguard-shield.sh"
         rm -f "$INSTALL_DIR/iptables-helper.sh"
