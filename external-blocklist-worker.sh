@@ -318,24 +318,147 @@ download_blocklist() {
     return 0
 }
 
+# ─── Eintrag-Validierung ─────────────────────────────────────────────────────
+
+# Prüft IPv4-Adresse mit optionalem CIDR (z.B. 1.2.3.4 oder 1.2.3.0/24)
+_is_valid_ipv4() {
+    local ip="$1" addr="$1" prefix=""
+    if [[ "$ip" == */* ]]; then
+        addr="${ip%/*}"
+        prefix="${ip#*/}"
+        { [[ "$prefix" =~ ^[0-9]+$ ]] && [[ "$prefix" -le 32 ]]; } || return 1
+    fi
+    local IFS='.'
+    read -ra _octets <<< "$addr"
+    [[ ${#_octets[@]} -eq 4 ]] || return 1
+    local o
+    for o in "${_octets[@]}"; do
+        [[ "$o" =~ ^[0-9]+$ ]] || return 1
+        [[ "$o" -le 255 ]]     || return 1
+    done
+    return 0
+}
+
+# Prüft IPv6-Adresse mit optionalem CIDR (z.B. ::1 oder 2001:db8::/32)
+# Fängt auch IPv4:Port-Kombinationen ab (z.B. 1.2.3.4:8080)
+_is_valid_ipv6() {
+    local ip="$1" addr="$1"
+    if [[ "$ip" == */* ]]; then
+        addr="${ip%/*}"
+        local prefix="${ip#*/}"
+        { [[ "$prefix" =~ ^[0-9]+$ ]] && [[ "$prefix" -le 128 ]]; } || return 1
+    fi
+    # IPv4:Port abfangen — enthält Punkt(e) vor dem ersten Doppelpunkt
+    [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9] ]] && return 1
+    # Muss mindestens einen Doppelpunkt haben und nur gültige Zeichen (Hex, Doppelpunkt, Punkt für IPv4-mapped)
+    [[ "$addr" == *:* ]]              || return 1
+    [[ "$addr" =~ ^[0-9a-fA-F:\.]+$ ]] || return 1
+    return 0
+}
+
+# Prüft ob ein Hostname syntaktisch plausibel ist
+# Akzeptiert: example.com, sub.example.com, example.com. (trailing dot)
+# Lehnt ab: einzelne Wörter ohne Punkt, Sonderzeichen, überlange Einträge
+_is_valid_hostname() {
+    local host="$1"
+    host="${host%.}"                      # trailing dot (FQDN) entfernen
+    [[ -z "$host" ]]      && return 1
+    [[ ${#host} -gt 253 ]] && return 1
+    [[ "$host" =~ ^[a-zA-Z0-9._-]+$ ]] || return 1
+    [[ "$host" =~ ^[.\-]  ]]            && return 1  # darf nicht mit . oder - beginnen
+    [[ "$host" == *.*     ]]            || return 1  # muss mindestens einen Punkt enthalten
+    return 0
+}
+
 # ─── IPs aus Blocklist-Datei parsen ──────────────────────────────────────────
+# Unterstützt IPv4, IPv6, CIDR-Notation und Hostnamen (werden aufgelöst).
+# Unterstützt außerdem das Hosts-Datei-Format: "0.0.0.0 hostname" oder "127.0.0.1 hostname".
+# Ungültige Einträge (URLs, IP:Port, fehlerhafte IPs, einzelne Wörter usw.) werden
+# mit WARN geloggt und übersprungen.
+# 0.0.0.0 / :: wird nie importiert (AdGuard-typische Blocking-Antwort).
 parse_blocklist_ips() {
     local cache_file="$1"
 
     [[ -f "$cache_file" ]] || return
 
-    # Zeilen lesen, Leerzeilen und Kommentare ignorieren, IPs extrahieren
     while IFS= read -r line; do
-        # Leerzeilen überspringen
-        [[ -z "$line" ]] && continue
-        # Kommentare überspringen (# am Anfang)
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        # Whitespace trimmen
+        # Leerzeilen und Kommentarzeilen überspringen
+        [[ -z "$line" ]]                    && continue
+        [[ "$line" =~ ^[[:space:]]*# ]]     && continue
+
+        # Whitespace trimmen, dann Inline-Kommentare entfernen (# oder ;)
         line=$(echo "$line" | xargs)
-        # Leere Zeilen nach Trim überspringen
+        line=$(echo "$line" | sed 's/[[:space:]]*[#;].*$//' | xargs)
         [[ -z "$line" ]] && continue
-        # CIDR-Notation oder reine IP ausgeben
-        echo "$line"
+
+        # ── URLs ablehnen (http://, https://, ftp:// …) ──────────────────────
+        if [[ "$line" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then
+            log "WARN" "Eintrag übersprungen (URL nicht erlaubt): $line"
+            continue
+        fi
+
+        # ── Hosts-Datei-Format erkennen: "<routing-IP> <ziel>" ───────────────
+        # z.B. "0.0.0.0 bad.com" oder "127.0.0.1 malware.net"
+        if [[ "$line" =~ ^[^[:space:]]+[[:space:]]+[^[:space:]] ]]; then
+            local _first="${line%% *}"
+            local _rest="${line#* }"
+            local _second="${_rest%% *}"
+            if [[ "$_first" == "0.0.0.0"  || "$_first" =~ ^127\.   ||
+                  "$_first" == "::1"       || "$_first" == "::0"    ||
+                  "$_first" == "::" ]]; then
+                log "DEBUG" "Hosts-Format erkannt, extrahiere Ziel: $_second"
+                line="$_second"
+            else
+                log "WARN" "Eintrag übersprungen (Leerzeichen im Eintrag, unbekanntes Format): $line"
+                continue
+            fi
+        fi
+
+        # ── Klassifizieren und validieren ─────────────────────────────────────
+        if [[ "$line" == *:* ]]; then
+            # ── IPv6 ──────────────────────────────────────────────────────────
+            if _is_valid_ipv6 "$line"; then
+                echo "$line"
+            else
+                log "WARN" "Eintrag übersprungen (ungültige IPv6-Adresse oder IP:Port): $line"
+            fi
+
+        elif [[ "$line" =~ ^[0-9] ]]; then
+            # ── IPv4 ──────────────────────────────────────────────────────────
+            [[ "$line" == "0.0.0.0"* ]] && continue
+            if _is_valid_ipv4 "$line"; then
+                echo "$line"
+            else
+                log "WARN" "Eintrag übersprungen (ungültige IPv4-Adresse oder ungültiges CIDR): $line"
+            fi
+
+        else
+            # ── Hostname → DNS-Auflösung ──────────────────────────────────────
+            if ! _is_valid_hostname "$line"; then
+                log "WARN" "Eintrag übersprungen (kein gültiger Hostname): $line"
+                continue
+            fi
+            local resolved
+            resolved=$(getent ahosts "$line" 2>/dev/null | awk '{print $1}' | sort -u)
+            if [[ -z "$resolved" ]]; then
+                log "WARN" "Hostname konnte nicht aufgelöst werden: $line"
+                continue
+            fi
+            local resolved_count=0
+            while IFS= read -r resolved_ip; do
+                [[ -z "$resolved_ip" ]]                    && continue
+                [[ "$resolved_ip" == "0.0.0.0" ]]         && continue  # AdGuard-Blocking-Antwort
+                [[ "$resolved_ip" == "::"  ]]              && continue  # IPv6 unspecified
+                [[ "$resolved_ip" == "::0" ]]              && continue
+                echo "$resolved_ip"
+                resolved_count=$((resolved_count + 1))
+            done <<< "$resolved"
+            if [[ $resolved_count -gt 0 ]]; then
+                log "DEBUG" "Hostname aufgelöst: $line → $resolved_count IP(s)"
+            else
+                log "WARN" "Hostname lieferte nur ungültige Adressen (z.B. 0.0.0.0): $line – wird übersprungen"
+            fi
+        fi
     done < "$cache_file"
 }
 

@@ -9,7 +9,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="0.4.0"
+VERSION="v0.5.0"
 
 set -euo pipefail
 
@@ -238,6 +238,7 @@ report_to_abuseipdb() {
     local domain="$2"
     local count="$3"
     local reason="${4:-rate-limit}"
+    local window="${5:-$RATE_LIMIT_WINDOW}"
 
     if [[ "${ABUSEIPDB_ENABLED:-false}" != "true" ]]; then
         return 0
@@ -251,9 +252,9 @@ report_to_abuseipdb() {
     # Kommentar für AbuseIPDB erstellen (englisch)
     local comment
     if [[ "$reason" == "subdomain-flood" ]]; then
-        comment="DNS flooding on our DNS server: ${count}x ${domain} (random subdomain attack). Permanently banned by AdGuard Shield."
+        comment="DNS flooding on our DNS server: ${count}x ${domain} in ${window}s (random subdomain attack). Banned by Adguard Shield 🔗 https://tnvs.de/as"
     else
-        comment="DNS flooding on our DNS server: ${count}x ${domain}. Permanently banned by AdGuard Shield."
+        comment="DNS flooding on our DNS server: ${count}x ${domain} in ${window}s. Banned by Adguard Shield 🔗 https://tnvs.de/as"
     fi
 
     local categories="${ABUSEIPDB_CATEGORIES:-4}"
@@ -456,7 +457,7 @@ EOF
 
     # AbuseIPDB Report (nur bei permanenter Sperre)
     if [[ "$is_permanent" == "true" ]]; then
-        report_to_abuseipdb "$client_ip" "$domain" "$count" "$reason" &
+        report_to_abuseipdb "$client_ip" "$domain" "$count" "$reason" "$window" &
     fi
 }
 

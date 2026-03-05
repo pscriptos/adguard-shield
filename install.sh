@@ -6,7 +6,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="0.4.0"
+VERSION="v0.5.0"
 
 set -euo pipefail
 
@@ -39,11 +39,12 @@ print_header() {
     echo -e "${NC}"
     echo -e "${GREEN}  Version: ${VERSION}${NC}"
     echo -e "${BLUE}  Autor:   Patrick Asmus${NC}"
+    echo -e
     echo -e "${BLUE}  E-Mail:  support@techniverse.net${NC}"
-    echo -e "${BLUE}───────────────────────────────────────────────────────────────────────────────────────────────────────────────${NC}"
     echo -e "${BLUE}  Web:     https://www.patrick-asmus.de${NC}"
-    echo -e "${BLUE}  Blog:    https://www.cleveradmin.de${NC}"
+    echo ""
     echo -e "${BLUE}───────────────────────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+    echo ""
     echo -e "${BLUE}  Repo:    https://git.techniverse.net/scriptos/adguard-shield${NC}"
     echo ""
     echo -e "${BLUE}═══════════════════════════════════════════════════════════════════════════════════════════════════════════════${NC}"
@@ -108,6 +109,13 @@ print_help() {
     echo -e "  ${CYAN}sudo /opt/adguard-shield/iptables-helper.sh remove${NC}     # Chain komplett entfernen"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/iptables-helper.sh save${NC}       # Regeln speichern"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/iptables-helper.sh restore${NC}    # Regeln wiederherstellen"
+    echo ""
+    echo -e "${BOLD}Report-Befehle:${NC}"
+    echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh status${NC}    # Report-Konfiguration anzeigen"
+    echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh send${NC}      # Report sofort senden"
+    echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh generate${NC}  # Report als Datei generieren"
+    echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh install${NC}   # Cron-Job einrichten"
+    echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh remove${NC}    # Cron-Job entfernen"
     echo ""
     echo -e "${BOLD}Voraussetzungen:${NC}"
     echo "  - Linux Server (Debian/Ubuntu empfohlen)"
@@ -230,12 +238,19 @@ install_files() {
     cp "$SCRIPT_DIR/iptables-helper.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/unban-expired.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/external-blocklist-worker.sh" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/report-generator.sh" "$INSTALL_DIR/"
+
+    # Templates kopieren
+    mkdir -p "$INSTALL_DIR/templates"
+    cp "$SCRIPT_DIR/templates/report.html" "$INSTALL_DIR/templates/"
+    cp "$SCRIPT_DIR/templates/report.txt" "$INSTALL_DIR/templates/"
 
     # Ausführbar machen
     chmod +x "$INSTALL_DIR/adguard-shield.sh"
     chmod +x "$INSTALL_DIR/iptables-helper.sh"
     chmod +x "$INSTALL_DIR/unban-expired.sh"
     chmod +x "$INSTALL_DIR/external-blocklist-worker.sh"
+    chmod +x "$INSTALL_DIR/report-generator.sh"
 
     echo -e "  ✅ Dateien installiert"
     echo ""
@@ -495,6 +510,11 @@ print_summary() {
     echo "     sudo $INSTALL_DIR/iptables-helper.sh status"
     echo "     sudo $INSTALL_DIR/adguard-shield.sh flush"
     echo "     sudo $INSTALL_DIR/adguard-shield.sh unban <IP>"
+    echo ""
+    echo "  E-Mail Report:"
+    echo "     sudo $INSTALL_DIR/report-generator.sh status"
+    echo "     sudo $INSTALL_DIR/report-generator.sh install"
+    echo "     sudo $INSTALL_DIR/report-generator.sh send"
     echo ""
     echo "  Hilfe anzeigen:"
     echo "     sudo bash install.sh --help"
