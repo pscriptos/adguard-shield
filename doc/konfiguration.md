@@ -176,8 +176,8 @@ sudo systemctl restart adguard-shield
 
 Der Report an AbuseIPDB enthält (auf Englisch):
 
-- **Bei Rate-Limit:** `DNS flooding on our DNS server: 100x microsoft.com. Permanently banned by AdGuard Shield.`
-- **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com (random subdomain attack). Permanently banned by AdGuard Shield.`
+- **Bei Rate-Limit:** `DNS flooding on our DNS server: 100x microsoft.com in 60s. Banned by Adguard Shield 🔗 https://tnvs.de/as`
+- **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com in 60s (random subdomain attack). Banned by Adguard Shield 🔗 https://tnvs.de/as`
 
 Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
 #### Externe Blocklist einrichten
