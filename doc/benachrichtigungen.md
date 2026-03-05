@@ -101,6 +101,16 @@ Sendet einen POST mit JSON-Body:
 }
 ```
 
+## Benachrichtigungen und externe Blocklisten
+
+Bei Sperren aus der **externen Blocklist** werden Benachrichtigungen separat über `EXTERNAL_BLOCKLIST_NOTIFY` gesteuert — unabhängig von `NOTIFY_ENABLED`.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------| 
+| `EXTERNAL_BLOCKLIST_NOTIFY` | `false` | Benachrichtigungen bei Blocklist-Sperren aktivieren |
+
+> **Wichtig:** Bei großen Listen `EXTERNAL_BLOCKLIST_NOTIFY=false` belassen. Beim ersten Sync (oder nach einem `blocklist-flush`) werden alle IPs der Liste auf einmal gesperrt — mit `true` würde das zu einer Nachrichten-Flut im Notification-Channel führen. Nur auf `true` setzen, wenn die Liste sehr klein ist.
+
 ## Beispiel-Nachrichten
 
 **Service gestartet:**
