@@ -168,6 +168,36 @@ sudo /opt/adguard-shield/external-blocklist-worker.sh status
 sudo /opt/adguard-shield/external-blocklist-worker.sh flush
 ```
 
+## E-Mail Report
+
+```bash
+# Report sofort generieren und per E-Mail versenden
+sudo /opt/adguard-shield/report-generator.sh send
+
+# Test-E-Mail senden (prüft alle Voraussetzungen + Mailversand)
+sudo /opt/adguard-shield/report-generator.sh test
+
+# Report als Datei generieren (Ausgabe auf stdout)
+sudo /opt/adguard-shield/report-generator.sh generate
+
+# Report im HTML-Format in Datei speichern
+sudo /opt/adguard-shield/report-generator.sh generate html > report.html
+
+# Report im TXT-Format in Datei speichern
+sudo /opt/adguard-shield/report-generator.sh generate txt > report.txt
+
+# Cron-Job für automatischen Versand einrichten
+sudo /opt/adguard-shield/report-generator.sh install
+
+# Cron-Job entfernen
+sudo /opt/adguard-shield/report-generator.sh remove
+
+# Report-Konfiguration und Cron-Status anzeigen
+sudo /opt/adguard-shield/report-generator.sh status
+```
+
+> Voraussetzung: Ein funktionierender Mail-Transport (z.B. msmtp). Anleitung: [Linux: Einfach E-Mails versenden mit msmtp](https://www.cleveradmin.de/blog/2024/12/linux-einfach-emails-versenden-mit-msmtp/)
+
 ## Logs
 
 ```bash

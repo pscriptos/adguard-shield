@@ -30,6 +30,7 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 - Automatisches Entsperren nach konfigurierbarer Dauer
 - **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
 - **AbuseIPDB Reporting** — permanent gesperrte IPs automatisch an AbuseIPDB melden
+- **E-Mail Reports** — periodische Statistik-Reports als HTML oder TXT (täglich, wöchentlich, zweiwöchentlich, monatlich)
 - **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
 - Whitelist für vertrauenswürdige IPs
 - Dry-Run Modus zum gefahrlosen Testen
@@ -86,6 +87,9 @@ sudo /opt/adguard-shield/adguard-shield.sh reset-offenses     # Offense-Zähler 
 sudo /opt/adguard-shield/adguard-shield.sh test               # API-Verbindung testen
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-status   # Externe Blocklisten Status
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync     # Blocklisten manuell synchronisieren
+sudo /opt/adguard-shield/report-generator.sh send                # Report jetzt senden
+sudo /opt/adguard-shield/report-generator.sh status              # Report-Status anzeigen
+sudo /opt/adguard-shield/report-generator.sh install             # Cron-Job einrichten
 sudo journalctl -u adguard-shield -f                             # Logs live verfolgen
 ```
 
@@ -98,13 +102,18 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 ├── external-blocklist-worker.sh   # Externer Blocklist-Worker
 ├── iptables-helper.sh             # Manuelle iptables-Verwaltung
 ├── unban-expired.sh               # Cron-basiertes Entsperren
+├── report-generator.sh            # E-Mail Report Generator
 ├── install.sh                     # Installer / Updater / Uninstaller
+├── templates/
+│   ├── report.html                # HTML-Report-Template
+│   └── report.txt                 # TXT-Report-Template
 ├── README.md
 └── doc/
     ├── architektur.md               # Architektur & Funktionsweise
     ├── konfiguration.md             # Alle Parameter erklärt + Konfig-Migration
     ├── befehle.md                   # Vollständige Befehlsreferenz inkl. Installer
     ├── benachrichtigungen.md        # Webhook-Setup (Discord, Slack, Gotify, Ntfy)
+    ├── report.md                    # E-Mail Report Setup & Konfiguration
     └── tipps-und-troubleshooting.md
 ```
 
@@ -116,6 +125,7 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 | [Konfiguration](doc/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, automatische Migration |
 | [Befehle](doc/befehle.md) | Vollständige Befehlsreferenz für Installer, Monitor, iptables-Helper und systemd |
 | [Benachrichtigungen](doc/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
+| [E-Mail Report](doc/report.md) | Periodische Statistik-Reports per E-Mail (HTML/TXT) |
 | [Tipps & Troubleshooting](doc/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Deinstallation |
 
 ## Lizenz

@@ -123,6 +123,24 @@ Wiederholungstäter werden wie bei fail2ban stufenweise länger gesperrt. Wird e
 | `NTFY_TOKEN` | *(leer)* | Optionaler Ntfy Access-Token |
 | `NTFY_PRIORITY` | `4` | Ntfy Priorität (1–5) |
 
+### E-Mail Report
+
+Regelmäßige Statistik-Reports per E-Mail. Voraussetzung ist ein funktionierender Mail-Transport (z.B. msmtp).
+
+> **Anleitung für msmtp:** [Linux: Einfach E-Mails versenden mit msmtp](https://www.cleveradmin.de/blog/2024/12/linux-einfach-emails-versenden-mit-msmtp/)
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `REPORT_ENABLED` | `false` | Report-Funktion aktivieren |
+| `REPORT_INTERVAL` | `weekly` | Intervall: `daily`, `weekly`, `biweekly`, `monthly` |
+| `REPORT_TIME` | `08:00` | Versanduhrzeit (HH:MM, 24h) |
+| `REPORT_EMAIL_TO` | *(leer)* | E-Mail-Empfänger |
+| `REPORT_EMAIL_FROM` | `adguard-shield@hostname` | E-Mail-Absender |
+| `REPORT_FORMAT` | `html` | Format: `html` oder `txt` |
+| `REPORT_MAIL_CMD` | `msmtp` | Mail-Befehl (`msmtp`, `sendmail`, `mail`) |
+
+> Siehe [E-Mail Report Dokumentation](report.md) für Details zu Inhalten, Templates und Befehlen.
+
 ### Erweitert
 
 | Parameter | Standard | Beschreibung |
