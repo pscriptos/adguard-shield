@@ -151,12 +151,12 @@ Regelmäßige Statistik-Reports per E-Mail. Voraussetzung ist ein funktionierend
 | `DRY_RUN` | `false` | Testmodus — nur loggen, nicht sperren |
 ### Externe Blocklist
 
-Ermöglicht das Einbinden externer IP-Blocklisten (z.B. gehostete Textdateien mit einer IP pro Zeile). Der Worker läuft als Hintergrundprozess und prüft periodisch auf Änderungen.
+Ermöglicht das Einbinden externer Blocklisten, die IPv4-Adressen, IPv6-Adressen und Hostnamen enthalten können. Der Worker läuft als Hintergrundprozess, prüft periodisch auf Änderungen und löst Hostnamen automatisch über den lokalen DNS-Resolver auf.
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
 | `EXTERNAL_BLOCKLIST_ENABLED` | `false` | Aktiviert den externen Blocklist-Worker |
-| `EXTERNAL_BLOCKLIST_URLS` | *(leer)* | URL(s) zu Textdateien mit IPs (kommagetrennt) |
+| `EXTERNAL_BLOCKLIST_URLS` | *(leer)* | URL(s) zu Blocklist-Textdateien (kommagetrennt). Unterstützt IPv4, IPv6, CIDR und Hostnamen |
 | `EXTERNAL_BLOCKLIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.) |
 | `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden (0 = permanent bis IP aus Liste entfernt) |
 | `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs automatisch entsperren wenn aus Liste entfernt |
@@ -201,14 +201,31 @@ Der Report an AbuseIPDB enthält (auf Englisch):
 Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
 #### Externe Blocklist einrichten
 
-1. Erstelle eine Textdatei auf einem Webserver mit einer IP pro Zeile:
+1. Erstelle eine Textdatei auf einem Webserver. Pro Zeile ein Eintrag — IPv4, IPv6, CIDR oder Hostname:
 
 ```text
 # Kommentare werden ignoriert
+# Inline-Kommentare ebenfalls: 1.2.3.4 # dieser Kommentar wird entfernt
+
+# IPv4
 192.168.100.50
-10.0.0.99
+10.0.0.0/8
+
+# IPv6
 2001:db8::dead:beef
+2001:db8::/32
+
+# Hostnamen (werden über den lokalen DNS-Resolver aufgelöst)
+# Liefert ein Hostname mehrere IPs, werden alle gesperrt
+bad-actor.example.com
+malware.example.net
+
+# Hosts-Datei-Format wird ebenfalls erkannt (Routing-IP wird ignoriert, Hostname aufgelöst)
+0.0.0.0 bad-actor.example.com
+127.0.0.1 malware.example.net
 ```
+
+> **Hinweis zur Hostname-Auflösung:** Da AdGuard Shield idealerweise auf demselben Host wie der DNS-Resolver läuft, verwendet der Worker automatisch den lokalen Resolver. Hostnamen die bereits von AdGuard geblockt werden (Antwort `0.0.0.0`) werden übersprungen und nicht importiert.
 
 2. Aktiviere die Blocklist in der Konfiguration:
 
@@ -229,6 +246,27 @@ EXTERNAL_BLOCKLIST_URLS="https://example.com/list1.txt,https://other.com/list2.t
 ```bash
 sudo systemctl restart adguard-shield
 ```
+
+#### Unterstützte Eintragsformate
+
+| Format | Beispiel | Verhalten |
+|--------|----------|----------|
+| IPv4 | `1.2.3.4` | direkt gesperrt |
+| IPv4-CIDR | `10.0.0.0/8` | direkt gesperrt |
+| IPv6 | `2001:db8::1` | direkt gesperrt |
+| IPv6-CIDR | `2001:db8::/32` | direkt gesperrt |
+| Hostname | `bad.example.com` | per lokalem DNS aufgelöst, alle IPs (IPv4 + IPv6) gesperrt |
+| Hosts-Format | `0.0.0.0 bad.example.com` | Hostname extrahiert und aufgelöst |
+| Kommentar | `# Text` | übersprungen |
+| Inline-Kommentar | `1.2.3.4 # Text` | Kommentar entfernt, IP gesperrt |
+
+Folgende Einträge werden mit einer Warnung im Log übersprungen:
+
+- URLs (`https://...`, `http://...`)
+- IP:Port-Kombinationen (`1.2.3.4:8080`)
+- Hostnamen mit ungültigen Zeichen oder ohne Punkt
+- Einträge mit nicht auflösbarem Hostnamen
+- `0.0.0.0` und `::` (AdGuard-Blocking-Antwort)
 ## Gesperrte Ports im Detail
 
 Bei einem Rate-Limit-Verstoß werden **alle** DNS-Protokoll-Ports für den Client gesperrt (IPv4 via `iptables` und IPv6 via `ip6tables`):
