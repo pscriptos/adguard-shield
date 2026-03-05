@@ -42,6 +42,7 @@ REPORT_EMAIL_FROM="${REPORT_EMAIL_FROM:-adguard-shield@$(hostname -f 2>/dev/null
 REPORT_FORMAT="${REPORT_FORMAT:-html}"
 REPORT_MAIL_CMD="${REPORT_MAIL_CMD:-msmtp}"
 BAN_HISTORY_FILE="${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}"
+BAN_HISTORY_RETENTION_DAYS="${BAN_HISTORY_RETENTION_DAYS:-0}"
 STATE_DIR="${STATE_DIR:-/var/lib/adguard-shield}"
 TEMPLATE_DIR="${SCRIPT_DIR}/templates"
 
@@ -146,8 +147,51 @@ filter_history_by_period() {
     done < "$BAN_HISTORY_FILE"
 }
 
+# ─── Ban-History bereinigen ────────────────────────────────────────────────────
+# Entfernt Einträge älter als BAN_HISTORY_RETENTION_DAYS (0 = deaktiviert)
+cleanup_ban_history() {
+    [[ ! -f "$BAN_HISTORY_FILE" ]] && return
+    [[ "$BAN_HISTORY_RETENTION_DAYS" == "0" || -z "$BAN_HISTORY_RETENTION_DAYS" ]] && return
+
+    local cutoff_epoch
+    cutoff_epoch=$(date -d "-${BAN_HISTORY_RETENTION_DAYS} days" '+%s' 2>/dev/null)
+    [[ -z "$cutoff_epoch" ]] && return
+
+    local tmp_file="${BAN_HISTORY_FILE}.tmp"
+    local removed=0
+
+    while IFS= read -r line; do
+        # Header-Zeilen immer beibehalten
+        if [[ "$line" =~ ^#.*$ || -z "$line" ]]; then
+            echo "$line"
+            continue
+        fi
+
+        local timestamp
+        timestamp=$(echo "$line" | awk -F'|' '{print $1}' | xargs)
+        local line_epoch
+        line_epoch=$(date -d "$timestamp" '+%s' 2>/dev/null || echo "0")
+
+        if [[ "$line_epoch" -ge "$cutoff_epoch" ]]; then
+            echo "$line"
+        else
+            ((removed++)) || true
+        fi
+    done < "$BAN_HISTORY_FILE" > "$tmp_file"
+
+    if [[ $removed -gt 0 ]]; then
+        mv "$tmp_file" "$BAN_HISTORY_FILE"
+        log "INFO" "Ban-History bereinigt: $removed Einträge älter als ${BAN_HISTORY_RETENTION_DAYS} Tage entfernt"
+    else
+        rm -f "$tmp_file"
+    fi
+}
+
 # ─── Statistiken berechnen ────────────────────────────────────────────────────
 calculate_stats() {
+    # Ban-History bereinigen (falls Retention konfiguriert)
+    cleanup_ban_history
+
     local start_epoch
     start_epoch=$(get_period_start_epoch)
 
@@ -794,9 +838,11 @@ send_test_email() {
 <p style="color:#6c757d;font-size:13px;">Ab jetzt kannst du den automatischen Versand aktivieren mit:<br><code>sudo $(basename "$0") install</code></p>
 </div>
 <div style="background:#f8f9fc;padding:20px;text-align:center;font-size:12px;color:#6c757d;border-top:1px solid #e8ecf1;">
-<a href="https://www.patrick-asmus.de" style="color:#0f3460;text-decoration:none;font-weight:600;">patrick-asmus.de</a>
+<a href="https://www.patrick-asmus.de" style="color:#0f3460;text-decoration:none;font-weight:600;">Patrick-Asmus.DE</a>
 <span style="margin:0 8px;color:#ced4da;">|</span>
-<a href="https://git.techniverse.net/scriptos/adguard-shield.git" style="color:#0f3460;text-decoration:none;font-weight:600;">Git Repository</a>
+<a href="https://www.cleveradmin.de" style="color:#0f3460;text-decoration:none;font-weight:600;">CleverAdmin.DE</a>
+<span style="margin:0 8px;color:#ced4da;">|</span>
+<a href="https://git.techniverse.net/scriptos/adguard-shield.git" style="color:#0f3460;text-decoration:none;font-weight:600;">AdGuard Shield auf Gitea</a>
 <div style="margin-top:8px;font-size:11px;color:#adb5bd;">AdGuard Shield v${VERSION} &middot; ${hostname}</div>
 </div>
 </div>
@@ -829,6 +875,7 @@ TESTHTML
   AdGuard Shield v${VERSION} · ${hostname}
 
   Web:  https://www.patrick-asmus.de
+  Blog: https://www.cleveradmin.de
   Repo: https://git.techniverse.net/scriptos/adguard-shield.git
 ═══════════════════════════════════════════════════════════════
 TESTTXT

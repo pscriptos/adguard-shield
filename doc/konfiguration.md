@@ -110,6 +110,7 @@ Wiederholungstäter werden wie bei fail2ban stufenweise länger gesperrt. Wird e
 | `LOG_LEVEL` | `INFO` | Log-Level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_MAX_SIZE_MB` | `50` | Max. Log-Größe bevor rotiert wird |
 | `BAN_HISTORY_FILE` | `/var/log/adguard-shield-bans.log` | Datei für die Ban-History (alle Sperren/Entsperrungen) |
+| `BAN_HISTORY_RETENTION_DAYS` | `0` | Aufbewahrungsdauer der Ban-History in Tagen. `0` = unbegrenzt (niemals löschen). Alte Einträge werden beim nächsten Report automatisch entfernt. |
 
 ### Benachrichtigungen
 

@@ -55,5 +55,6 @@
   AdGuard Shield v{{VERSION}}
 
   Web:  https://www.patrick-asmus.de
+  Blog: https://www.cleveradmin.de
   Repo: https://git.techniverse.net/scriptos/adguard-shield.git
 ═══════════════════════════════════════════════════════════════
