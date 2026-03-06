@@ -65,6 +65,49 @@ log() {
     echo "[$timestamp] [$level] [REPORT] $message" | tee -a "$LOG_FILE" >&2
 }
 
+# ─── Versionsnummern vergleichen ──────────────────────────────────────────────
+# Gibt 0 zurück, wenn $1 > $2 (semver-Vergleich, v-Präfix wird ignoriert)
+version_gt() {
+    local v1="${1#v}"
+    local v2="${2#v}"
+    [[ "$v1" == "$v2" ]] && return 1
+    local IFS='.' i a b
+    read -ra ver1 <<< "$v1"
+    read -ra ver2 <<< "$v2"
+    local max_len=$(( ${#ver1[@]} > ${#ver2[@]} ? ${#ver1[@]} : ${#ver2[@]} ))
+    for ((i=0; i<max_len; i++)); do
+        a="${ver1[i]:-0}"
+        b="${ver2[i]:-0}"
+        [[ "$((10#${a}))" -gt "$((10#${b}))" ]] && return 0
+        [[ "$((10#${a}))" -lt "$((10#${b}))" ]] && return 1
+    done
+    return 1
+}
+
+# ─── Versionsprüfung gegen Gitea-Releases ─────────────────────────────────────
+check_for_update() {
+    UPDATE_NOTICE_HTML=""
+    UPDATE_NOTICE_TXT=""
+
+    [[ "$VERSION" == "unknown" ]] && return
+
+    local latest_tag
+    latest_tag=$(curl -sf --max-time 5 \
+        "https://git.techniverse.net/api/v1/repos/scriptos/adguard-shield/releases?limit=1&page=1" \
+        2>/dev/null | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+
+    [[ -z "$latest_tag" ]] && return
+
+    if version_gt "$latest_tag" "$VERSION"; then
+        UPDATE_NOTICE_HTML='<div class="update-notice">🆕 Update verfügbar: <strong>'"${latest_tag}"'</strong> · <a href="https://git.techniverse.net/scriptos/adguard-shield/releases">Jetzt aktualisieren →</a></div>'
+        UPDATE_NOTICE_TXT="  ⚠  Neue Version verfügbar: ${latest_tag}
+  Update: https://git.techniverse.net/scriptos/adguard-shield/releases
+"
+    fi
+}
+
+
+
 # ─── Berichtszeitraum berechnen ───────────────────────────────────────────────
 
 # Gibt Epoch-Wert für heute 00:00:00 (Mitternacht) zurück
@@ -320,7 +363,7 @@ calculate_stats() {
     PROTOCOL_STATS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $7}' | xargs -I{} echo {} | sed 's/^-$/unbekannt/' | grep -v '^$' | sort | uniq -c | sort -rn)
 
     # Letzte 10 Sperren
-    RECENT_BANS=$(echo "$filtered_data" | grep '| BAN ' | tail -10)
+    RECENT_BANS=$(echo "$filtered_data" | grep '| BAN ' | tail -10 | tac)
 }
 
 # ─── HTML-Tabellen generieren ─────────────────────────────────────────────────
@@ -477,9 +520,9 @@ generate_period_overview_html() {
     html+='<tr>'
     html+='<th>Zeitraum</th>'
     html+='<th>Sperren</th>'
-    html+='<th>Entsperrungen</th>'
-    html+='<th>Eindeutige IPs</th>'
-    html+='<th>Permanent gebannt</th>'
+    html+='<th>Entsperrt</th>'
+    html+='<th>Unique IPs</th>'
+    html+='<th>Dauerhaft gebannt</th>'
     html+='</tr>'
 
     for period_def in "${periods[@]}"; do
@@ -607,7 +650,7 @@ generate_period_overview_txt() {
     )
 
     printf "  %-15s %-9s %-12s %-14s %-11s\n" \
-        "Zeitraum" "Sperren" "Entsperr." "Eind. IPs" "Permanent"
+        "Zeitraum" "Sperren" "Entsperrt" "Unique IPs" "Dauerhaft"
     printf "  %-15s %-9s %-12s %-14s %-11s\n" \
         "───────────────" "─────────" "────────────" "──────────────" "───────────"
 
@@ -629,6 +672,9 @@ generate_report() {
 
     # Statistiken berechnen
     calculate_stats
+
+    # Update-Verfügbarkeit prüfen
+    check_for_update
 
     local report_period
     report_period=$(get_report_period)
@@ -679,6 +725,7 @@ generate_report() {
         report="${report//\{\{PROTOCOL_TABLE\}\}/$protocol_table}"
         report="${report//\{\{RECENT_BANS_TABLE\}\}/$recent_bans_table}"
         report="${report//\{\{PERIOD_OVERVIEW_TABLE\}\}/$period_overview_table}"
+        report="${report//\{\{UPDATE_NOTICE\}\}/$UPDATE_NOTICE_HTML}"
 
         echo "$report"
 
@@ -724,6 +771,7 @@ generate_report() {
         report="${report//\{\{PROTOCOL_TEXT\}\}/$protocol_txt}"
         report="${report//\{\{RECENT_BANS_TEXT\}\}/$recent_bans_txt}"
         report="${report//\{\{PERIOD_OVERVIEW_TEXT\}\}/$period_overview_txt}"
+        report="${report//\{\{UPDATE_NOTICE_TXT\}\}/$UPDATE_NOTICE_TXT}"
 
         echo "$report"
     else
@@ -968,6 +1016,11 @@ send_test_email() {
     local content_type="text/plain"
     [[ "$REPORT_FORMAT" == "html" ]] && content_type="text/html"
 
+    local test_update_notice_html
+    test_update_notice_html='<div style="display:inline-block;margin-top:10px;padding:7px 14px;background:#fff8e1;border:1px solid #ffc107;border-radius:8px;color:#7a5700;font-size:12px;font-weight:600;">🆕 Update verfügbar (Testanzeige): <strong>'"${VERSION}"'</strong> · <a href="https://git.techniverse.net/scriptos/adguard-shield/releases" style="color:#7a5700;font-weight:700;text-decoration:none;">Jetzt aktualisieren →</a></div>'
+    local test_update_notice_txt
+    test_update_notice_txt="  ⚠  Neue Version verfügbar (Testanzeige): ${VERSION}\n  Update: https://git.techniverse.net/scriptos/adguard-shield/releases\n"
+
     local test_body
     if [[ "$REPORT_FORMAT" == "html" ]]; then
         test_body=$(cat <<TESTHTML
@@ -993,13 +1046,17 @@ send_test_email() {
 </table>
 <p style="color:#6c757d;font-size:13px;">Ab jetzt kannst du den automatischen Versand aktivieren mit:<br><code>sudo $(basename "$0") install</code></p>
 </div>
-<div style="background:#f8f9fc;padding:20px;text-align:center;font-size:12px;color:#6c757d;border-top:1px solid #e8ecf1;">
-<a href="https://www.patrick-asmus.de" style="color:#0f3460;text-decoration:none;font-weight:600;">Patrick-Asmus.DE</a>
+<div style="background:#f8f9fc;padding:20px;font-size:12px;color:#6c757d;border-top:1px solid #e8ecf1;text-align:center;">
+<div style="display:flex;justify-content:space-between;align-items:center;">
+<span><a href="https://www.patrick-asmus.de" style="color:#0f3460;text-decoration:none;font-weight:600;">Patrick-Asmus.de</a>
 <span style="margin:0 8px;color:#ced4da;">|</span>
-<a href="https://www.cleveradmin.de" style="color:#0f3460;text-decoration:none;font-weight:600;">CleverAdmin.DE</a>
+<a href="https://www.cleveradmin.de" style="color:#0f3460;text-decoration:none;font-weight:600;">CleverAdmin.de</a></span>
+<span><a href="https://git.techniverse.net/scriptos/adguard-shield.git" style="color:#0f3460;text-decoration:none;font-weight:600;">AdGuard Shield auf Gitea</a>
 <span style="margin:0 8px;color:#ced4da;">|</span>
-<a href="https://git.techniverse.net/scriptos/adguard-shield.git" style="color:#0f3460;text-decoration:none;font-weight:600;">AdGuard Shield auf Gitea</a>
-<div style="margin-top:8px;font-size:11px;color:#adb5bd;">AdGuard Shield v${VERSION} &middot; ${hostname}</div>
+<a href="https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs" style="color:#0f3460;text-decoration:none;font-weight:600;">docs</a></span>
+</div>
+<div style="margin-top:8px;font-size:11px;color:#adb5bd;text-align:center;">AdGuard Shield ${VERSION} &middot; ${hostname}</div>
+${test_update_notice_html}
 </div>
 </div>
 </body></html>
@@ -1027,12 +1084,14 @@ TESTHTML
   Ab jetzt kannst du den automatischen Versand aktivieren mit:
   sudo $(basename "$0") install
 
+${test_update_notice_txt}
 ═══════════════════════════════════════════════════════════════
-  AdGuard Shield v${VERSION} · ${hostname}
+  AdGuard Shield ${VERSION} · ${hostname}
 
   Web:  https://www.patrick-asmus.de
   Blog: https://www.cleveradmin.de
   Repo: https://git.techniverse.net/scriptos/adguard-shield.git
+  Docs: https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs
 ═══════════════════════════════════════════════════════════════
 TESTTXT
 )

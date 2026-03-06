@@ -210,16 +210,38 @@
         }
         .footer .links {
             margin-top: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .footer .separator {
             margin: 0 8px;
             color: #ced4da;
         }
         .version-tag {
-            display: inline-block;
+            display: block;
             margin-top: 8px;
             font-size: 11px;
             color: #adb5bd;
+        }
+        .update-notice {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 7px 14px;
+            background: #fff8e1;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            color: #7a5700;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .update-notice a {
+            color: #7a5700;
+            text-decoration: none;
+            font-weight: 700;
+        }
+        .update-notice a:hover {
+            text-decoration: underline;
         }
         .period-today td {
             background: #eef4ff;
@@ -325,16 +347,23 @@
 
         <!-- Footer -->
         <div class="footer">
+            <div class="links">
+                <span>
+                    <a href="https://www.patrick-asmus.de">Patrick-Asmus.de</a>
+                    <span class="separator">|</span>
+                    <a href="https://www.cleveradmin.de">CleverAdmin.de</a>
+                </span>
+                <span>
+                    <a href="https://git.techniverse.net/scriptos/adguard-shield.git">AdGuard Shield auf Gitea</a>
+                    <span class="separator">|</span>
+                    <a href="https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs">docs</a>
+                </span>
+            </div>
+            <br>
             Dieser Report wurde automatisch von <strong>AdGuard Shield</strong> generiert.<br>
             Generiert am: {{REPORT_DATE}}
-            <div class="links">
-                <a href="https://www.patrick-asmus.de">Patrick-Asmus.DE</a>
-                <span class="separator">|</span>
-                <a href="https://www.cleveradmin.de">CleverAdmin.DE</a>
-                <span class="separator">|</span>
-                <a href="https://git.techniverse.net/scriptos/adguard-shield.git">AdGuard Shield auf Gitea</a>
-            </div>
             <div class="version-tag">AdGuard Shield {{VERSION}} · {{HOSTNAME}}</div>
+            {{UPDATE_NOTICE}}
         </div>
     </div>
 </body>
