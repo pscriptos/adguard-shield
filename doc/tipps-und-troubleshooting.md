@@ -213,10 +213,17 @@ sudo bash install.sh update
 
 ## Deinstallation
 
+Ab Version 0.6 gibt es einen eigenständigen Uninstaller im Installationsverzeichnis. Die Deinstallation kann daher jederzeit durchgeführt werden, **ohne die originalen Installationsdateien (install.sh) behalten zu müssen**:
+
 ```bash
-# Über den Installer (interaktiv mit Menü)
+# Empfohlen: direkt aus dem Installationsverzeichnis ausführen
+sudo bash /opt/adguard-shield/uninstall.sh
+
+# Alternativ: über den Installer (sofern noch vorhanden)
 sudo bash install.sh uninstall
 ```
+
+Beide Wege sind gleichwertig — `install.sh uninstall` delegiert intern an `/opt/adguard-shield/uninstall.sh`.
 
 Oder manuell:
 ```bash

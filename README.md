@@ -78,6 +78,9 @@ sudo bash install.sh --help           # Hilfe anzeigen
 sudo bash install.sh update           # Update mit automatischer Konfigurations-Migration
 sudo bash install.sh status           # Installationsstatus prüfen
 
+# Deinstallation (kein install.sh benötigt)
+sudo bash /opt/adguard-shield/uninstall.sh  # Direkt aus dem Installationsverzeichnis
+
 # Monitor
 sudo /opt/adguard-shield/adguard-shield.sh status             # Aktive Sperren anzeigen
 sudo /opt/adguard-shield/adguard-shield.sh history            # Ban-History anzeigen
@@ -103,7 +106,8 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 ├── iptables-helper.sh             # Manuelle iptables-Verwaltung
 ├── unban-expired.sh               # Cron-basiertes Entsperren
 ├── report-generator.sh            # E-Mail Report Generator
-├── install.sh                     # Installer / Updater / Uninstaller
+├── install.sh                     # Installer / Updater
+├── uninstall.sh                   # Uninstaller (wird ins Installationsverzeichnis kopiert)
 ├── templates/
 │   ├── report.html                # HTML-Report-Template
 │   └── report.txt                 # TXT-Report-Template
