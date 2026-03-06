@@ -7,7 +7,13 @@
   Host:     {{HOSTNAME}}
 
 ───────────────────────────────────────────────────────────────
-  📊 ÜBERSICHT
+  � ZEITRAUM-SCHNELLÜBERSICHT
+───────────────────────────────────────────────────────────────
+
+{{PERIOD_OVERVIEW_TEXT}}
+
+───────────────────────────────────────────────────────────────
+  📊 ÜBERSICHT (Berichtszeitraum)
 ───────────────────────────────────────────────────────────────
 
   Sperren gesamt:          {{TOTAL_BANS}}
@@ -50,6 +56,7 @@
 
 {{RECENT_BANS_TEXT}}
 
+{{UPDATE_NOTICE_TXT}}
 ═══════════════════════════════════════════════════════════════
   Dieser Report wurde automatisch von AdGuard Shield generiert.
   AdGuard Shield {{VERSION}}
@@ -57,4 +64,5 @@
   Web:  https://www.patrick-asmus.de
   Blog: https://www.cleveradmin.de
   Repo: https://git.techniverse.net/scriptos/adguard-shield.git
+  Docs: https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs
 ═══════════════════════════════════════════════════════════════

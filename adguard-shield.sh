@@ -5,11 +5,10 @@
 #
 # Autor:   Patrick Asmus
 # E-Mail:  support@techniverse.net
-# Datum:   2026-03-04
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.5.2"
+VERSION="v0.5.4"
 
 set -euo pipefail
 

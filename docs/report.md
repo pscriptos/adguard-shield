@@ -56,7 +56,26 @@ sudo /opt/adguard-shield/report-generator.sh install
 
 Der Report enthält folgende Statistiken:
 
-### Übersicht
+### Zeitraum-Schnellübersicht *(immer ganz oben)*
+
+Eine Vergleichstabelle mit Live-Zahlen für vier feste Zeitfenster – unabhängig vom konfigurierten `REPORT_INTERVAL`:
+
+| Zeitraum | Sperren | Entsperrungen | Eindeutige IPs | Permanent gebannt |
+|----------|---------|---------------|----------------|-------------------|
+| Heute *(nur nach 20:00 Uhr)* | … | … | … | … |
+| Gestern | … | … | … | … |
+| Letzte 7 Tage | … | … | … | … |
+| Letzte 14 Tage | … | … | … | … |
+| Letzte 30 Tage | … | … | … | … |
+
+Im HTML-Format wird **Gestern** grün hervorgehoben, **Heute** blau (erscheint nur ab 20:00 Uhr).  
+- **Gestern** umfasst exakt 00:00:00 – 23:59:59 des gestrigen Tages.  
+- **Heute** umfasst den laufenden Tag von 00:00:00 bis zum Zeitpunkt der Reportgenerierung und wird nur eingeblendet, wenn der Report nach 20:00 Uhr erstellt wird.  
+Die übrigen Zeiträume laufen vom Starttag 00:00 Uhr bis zum Zeitpunkt der Reportgenerierung.
+
+> **Hinweis:** Die AbuseIPDB-Meldungen werden in der Schnellübersicht nicht mehr separat ausgewiesen, da sie immer mit einer Permanentsperre korrelieren – der Wert „Permanent gebannt" ist daher ausreichend. Die Gesamtanzahl der AbuseIPDB-Reports im Berichtszeitraum ist weiterhin in der allgemeinen Übersicht sichtbar.
+
+### Übersicht (Berichtszeitraum)
 - Gesamtzahl der Sperren und Entsperrungen
 - Anzahl eindeutiger gesperrter IPs
 - Permanente Sperren

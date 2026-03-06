@@ -65,6 +65,49 @@ log() {
     echo "[$timestamp] [$level] [REPORT] $message" | tee -a "$LOG_FILE" >&2
 }
 
+# ─── Versionsnummern vergleichen ──────────────────────────────────────────────
+# Gibt 0 zurück, wenn $1 > $2 (semver-Vergleich, v-Präfix wird ignoriert)
+version_gt() {
+    local v1="${1#v}"
+    local v2="${2#v}"
+    [[ "$v1" == "$v2" ]] && return 1
+    local IFS='.' i a b
+    read -ra ver1 <<< "$v1"
+    read -ra ver2 <<< "$v2"
+    local max_len=$(( ${#ver1[@]} > ${#ver2[@]} ? ${#ver1[@]} : ${#ver2[@]} ))
+    for ((i=0; i<max_len; i++)); do
+        a="${ver1[i]:-0}"
+        b="${ver2[i]:-0}"
+        [[ "$((10#${a}))" -gt "$((10#${b}))" ]] && return 0
+        [[ "$((10#${a}))" -lt "$((10#${b}))" ]] && return 1
+    done
+    return 1
+}
+
+# ─── Versionsprüfung gegen Gitea-Releases ─────────────────────────────────────
+check_for_update() {
+    UPDATE_NOTICE_HTML=""
+    UPDATE_NOTICE_TXT=""
+
+    [[ "$VERSION" == "unknown" ]] && return
+
+    local latest_tag
+    latest_tag=$(curl -sf --max-time 5 \
+        "https://git.techniverse.net/api/v1/repos/scriptos/adguard-shield/releases?limit=1&page=1" \
+        2>/dev/null | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+
+    [[ -z "$latest_tag" ]] && return
+
+    if version_gt "$latest_tag" "$VERSION"; then
+        UPDATE_NOTICE_HTML='<div class="update-notice">🆕 Update verfügbar: <strong>'"${latest_tag}"'</strong> · <a href="https://git.techniverse.net/scriptos/adguard-shield/releases">Jetzt aktualisieren →</a></div>'
+        UPDATE_NOTICE_TXT="  ⚠  Neue Version verfügbar: ${latest_tag}
+  Update: https://git.techniverse.net/scriptos/adguard-shield/releases
+"
+    fi
+}
+
+
+
 # ─── Berichtszeitraum berechnen ───────────────────────────────────────────────
 
 # Gibt Epoch-Wert für heute 00:00:00 (Mitternacht) zurück
@@ -207,6 +250,26 @@ cleanup_ban_history() {
     fi
 }
 
+# ─── Statistiken für beliebigen Zeitraum berechnen ──────────────────────────
+# Gibt "bans|unbans|unique_ips|permanent" für einen Epochen-Bereich zurück
+get_stats_for_epoch_range() {
+    local start_epoch="$1"
+    local end_epoch="$2"
+
+    local filtered
+    filtered=$(filter_history_by_period "$start_epoch" "$end_epoch")
+
+    local bans=0 unbans=0 unique_ips=0 permanent=0
+    if [[ -n "$filtered" ]]; then
+        bans=$(echo "$filtered" | grep -c '| BAN ' || echo "0")
+        unbans=$(echo "$filtered" | grep -c '| UNBAN ' || echo "0")
+        unique_ips=$(echo "$filtered" | grep '| BAN ' | awk -F'|' '{print $3}' | xargs -I{} echo {} | sort -u | wc -l | xargs || echo "0")
+        permanent=$(echo "$filtered" | grep '| BAN ' | awk -F'|' '{print $6}' | grep -ic 'permanent' || echo "0")
+    fi
+
+    echo "${bans}|${unbans}|${unique_ips}|${permanent}"
+}
+
 # ─── Statistiken berechnen ────────────────────────────────────────────────────
 calculate_stats() {
     # Ban-History bereinigen (falls Retention konfiguriert)
@@ -259,12 +322,19 @@ calculate_stats() {
         done
     fi
 
-    # AbuseIPDB Reports (suche in Log-Datei)
+    # AbuseIPDB Reports – zeitraum-gefiltert aus der Logdatei
     ABUSEIPDB_REPORTS=0
     if [[ -f "$LOG_FILE" ]]; then
-        local abuseipdb_start_date
-        abuseipdb_start_date=$(date -d "@$start_epoch" '+%Y-%m-%d' 2>/dev/null || date -r "$start_epoch" '+%Y-%m-%d')
-        ABUSEIPDB_REPORTS=$(grep -c "AbuseIPDB: IP .* erfolgreich gemeldet" "$LOG_FILE" 2>/dev/null | head -1 || echo "0")
+        while IFS= read -r line; do
+            local ts
+            ts=$(echo "$line" | sed 's/^\[\([0-9-]* [0-9:]*\)\].*/\1/')
+            [[ -z "$ts" || "$ts" == "$line" ]] && continue
+            local le
+            le=$(date -d "$ts" '+%s' 2>/dev/null || echo "0")
+            if [[ "$le" -ge "$start_epoch" && "$le" -le "$end_epoch" ]]; then
+                ABUSEIPDB_REPORTS=$((ABUSEIPDB_REPORTS + 1))
+            fi
+        done < <(grep "AbuseIPDB:.*erfolgreich gemeldet" "$LOG_FILE" 2>/dev/null || true)
     fi
 
     # Angriffsarten
@@ -293,7 +363,7 @@ calculate_stats() {
     PROTOCOL_STATS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $7}' | xargs -I{} echo {} | sed 's/^-$/unbekannt/' | grep -v '^$' | sort | uniq -c | sort -rn)
 
     # Letzte 10 Sperren
-    RECENT_BANS=$(echo "$filtered_data" | grep '| BAN ' | tail -10)
+    RECENT_BANS=$(echo "$filtered_data" | grep '| BAN ' | tail -10 | tac)
 }
 
 # ─── HTML-Tabellen generieren ─────────────────────────────────────────────────
@@ -420,6 +490,65 @@ generate_recent_bans_html() {
     echo "$html"
 }
 
+# ─── Zeitraum-Schnellübersicht (HTML) ─────────────────────────────────────────
+generate_period_overview_html() {
+    local today_midnight
+    today_midnight=$(get_today_midnight)
+    local now
+    now=$(date '+%s')
+    local yesterday_start=$((today_midnight - 86400))
+    local yesterday_end=$((today_midnight - 1))
+
+    # Zeiträume: "Label:start_epoch:end_epoch" (Doppelpunkt als Trennzeichen)
+    local periods=()
+
+    # Heute nur nach 20:00 Uhr einblenden
+    local current_hour
+    current_hour=$(date '+%H' | sed 's/^0*//')
+    if [[ "${current_hour:-0}" -ge 20 ]]; then
+        periods+=("Heute:${today_midnight}:${now}")
+    fi
+
+    periods+=(
+        "Gestern:${yesterday_start}:${yesterday_end}"
+        "Letzte 7 Tage:$((today_midnight - 7 * 86400)):${now}"
+        "Letzte 14 Tage:$((today_midnight - 14 * 86400)):${now}"
+        "Letzte 30 Tage:$((today_midnight - 30 * 86400)):${now}"
+    )
+
+    local html='<table>'
+    html+='<tr>'
+    html+='<th>Zeitraum</th>'
+    html+='<th>Sperren</th>'
+    html+='<th>Entsperrt</th>'
+    html+='<th>Unique IPs</th>'
+    html+='<th>Dauerhaft gebannt</th>'
+    html+='</tr>'
+
+    for period_def in "${periods[@]}"; do
+        IFS=':' read -r label start_e end_e <<< "$period_def"
+        local row_class=""
+        case "$label" in
+            Heute)   row_class=' class="period-today"' ;;
+            Gestern) row_class=' class="period-gestern"' ;;
+        esac
+        local stats
+        stats=$(get_stats_for_epoch_range "$start_e" "$end_e")
+        IFS='|' read -r bans unbans unique perm <<< "$stats"
+
+        html+="<tr${row_class}>"
+        html+="<td><strong>${label}</strong></td>"
+        html+="<td>${bans}</td>"
+        html+="<td>${unbans}</td>"
+        html+="<td>${unique}</td>"
+        html+="<td>${perm}</td>"
+        html+="</tr>"
+    done
+
+    html+='</table>'
+    echo "$html"
+}
+
 # ─── TXT-Tabellen generieren ──────────────────────────────────────────────────
 generate_top10_ips_txt() {
     if [[ -z "$TOP10_IPS" ]]; then
@@ -495,6 +624,46 @@ generate_recent_bans_txt() {
     done <<< "$RECENT_BANS"
 }
 
+# ─── Zeitraum-Schnellübersicht (TXT) ──────────────────────────────────────────
+generate_period_overview_txt() {
+    local today_midnight
+    today_midnight=$(get_today_midnight)
+    local now
+    now=$(date '+%s')
+    local yesterday_start=$((today_midnight - 86400))
+    local yesterday_end=$((today_midnight - 1))
+
+    local periods=()
+
+    # Heute nur nach 20:00 Uhr einblenden
+    local current_hour
+    current_hour=$(date '+%H' | sed 's/^0*//')
+    if [[ "${current_hour:-0}" -ge 20 ]]; then
+        periods+=("Heute:${today_midnight}:${now}")
+    fi
+
+    periods+=(
+        "Gestern:${yesterday_start}:${yesterday_end}"
+        "Letzte 7 Tage:$((today_midnight - 7 * 86400)):${now}"
+        "Letzte 14 Tage:$((today_midnight - 14 * 86400)):${now}"
+        "Letzte 30 Tage:$((today_midnight - 30 * 86400)):${now}"
+    )
+
+    printf "  %-15s %-9s %-12s %-14s %-11s\n" \
+        "Zeitraum" "Sperren" "Entsperrt" "Unique IPs" "Dauerhaft"
+    printf "  %-15s %-9s %-12s %-14s %-11s\n" \
+        "───────────────" "─────────" "────────────" "──────────────" "───────────"
+
+    for period_def in "${periods[@]}"; do
+        IFS=':' read -r label start_e end_e <<< "$period_def"
+        local stats
+        stats=$(get_stats_for_epoch_range "$start_e" "$end_e")
+        IFS='|' read -r bans unbans unique perm <<< "$stats"
+        printf "  %-15s %-9s %-12s %-14s %-11s\n" \
+            "$label" "$bans" "$unbans" "$unique" "$perm"
+    done
+}
+
 # ─── Report generieren ────────────────────────────────────────────────────────
 generate_report() {
     local format="${1:-$REPORT_FORMAT}"
@@ -503,6 +672,9 @@ generate_report() {
 
     # Statistiken berechnen
     calculate_stats
+
+    # Update-Verfügbarkeit prüfen
+    check_for_update
 
     local report_period
     report_period=$(get_report_period)
@@ -530,6 +702,8 @@ generate_report() {
         protocol_table=$(generate_protocol_html)
         local recent_bans_table
         recent_bans_table=$(generate_recent_bans_html)
+        local period_overview_table
+        period_overview_table=$(generate_period_overview_html)
 
         # Platzhalter ersetzen
         report="${report//\{\{REPORT_PERIOD\}\}/$report_period}"
@@ -550,6 +724,8 @@ generate_report() {
         report="${report//\{\{TOP10_DOMAINS_TABLE\}\}/$top10_domains_table}"
         report="${report//\{\{PROTOCOL_TABLE\}\}/$protocol_table}"
         report="${report//\{\{RECENT_BANS_TABLE\}\}/$recent_bans_table}"
+        report="${report//\{\{PERIOD_OVERVIEW_TABLE\}\}/$period_overview_table}"
+        report="${report//\{\{UPDATE_NOTICE\}\}/$UPDATE_NOTICE_HTML}"
 
         echo "$report"
 
@@ -572,6 +748,8 @@ generate_report() {
         protocol_txt=$(generate_protocol_txt)
         local recent_bans_txt
         recent_bans_txt=$(generate_recent_bans_txt)
+        local period_overview_txt
+        period_overview_txt=$(generate_period_overview_txt)
 
         # Platzhalter ersetzen
         report="${report//\{\{REPORT_PERIOD\}\}/$report_period}"
@@ -592,6 +770,8 @@ generate_report() {
         report="${report//\{\{TOP10_DOMAINS_TEXT\}\}/$top10_domains_txt}"
         report="${report//\{\{PROTOCOL_TEXT\}\}/$protocol_txt}"
         report="${report//\{\{RECENT_BANS_TEXT\}\}/$recent_bans_txt}"
+        report="${report//\{\{PERIOD_OVERVIEW_TEXT\}\}/$period_overview_txt}"
+        report="${report//\{\{UPDATE_NOTICE_TXT\}\}/$UPDATE_NOTICE_TXT}"
 
         echo "$report"
     else
@@ -836,6 +1016,11 @@ send_test_email() {
     local content_type="text/plain"
     [[ "$REPORT_FORMAT" == "html" ]] && content_type="text/html"
 
+    local test_update_notice_html
+    test_update_notice_html='<div style="display:inline-block;margin-top:10px;padding:7px 14px;background:#fff8e1;border:1px solid #ffc107;border-radius:8px;color:#7a5700;font-size:12px;font-weight:600;">🆕 Update verfügbar (Testanzeige): <strong>'"${VERSION}"'</strong> · <a href="https://git.techniverse.net/scriptos/adguard-shield/releases" style="color:#7a5700;font-weight:700;text-decoration:none;">Jetzt aktualisieren →</a></div>'
+    local test_update_notice_txt
+    test_update_notice_txt="  ⚠  Neue Version verfügbar (Testanzeige): ${VERSION}\n  Update: https://git.techniverse.net/scriptos/adguard-shield/releases\n"
+
     local test_body
     if [[ "$REPORT_FORMAT" == "html" ]]; then
         test_body=$(cat <<TESTHTML
@@ -861,13 +1046,17 @@ send_test_email() {
 </table>
 <p style="color:#6c757d;font-size:13px;">Ab jetzt kannst du den automatischen Versand aktivieren mit:<br><code>sudo $(basename "$0") install</code></p>
 </div>
-<div style="background:#f8f9fc;padding:20px;text-align:center;font-size:12px;color:#6c757d;border-top:1px solid #e8ecf1;">
-<a href="https://www.patrick-asmus.de" style="color:#0f3460;text-decoration:none;font-weight:600;">Patrick-Asmus.DE</a>
+<div style="background:#f8f9fc;padding:20px;font-size:12px;color:#6c757d;border-top:1px solid #e8ecf1;text-align:center;">
+<div style="display:flex;justify-content:space-between;align-items:center;">
+<span><a href="https://www.patrick-asmus.de" style="color:#0f3460;text-decoration:none;font-weight:600;">Patrick-Asmus.de</a>
 <span style="margin:0 8px;color:#ced4da;">|</span>
-<a href="https://www.cleveradmin.de" style="color:#0f3460;text-decoration:none;font-weight:600;">CleverAdmin.DE</a>
+<a href="https://www.cleveradmin.de" style="color:#0f3460;text-decoration:none;font-weight:600;">CleverAdmin.de</a></span>
+<span><a href="https://git.techniverse.net/scriptos/adguard-shield.git" style="color:#0f3460;text-decoration:none;font-weight:600;">AdGuard Shield auf Gitea</a>
 <span style="margin:0 8px;color:#ced4da;">|</span>
-<a href="https://git.techniverse.net/scriptos/adguard-shield.git" style="color:#0f3460;text-decoration:none;font-weight:600;">AdGuard Shield auf Gitea</a>
-<div style="margin-top:8px;font-size:11px;color:#adb5bd;">AdGuard Shield v${VERSION} &middot; ${hostname}</div>
+<a href="https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs" style="color:#0f3460;text-decoration:none;font-weight:600;">docs</a></span>
+</div>
+<div style="margin-top:8px;font-size:11px;color:#adb5bd;text-align:center;">AdGuard Shield ${VERSION} &middot; ${hostname}</div>
+${test_update_notice_html}
 </div>
 </div>
 </body></html>
@@ -895,12 +1084,14 @@ TESTHTML
   Ab jetzt kannst du den automatischen Versand aktivieren mit:
   sudo $(basename "$0") install
 
+${test_update_notice_txt}
 ═══════════════════════════════════════════════════════════════
-  AdGuard Shield v${VERSION} · ${hostname}
+  AdGuard Shield ${VERSION} · ${hostname}
 
   Web:  https://www.patrick-asmus.de
   Blog: https://www.cleveradmin.de
   Repo: https://git.techniverse.net/scriptos/adguard-shield.git
+  Docs: https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs
 ═══════════════════════════════════════════════════════════════
 TESTTXT
 )
