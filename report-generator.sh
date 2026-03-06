@@ -207,6 +207,26 @@ cleanup_ban_history() {
     fi
 }
 
+# ─── Statistiken für beliebigen Zeitraum berechnen ──────────────────────────
+# Gibt "bans|unbans|unique_ips|permanent" für einen Epochen-Bereich zurück
+get_stats_for_epoch_range() {
+    local start_epoch="$1"
+    local end_epoch="$2"
+
+    local filtered
+    filtered=$(filter_history_by_period "$start_epoch" "$end_epoch")
+
+    local bans=0 unbans=0 unique_ips=0 permanent=0
+    if [[ -n "$filtered" ]]; then
+        bans=$(echo "$filtered" | grep -c '| BAN ' || echo "0")
+        unbans=$(echo "$filtered" | grep -c '| UNBAN ' || echo "0")
+        unique_ips=$(echo "$filtered" | grep '| BAN ' | awk -F'|' '{print $3}' | xargs -I{} echo {} | sort -u | wc -l | xargs || echo "0")
+        permanent=$(echo "$filtered" | grep '| BAN ' | awk -F'|' '{print $6}' | grep -ic 'permanent' || echo "0")
+    fi
+
+    echo "${bans}|${unbans}|${unique_ips}|${permanent}"
+}
+
 # ─── Statistiken berechnen ────────────────────────────────────────────────────
 calculate_stats() {
     # Ban-History bereinigen (falls Retention konfiguriert)
@@ -259,12 +279,19 @@ calculate_stats() {
         done
     fi
 
-    # AbuseIPDB Reports (suche in Log-Datei)
+    # AbuseIPDB Reports – zeitraum-gefiltert aus der Logdatei
     ABUSEIPDB_REPORTS=0
     if [[ -f "$LOG_FILE" ]]; then
-        local abuseipdb_start_date
-        abuseipdb_start_date=$(date -d "@$start_epoch" '+%Y-%m-%d' 2>/dev/null || date -r "$start_epoch" '+%Y-%m-%d')
-        ABUSEIPDB_REPORTS=$(grep -c "AbuseIPDB: IP .* erfolgreich gemeldet" "$LOG_FILE" 2>/dev/null | head -1 || echo "0")
+        while IFS= read -r line; do
+            local ts
+            ts=$(echo "$line" | sed 's/^\[\([0-9-]* [0-9:]*\)\].*/\1/')
+            [[ -z "$ts" || "$ts" == "$line" ]] && continue
+            local le
+            le=$(date -d "$ts" '+%s' 2>/dev/null || echo "0")
+            if [[ "$le" -ge "$start_epoch" && "$le" -le "$end_epoch" ]]; then
+                ABUSEIPDB_REPORTS=$((ABUSEIPDB_REPORTS + 1))
+            fi
+        done < <(grep "AbuseIPDB:.*erfolgreich gemeldet" "$LOG_FILE" 2>/dev/null || true)
     fi
 
     # Angriffsarten
@@ -420,6 +447,65 @@ generate_recent_bans_html() {
     echo "$html"
 }
 
+# ─── Zeitraum-Schnellübersicht (HTML) ─────────────────────────────────────────
+generate_period_overview_html() {
+    local today_midnight
+    today_midnight=$(get_today_midnight)
+    local now
+    now=$(date '+%s')
+    local yesterday_start=$((today_midnight - 86400))
+    local yesterday_end=$((today_midnight - 1))
+
+    # Zeiträume: "Label:start_epoch:end_epoch" (Doppelpunkt als Trennzeichen)
+    local periods=()
+
+    # Heute nur nach 20:00 Uhr einblenden
+    local current_hour
+    current_hour=$(date '+%H' | sed 's/^0*//')
+    if [[ "${current_hour:-0}" -ge 20 ]]; then
+        periods+=("Heute:${today_midnight}:${now}")
+    fi
+
+    periods+=(
+        "Gestern:${yesterday_start}:${yesterday_end}"
+        "Letzte 7 Tage:$((today_midnight - 7 * 86400)):${now}"
+        "Letzte 14 Tage:$((today_midnight - 14 * 86400)):${now}"
+        "Letzte 30 Tage:$((today_midnight - 30 * 86400)):${now}"
+    )
+
+    local html='<table>'
+    html+='<tr>'
+    html+='<th>Zeitraum</th>'
+    html+='<th>Sperren</th>'
+    html+='<th>Entsperrungen</th>'
+    html+='<th>Eindeutige IPs</th>'
+    html+='<th>Permanent gebannt</th>'
+    html+='</tr>'
+
+    for period_def in "${periods[@]}"; do
+        IFS=':' read -r label start_e end_e <<< "$period_def"
+        local row_class=""
+        case "$label" in
+            Heute)   row_class=' class="period-today"' ;;
+            Gestern) row_class=' class="period-gestern"' ;;
+        esac
+        local stats
+        stats=$(get_stats_for_epoch_range "$start_e" "$end_e")
+        IFS='|' read -r bans unbans unique perm <<< "$stats"
+
+        html+="<tr${row_class}>"
+        html+="<td><strong>${label}</strong></td>"
+        html+="<td>${bans}</td>"
+        html+="<td>${unbans}</td>"
+        html+="<td>${unique}</td>"
+        html+="<td>${perm}</td>"
+        html+="</tr>"
+    done
+
+    html+='</table>'
+    echo "$html"
+}
+
 # ─── TXT-Tabellen generieren ──────────────────────────────────────────────────
 generate_top10_ips_txt() {
     if [[ -z "$TOP10_IPS" ]]; then
@@ -495,6 +581,46 @@ generate_recent_bans_txt() {
     done <<< "$RECENT_BANS"
 }
 
+# ─── Zeitraum-Schnellübersicht (TXT) ──────────────────────────────────────────
+generate_period_overview_txt() {
+    local today_midnight
+    today_midnight=$(get_today_midnight)
+    local now
+    now=$(date '+%s')
+    local yesterday_start=$((today_midnight - 86400))
+    local yesterday_end=$((today_midnight - 1))
+
+    local periods=()
+
+    # Heute nur nach 20:00 Uhr einblenden
+    local current_hour
+    current_hour=$(date '+%H' | sed 's/^0*//')
+    if [[ "${current_hour:-0}" -ge 20 ]]; then
+        periods+=("Heute:${today_midnight}:${now}")
+    fi
+
+    periods+=(
+        "Gestern:${yesterday_start}:${yesterday_end}"
+        "Letzte 7 Tage:$((today_midnight - 7 * 86400)):${now}"
+        "Letzte 14 Tage:$((today_midnight - 14 * 86400)):${now}"
+        "Letzte 30 Tage:$((today_midnight - 30 * 86400)):${now}"
+    )
+
+    printf "  %-15s %-9s %-12s %-14s %-11s\n" \
+        "Zeitraum" "Sperren" "Entsperr." "Eind. IPs" "Permanent"
+    printf "  %-15s %-9s %-12s %-14s %-11s\n" \
+        "───────────────" "─────────" "────────────" "──────────────" "───────────"
+
+    for period_def in "${periods[@]}"; do
+        IFS=':' read -r label start_e end_e <<< "$period_def"
+        local stats
+        stats=$(get_stats_for_epoch_range "$start_e" "$end_e")
+        IFS='|' read -r bans unbans unique perm <<< "$stats"
+        printf "  %-15s %-9s %-12s %-14s %-11s\n" \
+            "$label" "$bans" "$unbans" "$unique" "$perm"
+    done
+}
+
 # ─── Report generieren ────────────────────────────────────────────────────────
 generate_report() {
     local format="${1:-$REPORT_FORMAT}"
@@ -530,6 +656,8 @@ generate_report() {
         protocol_table=$(generate_protocol_html)
         local recent_bans_table
         recent_bans_table=$(generate_recent_bans_html)
+        local period_overview_table
+        period_overview_table=$(generate_period_overview_html)
 
         # Platzhalter ersetzen
         report="${report//\{\{REPORT_PERIOD\}\}/$report_period}"
@@ -550,6 +678,7 @@ generate_report() {
         report="${report//\{\{TOP10_DOMAINS_TABLE\}\}/$top10_domains_table}"
         report="${report//\{\{PROTOCOL_TABLE\}\}/$protocol_table}"
         report="${report//\{\{RECENT_BANS_TABLE\}\}/$recent_bans_table}"
+        report="${report//\{\{PERIOD_OVERVIEW_TABLE\}\}/$period_overview_table}"
 
         echo "$report"
 
@@ -572,6 +701,8 @@ generate_report() {
         protocol_txt=$(generate_protocol_txt)
         local recent_bans_txt
         recent_bans_txt=$(generate_recent_bans_txt)
+        local period_overview_txt
+        period_overview_txt=$(generate_period_overview_txt)
 
         # Platzhalter ersetzen
         report="${report//\{\{REPORT_PERIOD\}\}/$report_period}"
@@ -592,6 +723,7 @@ generate_report() {
         report="${report//\{\{TOP10_DOMAINS_TEXT\}\}/$top10_domains_txt}"
         report="${report//\{\{PROTOCOL_TEXT\}\}/$protocol_txt}"
         report="${report//\{\{RECENT_BANS_TEXT\}\}/$recent_bans_txt}"
+        report="${report//\{\{PERIOD_OVERVIEW_TEXT\}\}/$period_overview_txt}"
 
         echo "$report"
     else

@@ -221,6 +221,24 @@
             font-size: 11px;
             color: #adb5bd;
         }
+        .period-today td {
+            background: #eef4ff;
+            font-weight: 600;
+        }
+        .period-today td:first-child {
+            color: #0f3460;
+        }
+        .period-gestern td {
+            background: #f0faf3;
+            font-weight: 600;
+        }
+        .period-gestern td:first-child {
+            color: #27ae60;
+        }
+        @media (max-width: 700px) {
+            table { font-size: 12px; }
+            th, td { padding: 8px 8px; }
+        }
     </style>
 </head>
 <body>
@@ -234,6 +252,11 @@
 
         <!-- Statistik-Übersicht -->
         <div class="content">
+            <!-- Zeitraum-Schnellübersicht -->
+            <h2>📅 Zeitraum-Schnellübersicht</h2>
+            {{PERIOD_OVERVIEW_TABLE}}
+
+            <!-- Gesamt-Übersicht des Berichtszeitraums -->
             <h2>📊 Übersicht</h2>
             <div class="stats-grid">
                 <div class="stat-card danger">
