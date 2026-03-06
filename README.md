@@ -112,7 +112,7 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 │   ├── report.html                # HTML-Report-Template
 │   └── report.txt                 # TXT-Report-Template
 ├── README.md
-└── doc/
+└── docs/
     ├── architektur.md               # Architektur & Funktionsweise
     ├── konfiguration.md             # Alle Parameter erklärt + Konfig-Migration
     ├── befehle.md                   # Vollständige Befehlsreferenz inkl. Installer
@@ -125,12 +125,12 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 
 | Dokument | Inhalt |
 |----------|--------|
-| [Architektur](doc/architektur.md) | Wie das Tool funktioniert, iptables-Strategie, Konfig-Migration |
-| [Konfiguration](doc/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, automatische Migration |
-| [Befehle](doc/befehle.md) | Vollständige Befehlsreferenz für Installer, Monitor, iptables-Helper und systemd |
-| [Benachrichtigungen](doc/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
-| [E-Mail Report](doc/report.md) | Periodische Statistik-Reports per E-Mail (HTML/TXT) |
-| [Tipps & Troubleshooting](doc/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Deinstallation |
+| [Architektur](docs/architektur.md) | Wie das Tool funktioniert, iptables-Strategie, Konfig-Migration |
+| [Konfiguration](docs/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, automatische Migration |
+| [Befehle](docs/befehle.md) | Vollständige Befehlsreferenz für Installer, Monitor, iptables-Helper und systemd |
+| [Benachrichtigungen](docs/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
+| [E-Mail Report](docs/report.md) | Periodische Statistik-Reports per E-Mail (HTML/TXT) |
+| [Tipps & Troubleshooting](docs/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Deinstallation |
 
 ## Lizenz
 

@@ -26,7 +26,7 @@ sudo bash install.sh --help
 
 ## Uninstaller (eigenständig)
 
-Ab Version 0.6 wird bei der Installation ein eigenständiger Uninstaller nach `/opt/adguard-shield/uninstall.sh` kopiert. Die Deinstallation kann damit **ohne die originalen Installationsdateien** durchgeführt werden:
+Ab Version 0.5.2 wird bei der Installation ein eigenständiger Uninstaller nach `/opt/adguard-shield/uninstall.sh` kopiert. Die Deinstallation kann damit **ohne die originalen Installationsdateien** durchgeführt werden:
 
 ```bash
 # Direkt aus dem Installationsverzeichnis — kein install.sh benötigt

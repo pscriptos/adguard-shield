@@ -551,9 +551,9 @@ send_notification() {
             message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s via **$protocol**, ${reason_label}). Sperre für ${simple_dur}."
         fi
     elif [[ "$action" == "service_start" ]]; then
-        message="🟢 AdGuard Shield v${VERSION} wurde gestartet."
+        message="🟢 AdGuard Shield ${VERSION} wurde gestartet."
     elif [[ "$action" == "service_stop" ]]; then
-        message="🔴 AdGuard Shield v${VERSION} wurde gestoppt."
+        message="🔴 AdGuard Shield ${VERSION} wurde gestoppt."
     else
         message="✅ AdGuard Shield: Client **$client_ip** wurde entsperrt."
     fi
@@ -1097,7 +1097,7 @@ stop_blocklist_worker() {
 # ─── Hauptschleife ──────────────────────────────────────────────────────────
 main_loop() {
     log "INFO" "═══════════════════════════════════════════════════════════"
-    log "INFO" "AdGuard Shield v${VERSION} gestartet"
+    log "INFO" "AdGuard Shield ${VERSION} gestartet"
     log "INFO" "  Limit: ${RATE_LIMIT_MAX_REQUESTS} Anfragen pro ${RATE_LIMIT_WINDOW}s"
     log "INFO" "  Sperrdauer: $(format_duration "${BAN_DURATION}")"
     log "INFO" "  Prüfintervall: ${CHECK_INTERVAL}s"
@@ -1150,7 +1150,7 @@ trap cleanup SIGTERM SIGINT SIGHUP
 # ─── Kommandozeilen-Argumente ────────────────────────────────────────────────
 case "${1:-start}" in
     start)
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] AdGuard Shield v${VERSION} wird gestartet..."
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] AdGuard Shield ${VERSION} wird gestartet..."
         check_dependencies
         check_already_running
         init_directories
@@ -1250,7 +1250,7 @@ case "${1:-start}" in
         ;;
     *)
         cat << USAGE
-AdGuard Shield v${VERSION}
+AdGuard Shield ${VERSION}
 
 Service-Steuerung (empfohlen):
   sudo systemctl start adguard-shield
