@@ -6,7 +6,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.5.1"
+VERSION="v0.5.2"
 
 set -euo pipefail
 
@@ -70,6 +70,9 @@ print_help() {
     echo -e "  ${GREEN}uninstall${NC}    Vollständige Deinstallation"
     echo -e "               Stoppt den Service, entfernt iptables-Regeln und"
     echo -e "               löscht alle Dateien (optional Konfiguration behalten)."
+    echo -e "               Delegiert automatisch an den im Installationsverzeichnis"
+    echo -e "               liegenden Uninstaller — kein Behalten der Installationsdateien nötig."
+    echo -e "               Direkt ausführbar: ${CYAN}sudo bash $INSTALL_DIR/uninstall.sh${NC}"
     echo ""
     echo -e "  ${GREEN}status${NC}       Installationsstatus anzeigen"
     echo -e "               Zeigt ob AdGuard Shield installiert ist, welche Version"
@@ -239,6 +242,7 @@ install_files() {
     cp "$SCRIPT_DIR/unban-expired.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/external-blocklist-worker.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/report-generator.sh" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/"
 
     # Templates kopieren
     mkdir -p "$INSTALL_DIR/templates"
@@ -251,6 +255,7 @@ install_files() {
     chmod +x "$INSTALL_DIR/unban-expired.sh"
     chmod +x "$INSTALL_DIR/external-blocklist-worker.sh"
     chmod +x "$INSTALL_DIR/report-generator.sh"
+    chmod +x "$INSTALL_DIR/uninstall.sh"
 
     echo -e "  ✅ Dateien installiert"
     echo ""
@@ -519,6 +524,9 @@ print_summary() {
     echo "  Hilfe anzeigen:"
     echo "     sudo bash install.sh --help"
     echo ""
+    echo "  Deinstallieren (auch ohne Installationsdateien):"
+    echo "     sudo bash $INSTALL_DIR/uninstall.sh"
+    echo ""
 }
 
 # ─── Status anzeigen ─────────────────────────────────────────────────────────
@@ -705,10 +713,15 @@ do_uninstall() {
         exit 1
     fi
 
-    echo -e "${YELLOW}Deinstalliere AdGuard Shield...${NC}"
+    # An den im Installationsverzeichnis liegenden Uninstaller delegieren
+    if [[ -f "$INSTALL_DIR/uninstall.sh" ]]; then
+        exec bash "$INSTALL_DIR/uninstall.sh"
+    fi
+
+    # Fallback für ältere Installationen ohne uninstall.sh
+    echo -e "${YELLOW}Deinstalliere AdGuard Shield (Fallback-Modus)...${NC}"
     echo ""
 
-    # Sicherheitsabfrage
     read -rep "  Wirklich deinstallieren? [j/N]: " confirm
     if [[ "${confirm,,}" != "j" ]]; then
         echo -e "${GREEN}Deinstallation abgebrochen.${NC}"
@@ -716,7 +729,6 @@ do_uninstall() {
     fi
     echo ""
 
-    # Service stoppen und deaktivieren
     if systemctl is-active adguard-shield &>/dev/null; then
         systemctl stop adguard-shield
         echo "  ✅ Service gestoppt"
@@ -729,18 +741,18 @@ do_uninstall() {
     systemctl daemon-reload
     echo "  ✅ Service-Datei entfernt"
 
-    # iptables Chain aufräumen
     if [[ -f "$INSTALL_DIR/iptables-helper.sh" ]]; then
         bash "$INSTALL_DIR/iptables-helper.sh" remove || true
     fi
 
-    # Dateien entfernen
     read -rep "  Konfiguration und Logs behalten? [j/N]: " keep
     if [[ "${keep,,}" == "j" ]]; then
         rm -f "$INSTALL_DIR/adguard-shield.sh"
         rm -f "$INSTALL_DIR/iptables-helper.sh"
         rm -f "$INSTALL_DIR/unban-expired.sh"
         rm -f "$INSTALL_DIR/external-blocklist-worker.sh"
+        rm -f "$INSTALL_DIR/report-generator.sh"
+        rm -rf "$INSTALL_DIR/templates"
         echo "  ✅ Scripts entfernt (Konfiguration und Logs behalten)"
     else
         rm -rf "$INSTALL_DIR"
@@ -766,7 +778,7 @@ main() {
             do_update
             ;;
         uninstall)
-            print_header
+            # print_header wird vom delegierten uninstall.sh übernommen
             do_uninstall
             ;;
         status)

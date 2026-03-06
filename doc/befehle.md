@@ -14,7 +14,7 @@ sudo bash install.sh install
 # Update (mit automatischer Konfigurations-Migration)
 sudo bash install.sh update
 
-# Deinstallation
+# Deinstallation (delegiert automatisch an den installierten Uninstaller)
 sudo bash install.sh uninstall
 
 # Installationsstatus anzeigen
@@ -23,6 +23,17 @@ sudo bash install.sh status
 # Hilfe anzeigen
 sudo bash install.sh --help
 ```
+
+## Uninstaller (eigenständig)
+
+Ab Version 0.6 wird bei der Installation ein eigenständiger Uninstaller nach `/opt/adguard-shield/uninstall.sh` kopiert. Die Deinstallation kann damit **ohne die originalen Installationsdateien** durchgeführt werden:
+
+```bash
+# Direkt aus dem Installationsverzeichnis — kein install.sh benötigt
+sudo bash /opt/adguard-shield/uninstall.sh
+```
+
+Der Uninstaller kennt seinen Speicherort und leitet daraus automatisch das Installationsverzeichnis ab. `install.sh uninstall` delegiert intern ebenfalls dorthin — beide Wege führen zum selben Ergebnis.
 
 ### Update-Verhalten
 

@@ -52,7 +52,7 @@
 
 ═══════════════════════════════════════════════════════════════
   Dieser Report wurde automatisch von AdGuard Shield generiert.
-  AdGuard Shield v{{VERSION}}
+  AdGuard Shield {{VERSION}}
 
   Web:  https://www.patrick-asmus.de
   Blog: https://www.cleveradmin.de

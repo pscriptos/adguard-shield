@@ -62,35 +62,43 @@ log() {
     local message="$*"
     local timestamp
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-    echo "[$timestamp] [$level] [REPORT] $message" | tee -a "$LOG_FILE"
+    echo "[$timestamp] [$level] [REPORT] $message" | tee -a "$LOG_FILE" >&2
 }
 
 # ─── Berichtszeitraum berechnen ───────────────────────────────────────────────
+
+# Gibt Epoch-Wert für heute 00:00:00 (Mitternacht) zurück
+get_today_midnight() {
+    date -d "today 00:00:00" '+%s' 2>/dev/null || date -v0H -v0M -v0S '+%s'
+}
+
 get_report_period() {
-    local now_epoch
-    now_epoch=$(date '+%s')
+    local today_midnight
+    today_midnight=$(get_today_midnight)
+    # Ende des Berichtszeitraums ist immer das Ende von gestern (23:59:59)
+    local end_epoch=$((today_midnight - 1))
     local start_epoch
     local period_label
 
     case "$REPORT_INTERVAL" in
         daily)
-            start_epoch=$((now_epoch - 86400))
+            start_epoch=$((today_midnight - 86400))
             period_label="Tagesbericht"
             ;;
         weekly)
-            start_epoch=$((now_epoch - 604800))
+            start_epoch=$((today_midnight - 7 * 86400))
             period_label="Wochenbericht"
             ;;
         biweekly)
-            start_epoch=$((now_epoch - 1209600))
+            start_epoch=$((today_midnight - 14 * 86400))
             period_label="Zweiwochenbericht"
             ;;
         monthly)
-            start_epoch=$((now_epoch - 2592000))
+            start_epoch=$((today_midnight - 30 * 86400))
             period_label="Monatsbericht"
             ;;
         *)
-            start_epoch=$((now_epoch - 604800))
+            start_epoch=$((today_midnight - 7 * 86400))
             period_label="Bericht"
             ;;
     esac
@@ -98,28 +106,40 @@ get_report_period() {
     local start_date
     start_date=$(date -d "@$start_epoch" '+%d.%m.%Y' 2>/dev/null || date -r "$start_epoch" '+%d.%m.%Y')
     local end_date
-    end_date=$(date '+%d.%m.%Y')
+    end_date=$(date -d "@$end_epoch" '+%d.%m.%Y' 2>/dev/null || date -r "$end_epoch" '+%d.%m.%Y')
 
-    echo "${period_label}: ${start_date} – ${end_date}"
+    if [[ "$REPORT_INTERVAL" == "daily" ]]; then
+        echo "${period_label}: ${start_date}"
+    else
+        echo "${period_label}: ${start_date} – ${end_date}"
+    fi
 }
 
 get_period_start_epoch() {
-    local now_epoch
-    now_epoch=$(date '+%s')
+    local today_midnight
+    today_midnight=$(get_today_midnight)
 
     case "$REPORT_INTERVAL" in
-        daily)    echo $((now_epoch - 86400)) ;;
-        weekly)   echo $((now_epoch - 604800)) ;;
-        biweekly) echo $((now_epoch - 1209600)) ;;
-        monthly)  echo $((now_epoch - 2592000)) ;;
-        *)        echo $((now_epoch - 604800)) ;;
+        daily)    echo $((today_midnight - 86400)) ;;
+        weekly)   echo $((today_midnight - 7 * 86400)) ;;
+        biweekly) echo $((today_midnight - 14 * 86400)) ;;
+        monthly)  echo $((today_midnight - 30 * 86400)) ;;
+        *)        echo $((today_midnight - 7 * 86400)) ;;
     esac
+}
+
+get_period_end_epoch() {
+    # Ende des Berichtszeitraums = Ende von gestern (heute 00:00:00 minus 1 Sekunde)
+    local today_midnight
+    today_midnight=$(get_today_midnight)
+    echo $((today_midnight - 1))
 }
 
 # ─── Ban-History filtern nach Zeitraum ────────────────────────────────────────
 # Gibt nur Zeilen zurück, deren Zeitstempel im Berichtszeitraum liegen
 filter_history_by_period() {
     local start_epoch="$1"
+    local end_epoch="$2"
 
     if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
         return
@@ -141,7 +161,7 @@ filter_history_by_period() {
         local line_epoch
         line_epoch=$(date -d "$timestamp" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d %H:%M:%S' "$timestamp" '+%s' 2>/dev/null || echo "0")
 
-        if [[ "$line_epoch" -ge "$start_epoch" ]]; then
+        if [[ "$line_epoch" -ge "$start_epoch" && "$line_epoch" -le "$end_epoch" ]]; then
             echo "$line"
         fi
     done < "$BAN_HISTORY_FILE"
@@ -194,9 +214,11 @@ calculate_stats() {
 
     local start_epoch
     start_epoch=$(get_period_start_epoch)
+    local end_epoch
+    end_epoch=$(get_period_end_epoch)
 
     local filtered_data
-    filtered_data=$(filter_history_by_period "$start_epoch")
+    filtered_data=$(filter_history_by_period "$start_epoch" "$end_epoch")
 
     # Wenn keine Daten vorhanden, Standardwerte
     if [[ -z "$filtered_data" ]]; then
@@ -373,6 +395,7 @@ generate_recent_bans_html() {
     while IFS='|' read -r timestamp action ip domain count duration protocol reason; do
         timestamp=$(echo "$timestamp" | xargs)
         ip=$(echo "$ip" | xargs)
+        [[ -z "$timestamp" && -z "$ip" ]] && continue
         domain=$(echo "$domain" | xargs)
         reason=$(echo "$reason" | xargs)
         [[ "$domain" == "-" ]] && domain="–"
@@ -459,6 +482,7 @@ generate_recent_bans_txt() {
     while IFS='|' read -r timestamp action ip domain count duration protocol reason; do
         timestamp=$(echo "$timestamp" | xargs)
         ip=$(echo "$ip" | xargs)
+        [[ -z "$timestamp" && -z "$ip" ]] && continue
         domain=$(echo "$domain" | xargs)
         reason=$(echo "$reason" | xargs)
         [[ "$domain" == "-" ]] && domain="–"
