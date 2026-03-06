@@ -178,40 +178,58 @@ get_period_end_epoch() {
     echo $((today_midnight - 1))
 }
 
+# ─── History-Cache (einmaliges Einlesen der Ban-History) ─────────────────────
+# Die Datei wird genau einmal mit awk geparst; alle Funktionen lesen danach
+# nur noch aus diesem In-Memory-Cache – keine date-Subprozesse pro Zeile mehr.
+#
+# Cache-Format pro Zeile (Pipe-separiert, alle Felder getrimmt):
+#   EPOCH|TIMESTAMP|ACTION|IP|DOMAIN|COUNT|DURATION|PROTOCOL|REASON
+HISTORY_CACHE=""
+HISTORY_CACHE_LOADED=false
+
+_load_history_cache() {
+    [[ "$HISTORY_CACHE_LOADED" == "true" ]] && return
+    HISTORY_CACHE_LOADED=true
+    [[ ! -f "$BAN_HISTORY_FILE" ]] && return
+    HISTORY_CACHE=$(awk '
+        /^#/ || /^[[:space:]]*$/ { next }
+        {
+            n = split($0, f, "|")
+            if (n < 2) next
+            ts = f[1]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", ts)
+            if (length(ts) < 19) next
+            ep = mktime(substr(ts,1,4) " " substr(ts,6,2) " " substr(ts,9,2) " " \
+                        substr(ts,12,2) " " substr(ts,15,2) " " substr(ts,18,2))
+            if (ep < 0) next
+            for (i = 1; i <= n; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", f[i])
+            print ep "|" f[1] "|" f[2] "|" f[3] "|" f[4] "|" f[5] "|" f[6] "|" f[7] "|" f[8]
+        }
+    ' "$BAN_HISTORY_FILE")
+}
+
 # ─── Ban-History filtern nach Zeitraum ────────────────────────────────────────
-# Gibt nur Zeilen zurück, deren Zeitstempel im Berichtszeitraum liegen
+# Gibt nur Zeilen zurück, deren Zeitstempel im Berichtszeitraum liegen.
+# Liest intern aus dem Cache – keine erneuten date-Subprozesse.
 filter_history_by_period() {
     local start_epoch="$1"
     local end_epoch="$2"
 
-    if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
-        return
-    fi
+    [[ ! -f "$BAN_HISTORY_FILE" ]] && return
+    _load_history_cache
+    [[ -z "$HISTORY_CACHE" ]] && return
 
-    while IFS= read -r line; do
-        # Kommentare und leere Zeilen überspringen
-        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-
-        # Zeitstempel extrahieren (erstes Feld, Format: YYYY-MM-DD HH:MM:SS)
-        local timestamp
-        timestamp=$(echo "$line" | awk -F'|' '{print $1}' | xargs)
-
-        if [[ -z "$timestamp" ]]; then
-            continue
-        fi
-
-        # Timestamp in Epoch umwandeln
-        local line_epoch
-        line_epoch=$(date -d "$timestamp" '+%s' 2>/dev/null || date -j -f '%Y-%m-%d %H:%M:%S' "$timestamp" '+%s' 2>/dev/null || echo "0")
-
-        if [[ "$line_epoch" -ge "$start_epoch" && "$line_epoch" -le "$end_epoch" ]]; then
-            echo "$line"
-        fi
-    done < "$BAN_HISTORY_FILE"
+    # Aus dem Cache filtern und im Original-Format ausgeben (Abwärtskompatibilität)
+    echo "$HISTORY_CACHE" | awk -F'|' -v s="$start_epoch" -v e="$end_epoch" '
+        $1 >= s && $1 <= e {
+            printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n",
+                $2, $3, $4, $5, $6, $7, $8, $9
+        }
+    '
 }
 
 # ─── Ban-History bereinigen ────────────────────────────────────────────────────
-# Entfernt Einträge älter als BAN_HISTORY_RETENTION_DAYS (0 = deaktiviert)
+# Entfernt Einträge älter als BAN_HISTORY_RETENTION_DAYS (0 = deaktiviert).
+# Nutzt einen einzelnen awk-Durchlauf mit mktime() – kein date-Subprocess pro Zeile.
 cleanup_ban_history() {
     [[ ! -f "$BAN_HISTORY_FILE" ]] && return
     [[ "$BAN_HISTORY_RETENTION_DAYS" == "0" || -z "$BAN_HISTORY_RETENTION_DAYS" ]] && return
@@ -221,29 +239,30 @@ cleanup_ban_history() {
     [[ -z "$cutoff_epoch" ]] && return
 
     local tmp_file="${BAN_HISTORY_FILE}.tmp"
-    local removed=0
+    local lines_before lines_after
+    lines_before=$(wc -l < "$BAN_HISTORY_FILE")
 
-    while IFS= read -r line; do
-        # Header-Zeilen immer beibehalten
-        if [[ "$line" =~ ^#.*$ || -z "$line" ]]; then
-            echo "$line"
-            continue
-        fi
+    awk -v cutoff="$cutoff_epoch" '
+        /^#/ || /^[[:space:]]*$/ { print; next }
+        {
+            n = split($0, f, "|")
+            if (n < 2) { print; next }
+            ts = f[1]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", ts)
+            if (length(ts) < 19) { print; next }
+            ep = mktime(substr(ts,1,4) " " substr(ts,6,2) " " substr(ts,9,2) " " \
+                        substr(ts,12,2) " " substr(ts,15,2) " " substr(ts,18,2))
+            if (ep >= cutoff) print
+        }
+    ' "$BAN_HISTORY_FILE" > "$tmp_file"
 
-        local timestamp
-        timestamp=$(echo "$line" | awk -F'|' '{print $1}' | xargs)
-        local line_epoch
-        line_epoch=$(date -d "$timestamp" '+%s' 2>/dev/null || echo "0")
-
-        if [[ "$line_epoch" -ge "$cutoff_epoch" ]]; then
-            echo "$line"
-        else
-            ((removed++)) || true
-        fi
-    done < "$BAN_HISTORY_FILE" > "$tmp_file"
+    lines_after=$(wc -l < "$tmp_file")
+    local removed=$(( lines_before - lines_after ))
 
     if [[ $removed -gt 0 ]]; then
         mv "$tmp_file" "$BAN_HISTORY_FILE"
+        # Cache invalidieren, damit Folgeaufrufe die bereinigte Datei neu lesen
+        HISTORY_CACHE=""
+        HISTORY_CACHE_LOADED=false
         log "INFO" "Ban-History bereinigt: $removed Einträge älter als ${BAN_HISTORY_RETENTION_DAYS} Tage entfernt"
     else
         rm -f "$tmp_file"
@@ -251,26 +270,38 @@ cleanup_ban_history() {
 }
 
 # ─── Statistiken für beliebigen Zeitraum berechnen ──────────────────────────
-# Gibt "bans|unbans|unique_ips|permanent" für einen Epochen-Bereich zurück
+# Gibt "bans|unbans|unique_ips|permanent" für einen Epochen-Bereich zurück.
+# Liest direkt aus dem Cache in einem einzigen awk-Durchlauf.
 get_stats_for_epoch_range() {
     local start_epoch="$1"
     local end_epoch="$2"
 
-    local filtered
-    filtered=$(filter_history_by_period "$start_epoch" "$end_epoch")
-
-    local bans=0 unbans=0 unique_ips=0 permanent=0
-    if [[ -n "$filtered" ]]; then
-        bans=$(echo "$filtered" | grep -c '| BAN ' || echo "0")
-        unbans=$(echo "$filtered" | grep -c '| UNBAN ' || echo "0")
-        unique_ips=$(echo "$filtered" | grep '| BAN ' | awk -F'|' '{print $3}' | xargs -I{} echo {} | sort -u | wc -l | xargs || echo "0")
-        permanent=$(echo "$filtered" | grep '| BAN ' | awk -F'|' '{print $6}' | grep -ic 'permanent' || echo "0")
+    _load_history_cache
+    if [[ -z "$HISTORY_CACHE" ]]; then
+        echo "0|0|0|0"
+        return
     fi
 
-    echo "${bans}|${unbans}|${unique_ips}|${permanent}"
+    echo "$HISTORY_CACHE" | awk -F'|' -v s="$start_epoch" -v e="$end_epoch" '
+        $1 >= s && $1 <= e {
+            if ($3 == "BAN") {
+                bans++
+                ip_seen[$4] = 1
+                if (tolower($7) ~ /permanent/) perm++
+            } else if ($3 == "UNBAN") {
+                unbans++
+            }
+        }
+        END {
+            for (ip in ip_seen) unique++
+            print (bans+0) "|" (unbans+0) "|" (unique+0) "|" (perm+0)
+        }
+    '
 }
 
 # ─── Statistiken berechnen ────────────────────────────────────────────────────
+# Liest die Ban-History genau einmal aus dem Cache und berechnet alle
+# Kennzahlen in einem einzigen awk-Durchlauf – keine Subprozesse pro Zeile.
 calculate_stats() {
     # Ban-History bereinigen (falls Retention konfiguriert)
     cleanup_ban_history
@@ -280,11 +311,10 @@ calculate_stats() {
     local end_epoch
     end_epoch=$(get_period_end_epoch)
 
-    local filtered_data
-    filtered_data=$(filter_history_by_period "$start_epoch" "$end_epoch")
+    _load_history_cache
 
-    # Wenn keine Daten vorhanden, Standardwerte
-    if [[ -z "$filtered_data" ]]; then
+    # Wenn keine History-Datei vorhanden, Standardwerte setzen
+    if [[ -z "$HISTORY_CACHE" ]]; then
         TOTAL_BANS=0
         TOTAL_UNBANS=0
         UNIQUE_IPS=0
@@ -302,17 +332,80 @@ calculate_stats() {
         return
     fi
 
-    # Gesamtzahl Sperren
-    TOTAL_BANS=$(echo "$filtered_data" | grep -c '| BAN ' || echo "0")
+    # Einen einzigen awk-Pass über den Cache: alle Statistiken auf einmal
+    local awk_result
+    awk_result=$(echo "$HISTORY_CACHE" | awk -F'|' -v s="$start_epoch" -v e="$end_epoch" '
+        $1 >= s && $1 <= e {
+            action = $3
+            if (action == "BAN") {
+                bans++
+                ip_count[$4]++
+                ip_seen[$4] = 1
+                day = substr($2, 1, 10)
+                day_count[day]++
+                dom = $5
+                if (dom != "" && dom != "-") dom_count[dom]++
+                proto = $8
+                if (proto == "" || proto == "-") proto = "unbekannt"
+                proto_count[proto]++
+                if (tolower($7) ~ /permanent/) perm++
+                rsn = tolower($9)
+                if (rsn ~ /rate.limit/)         rl++
+                if (rsn ~ /subdomain.flood/)    sf++
+                if (rsn ~ /external.blocklist/) eb++
+                # Zirkulärer Puffer für die letzten 10 Sperren
+                recent[bans % 10] = $2 "|" $3 "|" $4 "|" $5 "|" $6 "|" $7 "|" $8 "|" $9
+            } else if (action == "UNBAN") {
+                unbans++
+            }
+        }
+        END {
+            for (ip in ip_seen) unique++
+            busiest = ""; max_d = 0
+            for (d in day_count) {
+                if (day_count[d] > max_d) { max_d = day_count[d]; busiest = d }
+            }
+            print "BANS="   (bans+0)
+            print "UNBANS=" (unbans+0)
+            print "UNIQUE=" (unique+0)
+            print "PERM="   (perm+0)
+            print "RL="     (rl+0)
+            print "SF="     (sf+0)
+            print "EB="     (eb+0)
+            print "BUSIEST=" busiest
+            for (ip in ip_count)    print "IP\t"     ip_count[ip]  "\t" ip
+            for (d  in dom_count)   print "DOMAIN\t" dom_count[d]  "\t" d
+            for (p  in proto_count) print "PROTO\t"  proto_count[p] "\t" p
+            n = (bans < 10) ? bans : 10
+            for (i = 0; i < n; i++) {
+                idx = (bans - i) % 10
+                print "RECENT\t" recent[idx]
+            }
+        }
+    ')
 
-    # Gesamtzahl Entsperrungen
-    TOTAL_UNBANS=$(echo "$filtered_data" | grep -c '| UNBAN ' || echo "0")
+    # Einfache Kennzahlen aus dem awk-Ergebnis extrahieren
+    TOTAL_BANS=$(    echo "$awk_result" | awk -F= '$1=="BANS"   {print $2; exit}')
+    TOTAL_UNBANS=$(  echo "$awk_result" | awk -F= '$1=="UNBANS" {print $2; exit}')
+    UNIQUE_IPS=$(    echo "$awk_result" | awk -F= '$1=="UNIQUE" {print $2; exit}')
+    PERMANENT_BANS=$(echo "$awk_result" | awk -F= '$1=="PERM"   {print $2; exit}')
+    RATELIMIT_BANS=$(         echo "$awk_result" | awk -F= '$1=="RL" {print $2; exit}')
+    SUBDOMAIN_FLOOD_BANS=$(   echo "$awk_result" | awk -F= '$1=="SF" {print $2; exit}')
+    EXTERNAL_BLOCKLIST_BANS=$(echo "$awk_result" | awk -F= '$1=="EB" {print $2; exit}')
 
-    # Eindeutige IPs (nur BAN-Einträge)
-    UNIQUE_IPS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $3}' | xargs -I{} echo {} | sort -u | wc -l | xargs)
+    local busiest_raw
+    busiest_raw=$(echo "$awk_result" | awk -F= '$1=="BUSIEST" {print $2; exit}')
+    if [[ -n "$busiest_raw" ]]; then
+        BUSIEST_DAY=$(date -d "$busiest_raw" '+%d.%m.%Y' 2>/dev/null || echo "$busiest_raw")
+    else
+        BUSIEST_DAY="–"
+    fi
 
-    # Permanente Sperren (Dauer enthält "PERMANENT" oder "permanent")
-    PERMANENT_BANS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $6}' | grep -ic 'permanent' || echo "0")
+    # Top-Listen: Tab-getrennte Felder sortieren und in das erwartete Format bringen
+    TOP10_IPS=$(    echo "$awk_result" | awk -F'\t' '$1=="IP"     {print $2 " " $3}' | sort -rn | head -10)
+    TOP10_DOMAINS=$(echo "$awk_result" | awk -F'\t' '$1=="DOMAIN" {print $2 " " $3}' | sort -rn | head -10)
+    PROTOCOL_STATS=$(echo "$awk_result" | awk -F'\t' '$1=="PROTO"  {print $2 " " $3}' | sort -rn)
+    RECENT_BANS=$(  echo "$awk_result" | awk -F'\t' '$1=="RECENT" {print $2}')
 
     # Aktuell aktive Sperren (aus State-Dateien)
     ACTIVE_BANS=0
@@ -322,48 +415,21 @@ calculate_stats() {
         done
     fi
 
-    # AbuseIPDB Reports – zeitraum-gefiltert aus der Logdatei
+    # AbuseIPDB Reports – zeitraum-gefiltert aus der Logdatei via awk+mktime
     ABUSEIPDB_REPORTS=0
     if [[ -f "$LOG_FILE" ]]; then
-        while IFS= read -r line; do
-            local ts
-            ts=$(echo "$line" | sed 's/^\[\([0-9-]* [0-9:]*\)\].*/\1/')
-            [[ -z "$ts" || "$ts" == "$line" ]] && continue
-            local le
-            le=$(date -d "$ts" '+%s' 2>/dev/null || echo "0")
-            if [[ "$le" -ge "$start_epoch" && "$le" -le "$end_epoch" ]]; then
-                ABUSEIPDB_REPORTS=$((ABUSEIPDB_REPORTS + 1))
-            fi
-        done < <(grep "AbuseIPDB:.*erfolgreich gemeldet" "$LOG_FILE" 2>/dev/null || true)
+        ABUSEIPDB_REPORTS=$(grep "AbuseIPDB:.*erfolgreich gemeldet" "$LOG_FILE" 2>/dev/null | \
+            awk -v s="$start_epoch" -v e="$end_epoch" '
+                {
+                    ts = substr($0, 2, 19)
+                    if (ts !~ /^[0-9]{4}/) next
+                    ep = mktime(substr(ts,1,4) " " substr(ts,6,2) " " substr(ts,9,2) " " \
+                                substr(ts,12,2) " " substr(ts,15,2) " " substr(ts,18,2))
+                    if (ep >= s && ep <= e) count++
+                }
+                END { print count+0 }
+            ' || echo "0")
     fi
-
-    # Angriffsarten
-    RATELIMIT_BANS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $8}' | grep -ic 'rate-limit' || echo "0")
-    SUBDOMAIN_FLOOD_BANS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $8}' | grep -ic 'subdomain-flood' || echo "0")
-    EXTERNAL_BLOCKLIST_BANS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $8}' | grep -ic 'external-blocklist' || echo "0")
-
-    # Aktivster Tag
-    BUSIEST_DAY=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $1}' | xargs -I{} echo {} | awk '{print $1}' | sort | uniq -c | sort -rn | head -1 | awk '{print $2}' || echo "–")
-    if [[ -z "$BUSIEST_DAY" ]]; then
-        BUSIEST_DAY="–"
-    else
-        # Datum in DE-Format umwandeln
-        local busiest_formatted
-        busiest_formatted=$(date -d "$BUSIEST_DAY" '+%d.%m.%Y' 2>/dev/null || echo "$BUSIEST_DAY")
-        BUSIEST_DAY="$busiest_formatted"
-    fi
-
-    # Top 10 IPs (nach Häufigkeit der Sperren)
-    TOP10_IPS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $3}' | xargs -I{} echo {} | sort | uniq -c | sort -rn | head -10)
-
-    # Top 10 Domains (nach Häufigkeit)
-    TOP10_DOMAINS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $4}' | xargs -I{} echo {} | sed 's/^-$//' | grep -v '^$' | sort | uniq -c | sort -rn | head -10)
-
-    # Protokoll-Verteilung
-    PROTOCOL_STATS=$(echo "$filtered_data" | grep '| BAN ' | awk -F'|' '{print $7}' | xargs -I{} echo {} | sed 's/^-$/unbekannt/' | grep -v '^$' | sort | uniq -c | sort -rn)
-
-    # Letzte 10 Sperren
-    RECENT_BANS=$(echo "$filtered_data" | grep '| BAN ' | tail -10 | tac)
 }
 
 # ─── HTML-Tabellen generieren ─────────────────────────────────────────────────

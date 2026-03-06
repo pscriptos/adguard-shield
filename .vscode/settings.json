@@ -2,6 +2,7 @@
     "files.eol": "\n",
     "chat.tools.terminal.autoApprove": {
         "Rename-Item": true,
-        "ForEach-Object": true
+        "ForEach-Object": true,
+        "&": true
     }
 }
