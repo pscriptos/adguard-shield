@@ -203,6 +203,27 @@ unban_ip() {
     fi
 }
 
+# ─── Hostname-Auflösung ──────────────────────────────────────────────────────
+# Versucht den Hostnamen einer IP per Reverse-DNS aufzulösen
+resolve_hostname() {
+    local ip="$1"
+    local hostname=""
+
+    if command -v dig &>/dev/null; then
+        hostname=$(dig +short -x "$ip" 2>/dev/null | head -1 | sed 's/\.$//')
+    fi
+
+    if [[ -z "$hostname" ]] && command -v host &>/dev/null; then
+        hostname=$(host "$ip" 2>/dev/null | awk '/domain name pointer/ {print $NF}' | sed 's/\.$//' | head -1)
+    fi
+
+    if [[ -z "$hostname" ]] && command -v getent &>/dev/null; then
+        hostname=$(getent hosts "$ip" 2>/dev/null | awk '{print $2}' | head -1)
+    fi
+
+    echo "${hostname:-(unbekannt)}"
+}
+
 # ─── Benachrichtigung ────────────────────────────────────────────────────────
 send_notification() {
     local action="$1"
@@ -213,45 +234,79 @@ send_notification() {
         return
     fi
 
+    local title
     local message
+    local my_hostname
+    my_hostname=$(hostname)
+    local client_hostname
+    client_hostname=$(resolve_hostname "$ip")
+
     if [[ "$action" == "ban" ]]; then
-        message="🚫 Externe Blocklist: IP **$ip** gesperrt."
+        title="🚨 🛡️ AdGuard Shield"
+        message="🚫 AdGuard Shield Ban auf ${my_hostname} (Externe Blocklist)
+---
+IP: ${ip}
+Hostname: ${client_hostname}
+
+Whois: https://www.whois.com/whois/${ip}
+AbuseIPDB: https://www.abuseipdb.com/check/${ip}"
     else
-        message="✅ Externe Blocklist: IP **$ip** entsperrt (aus Liste entfernt)."
+        title="✅ AdGuard Shield"
+        message="✅ AdGuard Shield Freigabe auf ${my_hostname} (Externe Blocklist)
+---
+IP: ${ip}
+Hostname: ${client_hostname}
+
+AbuseIPDB: https://www.abuseipdb.com/check/${ip}"
     fi
 
     case "${NOTIFY_TYPE:-generic}" in
         discord)
+            local json_payload
+            json_payload=$(jq -nc --arg msg "$message" '{content: $msg}')
             curl -s -H "Content-Type: application/json" \
-                -d "{\"content\": \"$message\"}" \
+                -d "$json_payload" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
         slack)
+            local json_payload
+            json_payload=$(jq -nc --arg msg "$message" '{text: $msg}')
             curl -s -H "Content-Type: application/json" \
-                -d "{\"text\": \"$message\"}" \
+                -d "$json_payload" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
         gotify)
             curl -s -X POST "$NOTIFY_WEBHOOK_URL" \
-                -F "title=AdGuard Shield - Externe Blocklist" \
-                -F "message=$message" \
+                -F "title=${title}" \
+                -F "message=${message}" \
                 -F "priority=5" &>/dev/null &
             ;;
         ntfy)
             local ntfy_url="${NTFY_SERVER_URL:-https://ntfy.sh}"
+            local tags="rotating_light,blocklist"
+            [[ "$action" != "ban" ]] && tags="white_check_mark,blocklist"
+            # Ntfy fügt Emojis über Tags hinzu → Titel ohne führende Emojis setzen
+            local ntfy_title
+            case "$action" in
+                ban) ntfy_title="🛡️ AdGuard Shield" ;;
+                *)   ntfy_title="AdGuard Shield" ;;
+            esac
             local -a curl_args=(
                 -s -X POST "${ntfy_url}/${NTFY_TOPIC}"
-                -H "Title: AdGuard Shield - Externe Blocklist"
+                -H "Title: ${ntfy_title}"
                 -H "Priority: ${NTFY_PRIORITY:-3}"
-                -H "Tags: rotating_light,blocklist"
-                -d "$(echo "$message" | sed 's/\*\*//g')"
+                -H "Tags: ${tags}"
+                -d "${message}"
             )
             [[ -n "${NTFY_TOKEN:-}" ]] && curl_args+=(-H "Authorization: Bearer ${NTFY_TOKEN}")
             curl "${curl_args[@]}" &>/dev/null &
             ;;
         generic)
+            local json_payload
+            json_payload=$(jq -nc --arg msg "$message" --arg act "$action" --arg cl "$ip" \
+                '{message: $msg, action: $act, client: $cl, source: "external-blocklist"}')
             curl -s -H "Content-Type: application/json" \
-                -d "{\"message\": \"$message\", \"action\": \"$action\", \"client\": \"$ip\", \"source\": \"external-blocklist\"}" \
+                -d "$json_payload" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
     esac

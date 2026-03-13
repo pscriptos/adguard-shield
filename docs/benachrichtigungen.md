@@ -94,7 +94,7 @@ Sendet einen POST mit JSON-Body:
 
 ```json
 {
-  "message": "🚫 AdGuard Shield: Client 192.168.1.50 gesperrt ...",
+  "message": "🚫 AdGuard Shield Ban auf dns1\n---\nIP: 192.168.1.50\nHostname: client.local\nGrund: 45x microsoft.com in 60s via DNS, Rate-Limit\nDauer: 1h 0m\n\nWhois: https://www.whois.com/whois/192.168.1.50\nAbuseIPDB: https://www.abuseipdb.com/check/192.168.1.50",
   "action": "ban",
   "client": "192.168.1.50",
   "domain": "microsoft.com"
@@ -113,14 +113,78 @@ Bei Sperren aus der **externen Blocklist** werden Benachrichtigungen separat üb
 
 ## Beispiel-Nachrichten
 
-**Service gestartet:**
-> 🟢 AdGuard Shield v0.4.0 wurde gestartet.
+### Service gestartet
+**Überschrift:** ✅ AdGuard Shield
 
-**Service gestoppt:**
-> 🔴 AdGuard Shield v0.4.0 wurde gestoppt.
+> 🟢 AdGuard Shield v0.6.0 wurde auf dns1 gestartet.
 
-**Sperre:**
-> 🚫 AdGuard Shield: Client **192.168.1.50** gesperrt (45x microsoft.com in 60s). Sperre für 3600s.
+### Service gestoppt
+**Überschrift:** 🚨 🛡️ AdGuard Shield
 
-**Entsperrung:**
-> ✅ AdGuard Shield: Client **192.168.1.50** wurde entsperrt.
+> 🔴 AdGuard Shield v0.6.0 wurde auf dns1 gestoppt.
+
+### Sperre (Ban)
+**Überschrift:** 🚨 🛡️ AdGuard Shield
+
+> 🚫 AdGuard Shield Ban auf dns1
+> ---
+> IP: 95.71.42.116
+> Hostname: example-host.provider.net
+> Grund: 153x radioportal.techniverse.net in 60s via DNS, Rate-Limit
+> Dauer: 1h 0m [Stufe 1/5]
+>
+> Whois: https://www.whois.com/whois/95.71.42.116
+> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+
+Bei permanenter Sperre mit aktiviertem AbuseIPDB-Reporting erscheint zusätzlich:
+
+> 🚫 AdGuard Shield Ban auf dns1
+> ⚠️ IP wurde an AbuseIPDB gemeldet
+> ---
+> IP: 95.71.42.116
+> Hostname: example-host.provider.net
+> Grund: 153x radioportal.techniverse.net in 60s via DNS, Rate-Limit
+> Dauer: PERMANENT [Stufe 5/5]
+>
+> Whois: https://www.whois.com/whois/95.71.42.116
+> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+
+### Entsperrung (Unban)
+**Überschrift:** ✅ AdGuard Shield
+
+> ✅ AdGuard Shield Freigabe auf dns1
+> ---
+> IP: 95.71.42.116
+> Hostname: example-host.provider.net
+>
+> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+
+### Externe Blocklist – Sperre
+**Überschrift:** 🚨 🛡️ AdGuard Shield
+
+> 🚫 AdGuard Shield Ban auf dns1 (Externe Blocklist)
+> ---
+> IP: 203.0.113.50
+> Hostname: bad-actor.example.com
+>
+> Whois: https://www.whois.com/whois/203.0.113.50
+> AbuseIPDB: https://www.abuseipdb.com/check/203.0.113.50
+
+### Externe Blocklist – Entsperrung
+**Überschrift:** ✅ AdGuard Shield
+
+> ✅ AdGuard Shield Freigabe auf dns1 (Externe Blocklist)
+> ---
+> IP: 203.0.113.50
+> Hostname: bad-actor.example.com
+>
+> AbuseIPDB: https://www.abuseipdb.com/check/203.0.113.50
+
+### Hinweise
+
+- Der **Hostname** der IP wird automatisch per Reverse-DNS aufgelöst (`dig`, `host` oder `getent`). Ist kein PTR-Record vorhanden, wird `(unbekannt)` angezeigt.
+- Der **Servername** (`dns1` in den Beispielen) wird dynamisch über `$(hostname)` ermittelt und zeigt, auf welchem Server das Ereignis stattfand.
+- Die **Überschrift** unterscheidet sich je nach Aktion:
+  - 🚨 🛡️ bei Sperren und Service-Stopp
+  - ✅ bei Freigaben und Service-Start
+- Bei **permanenten Sperren** mit aktiviertem AbuseIPDB-Reporting wird ein Hinweis eingeblendet, dass die IP an AbuseIPDB gemeldet wurde.
