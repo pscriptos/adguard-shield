@@ -230,6 +230,30 @@ format_protocol() {
     esac
 }
 
+# ─── Hostname-Auflösung ──────────────────────────────────────────────────────
+# Versucht den Hostnamen einer IP per Reverse-DNS aufzulösen
+resolve_hostname() {
+    local ip="$1"
+    local hostname=""
+
+    # Versuche Reverse-DNS-Auflösung via dig
+    if command -v dig &>/dev/null; then
+        hostname=$(dig +short -x "$ip" 2>/dev/null | head -1 | sed 's/\.$//')
+    fi
+
+    # Fallback via host
+    if [[ -z "$hostname" ]] && command -v host &>/dev/null; then
+        hostname=$(host "$ip" 2>/dev/null | awk '/domain name pointer/ {print $NF}' | sed 's/\.$//' | head -1)
+    fi
+
+    # Fallback via getent
+    if [[ -z "$hostname" ]] && command -v getent &>/dev/null; then
+        hostname=$(getent hosts "$ip" 2>/dev/null | awk '{print $2}' | head -1)
+    fi
+
+    echo "${hostname:-(unbekannt)}"
+}
+
 # ─── AbuseIPDB Reporting ─────────────────────────────────────────────────────
 # Meldet eine IP an AbuseIPDB (nur bei permanenten Sperren)
 report_to_abuseipdb() {
@@ -451,7 +475,7 @@ EOF
 
     # Benachrichtigung senden
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
-        send_notification "ban" "$client_ip" "$domain" "$count" "$offense_level" "$duration_display" "$reason" "$window" "$protocol"
+        send_notification "ban" "$client_ip" "$domain" "$count" "$offense_level" "$duration_display" "$reason" "$window" "$protocol" "$is_permanent"
     fi
 
     # AbuseIPDB Report (nur bei permanenter Sperre)
@@ -489,7 +513,7 @@ unban_client() {
     log_ban_history "UNBAN" "$client_ip" "$domain" "-" "$reason" "-" "$protocol"
 
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
-        send_notification "unban" "$client_ip" "" ""
+        send_notification "unban" "$client_ip" "$domain" ""
     fi
 }
 
@@ -531,6 +555,7 @@ send_notification() {
     local reason="${7:-rate-limit}"
     local window="${8:-$RATE_LIMIT_WINDOW}"
     local protocol="${9:-DNS}"
+    local is_permanent="${10:-false}"
 
     # Ntfy benötigt keine Webhook-URL (nutzt NTFY_SERVER_URL + NTFY_TOPIC)
     if [[ "$NOTIFY_TYPE" != "ntfy" && -z "$NOTIFY_WEBHOOK_URL" ]]; then
@@ -540,46 +565,92 @@ send_notification() {
     local reason_label="Rate-Limit"
     [[ "$reason" == "subdomain-flood" ]] && reason_label="Subdomain-Flood"
 
+    local title
     local message
+    local my_hostname
+    my_hostname=$(hostname)
+
     if [[ "$action" == "ban" ]]; then
-        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -n "$offense_level" ]]; then
-            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s via **$protocol**, ${reason_label}). Sperre für **${duration_display}** [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]."
-        else
-            local simple_dur
-            simple_dur=$(format_duration "${BAN_DURATION}")
-            message="🚫 AdGuard Shield: Client **$client_ip** gesperrt (${count}x $domain in ${window}s via **$protocol**, ${reason_label}). Sperre für ${simple_dur}."
+        title="🚨 🛡️ AdGuard Shield"
+        local client_hostname
+        client_hostname=$(resolve_hostname "$client_ip")
+
+        # AbuseIPDB-Hinweis bei permanenter Sperre
+        local abuseipdb_hint=""
+        if [[ "$is_permanent" == "true" && "${ABUSEIPDB_ENABLED:-false}" == "true" ]]; then
+            abuseipdb_hint=$'\n⚠️ IP wurde an AbuseIPDB gemeldet'
         fi
+
+        # Dauer-Anzeige mit Stufe
+        local dur_line
+        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -n "$offense_level" ]]; then
+            dur_line="**${duration_display}** [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]"
+        else
+            dur_line=$(format_duration "${BAN_DURATION}")
+        fi
+
+        message="🚫 AdGuard Shield Ban auf ${my_hostname}${abuseipdb_hint}
+---
+IP: ${client_ip}
+Hostname: ${client_hostname}
+Grund: ${count}x ${domain} in ${window}s via ${protocol}, ${reason_label}
+Dauer: ${dur_line}
+
+Whois: https://www.whois.com/whois/${client_ip}
+AbuseIPDB: https://www.abuseipdb.com/check/${client_ip}"
+
+    elif [[ "$action" == "unban" ]]; then
+        title="✅ AdGuard Shield"
+        local client_hostname
+        client_hostname=$(resolve_hostname "$client_ip")
+
+        message="✅ AdGuard Shield Freigabe auf ${my_hostname}
+---
+IP: ${client_ip}
+Hostname: ${client_hostname}
+
+AbuseIPDB: https://www.abuseipdb.com/check/${client_ip}"
+
     elif [[ "$action" == "service_start" ]]; then
-        message="🟢 AdGuard Shield ${VERSION} wurde gestartet."
+        title="✅ AdGuard Shield"
+        message="🟢 AdGuard Shield ${VERSION} wurde auf ${my_hostname} gestartet."
     elif [[ "$action" == "service_stop" ]]; then
-        message="🔴 AdGuard Shield ${VERSION} wurde gestoppt."
-    else
-        message="✅ AdGuard Shield: Client **$client_ip** wurde entsperrt."
+        title="🚨 🛡️ AdGuard Shield"
+        message="🔴 AdGuard Shield ${VERSION} wurde auf ${my_hostname} gestoppt."
     fi
 
     case "$NOTIFY_TYPE" in
         discord)
+            local json_payload
+            json_payload=$(jq -nc --arg msg "$message" '{content: $msg}')
             curl -s -H "Content-Type: application/json" \
-                -d "{\"content\": \"$message\"}" \
+                -d "$json_payload" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
         slack)
+            local json_payload
+            json_payload=$(jq -nc --arg msg "$message" '{text: $msg}')
             curl -s -H "Content-Type: application/json" \
-                -d "{\"text\": \"$message\"}" \
+                -d "$json_payload" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
         gotify)
+            local clean_message
+            clean_message=$(echo "$message" | sed 's/\*\*//g')
             curl -s -X POST "$NOTIFY_WEBHOOK_URL" \
-                -F "title=AdGuard Shield" \
-                -F "message=$message" \
+                -F "title=${title}" \
+                -F "message=${clean_message}" \
                 -F "priority=5" &>/dev/null &
             ;;
         ntfy)
-            send_ntfy_notification "$action" "$message"
+            send_ntfy_notification "$action" "$title" "$message"
             ;;
         generic)
+            local json_payload
+            json_payload=$(jq -nc --arg msg "$message" --arg act "$action" --arg cl "${client_ip:-}" --arg dom "${domain:-}" \
+                '{message: $msg, action: $act, client: $cl, domain: $dom}')
             curl -s -H "Content-Type: application/json" \
-                -d "{\"message\": \"$message\", \"action\": \"$action\", \"client\": \"${client_ip:-}\", \"domain\": \"${domain:-}\"}" \
+                -d "$json_payload" \
                 "$NOTIFY_WEBHOOK_URL" &>/dev/null &
             ;;
     esac
@@ -588,7 +659,8 @@ send_notification() {
 # ─── Ntfy Benachrichtigung ───────────────────────────────────────────────────
 send_ntfy_notification() {
     local action="$1"
-    local message="$2"
+    local title="$2"
+    local message="$3"
 
     if [[ -z "${NTFY_TOPIC:-}" ]]; then
         log "WARN" "Ntfy: Kein Topic konfiguriert (NTFY_TOPIC ist leer)"
@@ -597,7 +669,6 @@ send_ntfy_notification() {
 
     local ntfy_url="${NTFY_SERVER_URL:-https://ntfy.sh}"
     local priority="${NTFY_PRIORITY:-4}"
-    local title="AdGuard Shield"
     local tags
 
     if [[ "$action" == "ban" ]]; then
@@ -614,11 +685,18 @@ send_ntfy_notification() {
     local clean_message
     clean_message=$(echo "$message" | sed 's/\*\*//g')
 
+    # Ntfy fügt Emojis über Tags hinzu → Titel ohne führende Emojis setzen
+    local ntfy_title
+    case "$action" in
+        ban)           ntfy_title="🛡️ AdGuard Shield" ;;
+        *)             ntfy_title="AdGuard Shield" ;;
+    esac
+
     local -a curl_args=(
         -s
         -X POST
         "${ntfy_url}/${NTFY_TOPIC}"
-        -H "Title: ${title}"
+        -H "Title: ${ntfy_title}"
         -H "Priority: ${priority}"
         -H "Tags: ${tags}"
         -d "${clean_message}"
