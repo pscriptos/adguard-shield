@@ -139,6 +139,7 @@ Regelmäßige Statistik-Reports per E-Mail. Voraussetzung ist ein funktionierend
 | `REPORT_EMAIL_FROM` | `adguard-shield@hostname` | E-Mail-Absender |
 | `REPORT_FORMAT` | `html` | Format: `html` oder `txt` |
 | `REPORT_MAIL_CMD` | `msmtp` | Mail-Befehl (`msmtp`, `sendmail`, `mail`) |
+| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum in Tagen für „Aktivster Tag“. `30` = letzte 30 Tage. `0` = nur Berichtszeitraum (altes Verhalten) |
 
 > Siehe [E-Mail Report Dokumentation](report.md) für Details zu Inhalten, Templates und Befehlen.
 

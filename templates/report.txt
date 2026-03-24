@@ -30,7 +30,7 @@
   Rate-Limit Sperren:      {{RATELIMIT_BANS}}
   Subdomain-Flood Sperren: {{SUBDOMAIN_FLOOD_BANS}}
   Externe Blocklist:        {{EXTERNAL_BLOCKLIST_BANS}}
-  Aktivster Tag:            {{BUSIEST_DAY}}
+  {{BUSIEST_DAY_LABEL}}:     {{BUSIEST_DAY}}
 
 ───────────────────────────────────────────────────────────────
   🏴‍☠️  TOP 10 – AUFFÄLLIGSTE IPs
