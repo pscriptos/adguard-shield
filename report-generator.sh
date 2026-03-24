@@ -41,6 +41,7 @@ REPORT_EMAIL_TO="${REPORT_EMAIL_TO:-}"
 REPORT_EMAIL_FROM="${REPORT_EMAIL_FROM:-adguard-shield@$(hostname -f 2>/dev/null || hostname)}"
 REPORT_FORMAT="${REPORT_FORMAT:-html}"
 REPORT_MAIL_CMD="${REPORT_MAIL_CMD:-msmtp}"
+REPORT_BUSIEST_DAY_RANGE="${REPORT_BUSIEST_DAY_RANGE:-30}"
 BAN_HISTORY_FILE="${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}"
 BAN_HISTORY_RETENTION_DAYS="${BAN_HISTORY_RETENTION_DAYS:-0}"
 STATE_DIR="${STATE_DIR:-/var/lib/adguard-shield}"
@@ -325,6 +326,7 @@ calculate_stats() {
         SUBDOMAIN_FLOOD_BANS=0
         EXTERNAL_BLOCKLIST_BANS=0
         BUSIEST_DAY="–"
+        BUSIEST_DAY_LABEL="Aktivster Tag"
         TOP10_IPS=""
         TOP10_DOMAINS=""
         PROTOCOL_STATS=""
@@ -333,16 +335,24 @@ calculate_stats() {
     fi
 
     # Einen einzigen awk-Pass über den Cache: alle Statistiken auf einmal
+    # Busiest-Day-Bereich berechnen (konfigurierbar, Standard: 30 Tage)
+    local busiest_start_epoch
+    if [[ "$REPORT_BUSIEST_DAY_RANGE" == "0" || -z "$REPORT_BUSIEST_DAY_RANGE" ]]; then
+        busiest_start_epoch="$start_epoch"
+    else
+        local today_midnight
+        today_midnight=$(get_today_midnight)
+        busiest_start_epoch=$((today_midnight - REPORT_BUSIEST_DAY_RANGE * 86400))
+    fi
+
     local awk_result
-    awk_result=$(echo "$HISTORY_CACHE" | awk -F'|' -v s="$start_epoch" -v e="$end_epoch" '
+    awk_result=$(echo "$HISTORY_CACHE" | awk -F'|' -v s="$start_epoch" -v e="$end_epoch" -v bs="$busiest_start_epoch" '
         $1 >= s && $1 <= e {
             action = $3
             if (action == "BAN") {
                 bans++
                 ip_count[$4]++
                 ip_seen[$4] = 1
-                day = substr($2, 1, 10)
-                day_count[day]++
                 dom = $5
                 if (dom != "" && dom != "-") dom_count[dom]++
                 proto = $8
@@ -359,11 +369,16 @@ calculate_stats() {
                 unbans++
             }
         }
+        # Aktivster Tag: separater Zeitraum (konfigurierbar, z.B. letzte 30 Tage)
+        $1 >= bs && $1 <= e && $3 == "BAN" {
+            bday = substr($2, 1, 10)
+            bday_count[bday]++
+        }
         END {
             for (ip in ip_seen) unique++
             busiest = ""; max_d = 0
-            for (d in day_count) {
-                if (day_count[d] > max_d) { max_d = day_count[d]; busiest = d }
+            for (d in bday_count) {
+                if (bday_count[d] > max_d) { max_d = bday_count[d]; busiest = d; busiest_cnt = bday_count[d] }
             }
             print "BANS="   (bans+0)
             print "UNBANS=" (unbans+0)
@@ -373,6 +388,7 @@ calculate_stats() {
             print "SF="     (sf+0)
             print "EB="     (eb+0)
             print "BUSIEST=" busiest
+            print "BUSIEST_CNT=" (busiest_cnt+0)
             for (ip in ip_count)    print "IP\t"     ip_count[ip]  "\t" ip
             for (d  in dom_count)   print "DOMAIN\t" dom_count[d]  "\t" d
             for (p  in proto_count) print "PROTO\t"  proto_count[p] "\t" p
@@ -395,10 +411,21 @@ calculate_stats() {
 
     local busiest_raw
     busiest_raw=$(echo "$awk_result" | awk -F= '$1=="BUSIEST" {print $2; exit}')
+    local busiest_cnt
+    busiest_cnt=$(echo "$awk_result" | awk -F= '$1=="BUSIEST_CNT" {print $2; exit}')
     if [[ -n "$busiest_raw" ]]; then
-        BUSIEST_DAY=$(date -d "$busiest_raw" '+%d.%m.%Y' 2>/dev/null || echo "$busiest_raw")
+        local busiest_formatted
+        busiest_formatted=$(date -d "$busiest_raw" '+%d.%m.%Y' 2>/dev/null || echo "$busiest_raw")
+        BUSIEST_DAY="${busiest_formatted} (${busiest_cnt})"
     else
         BUSIEST_DAY="–"
+    fi
+
+    # Dynamisches Label für den aktivsten Tag
+    if [[ "$REPORT_BUSIEST_DAY_RANGE" == "0" || -z "$REPORT_BUSIEST_DAY_RANGE" ]]; then
+        BUSIEST_DAY_LABEL="Aktivster Tag"
+    else
+        BUSIEST_DAY_LABEL="Aktivster Tag (${REPORT_BUSIEST_DAY_RANGE} Tage)"
     fi
 
     # Top-Listen: Tab-getrennte Felder sortieren und in das erwartete Format bringen
@@ -786,6 +813,7 @@ generate_report() {
         report="${report//\{\{SUBDOMAIN_FLOOD_BANS\}\}/$SUBDOMAIN_FLOOD_BANS}"
         report="${report//\{\{EXTERNAL_BLOCKLIST_BANS\}\}/$EXTERNAL_BLOCKLIST_BANS}"
         report="${report//\{\{BUSIEST_DAY\}\}/$BUSIEST_DAY}"
+        report="${report//\{\{BUSIEST_DAY_LABEL\}\}/$BUSIEST_DAY_LABEL}"
         report="${report//\{\{TOP10_IPS_TABLE\}\}/$top10_ips_table}"
         report="${report//\{\{TOP10_DOMAINS_TABLE\}\}/$top10_domains_table}"
         report="${report//\{\{PROTOCOL_TABLE\}\}/$protocol_table}"
@@ -832,6 +860,7 @@ generate_report() {
         report="${report//\{\{SUBDOMAIN_FLOOD_BANS\}\}/$SUBDOMAIN_FLOOD_BANS}"
         report="${report//\{\{EXTERNAL_BLOCKLIST_BANS\}\}/$EXTERNAL_BLOCKLIST_BANS}"
         report="${report//\{\{BUSIEST_DAY\}\}/$BUSIEST_DAY}"
+        report="${report//\{\{BUSIEST_DAY_LABEL\}\}/$BUSIEST_DAY_LABEL}"
         report="${report//\{\{TOP10_IPS_TEXT\}\}/$top10_ips_txt}"
         report="${report//\{\{TOP10_DOMAINS_TEXT\}\}/$top10_domains_txt}"
         report="${report//\{\{PROTOCOL_TEXT\}\}/$protocol_txt}"
@@ -983,6 +1012,7 @@ show_cron_status() {
     echo "  Empfänger:           ${REPORT_EMAIL_TO:-nicht konfiguriert}"
     echo "  Absender:            ${REPORT_EMAIL_FROM}"
     echo "  Mail-Befehl:         ${REPORT_MAIL_CMD}"
+    echo "  Aktivster Tag:       letzte ${REPORT_BUSIEST_DAY_RANGE:-30} Tage"
     echo ""
 
     if command -v "$REPORT_MAIL_CMD" &>/dev/null; then

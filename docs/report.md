@@ -42,6 +42,7 @@ sudo /opt/adguard-shield/report-generator.sh install
 | `REPORT_EMAIL_FROM` | `adguard-shield@hostname` | E-Mail-Absender |
 | `REPORT_FORMAT` | `html` | Format: `html` oder `txt` |
 | `REPORT_MAIL_CMD` | `msmtp` | Mail-Befehl (`msmtp`, `sendmail`, `mail`) |
+| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum in Tagen für „Aktivster Tag“ (0 = Berichtszeitraum) |
 
 ### Versandintervalle
 
@@ -86,7 +87,7 @@ Die übrigen Zeiträume laufen vom Starttag 00:00 Uhr bis zum Zeitpunkt der Repo
 - Rate-Limit Sperren
 - Subdomain-Flood Sperren
 - Externe Blocklist Sperren
-- Aktivster Tag im Berichtszeitraum
+- Aktivster Tag – wird über einen konfigurierbaren Zeitraum ermittelt (Standard: letzte 30 Tage, `REPORT_BUSIEST_DAY_RANGE`). Zeigt zusätzlich die Anzahl der Sperren an diesem Tag. Bei `REPORT_BUSIEST_DAY_RANGE=0` wird nur der Berichtszeitraum betrachtet.
 
 ### Top 10 Listen
 - **Auffälligste IPs** — Die 10 IPs mit den meisten Sperren (mit Balkendiagramm im HTML-Format)
@@ -175,7 +176,8 @@ Die Templates verwenden Platzhalter (z.B. `{{TOTAL_BANS}}`, `{{TOP10_IPS_TABLE}}
 | `{{RATELIMIT_BANS}}` | Rate-Limit Sperren |
 | `{{SUBDOMAIN_FLOOD_BANS}}` | Subdomain-Flood Sperren |
 | `{{EXTERNAL_BLOCKLIST_BANS}}` | Externe Blocklist Sperren |
-| `{{BUSIEST_DAY}}` | Aktivster Tag |
+| `{{BUSIEST_DAY}}` | Aktivster Tag (Datum + Anzahl Sperren) |
+| `{{BUSIEST_DAY_LABEL}}` | Dynamisches Label für den aktivsten Tag (z.B. „Aktivster Tag (30 Tage)“) |
 | `{{TOP10_IPS_TABLE}}` | Top 10 IPs (HTML-Tabelle) |
 | `{{TOP10_IPS_TEXT}}` | Top 10 IPs (Text-Tabelle) |
 | `{{TOP10_DOMAINS_TABLE}}` | Top 10 Domains (HTML-Tabelle) |
