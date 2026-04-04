@@ -29,6 +29,7 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 - Eigene iptables Chain — greift nicht in bestehende Regeln ein
 - Automatisches Entsperren nach konfigurierbarer Dauer
 - **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
+- **Externe Whitelisten** — Domains/IPs aus externen Listen laden und automatisch whitelisten (ideal für DynDNS)
 - **AbuseIPDB Reporting** — permanent gesperrte IPs automatisch an AbuseIPDB melden
 - **E-Mail Reports** — periodische Statistik-Reports als HTML oder TXT (täglich, wöchentlich, zweiwöchentlich, monatlich)
 - **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
@@ -90,6 +91,8 @@ sudo /opt/adguard-shield/adguard-shield.sh reset-offenses     # Offense-Zähler 
 sudo /opt/adguard-shield/adguard-shield.sh test               # API-Verbindung testen
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-status   # Externe Blocklisten Status
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync     # Blocklisten manuell synchronisieren
+sudo /opt/adguard-shield/adguard-shield.sh whitelist-status   # Externe Whitelisten Status
+sudo /opt/adguard-shield/adguard-shield.sh whitelist-sync     # Whitelisten manuell synchronisieren
 sudo /opt/adguard-shield/report-generator.sh send                # Report jetzt senden
 sudo /opt/adguard-shield/report-generator.sh status              # Report-Status anzeigen
 sudo /opt/adguard-shield/report-generator.sh install             # Cron-Job einrichten
@@ -103,6 +106,7 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 ├── adguard-shield.conf            # Konfiguration
 ├── adguard-shield.service         # systemd Unit
 ├── external-blocklist-worker.sh   # Externer Blocklist-Worker
+├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DynDNS-Auflösung)
 ├── iptables-helper.sh             # Manuelle iptables-Verwaltung
 ├── unban-expired.sh               # Cron-basiertes Entsperren
 ├── report-generator.sh            # E-Mail Report Generator

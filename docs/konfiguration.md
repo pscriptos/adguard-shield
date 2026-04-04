@@ -150,6 +150,60 @@ Regelmäßige Statistik-Reports per E-Mail. Voraussetzung ist ein funktionierend
 | `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für State-Dateien |
 | `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei |
 | `DRY_RUN` | `false` | Testmodus — nur loggen, nicht sperren |
+
+### Externe Whitelist
+
+Ermöglicht das Einbinden externer Whitelist-Dateien mit Domains und IP-Adressen. Der Worker löst Domains regelmäßig per DNS auf — ideal für DynDNS-Einträge mit wechselnden IP-Adressen. Aufgelöste IPs werden automatisch zur Whitelist hinzugefügt und bei jeder Prüfung aktualisiert.
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `EXTERNAL_WHITELIST_ENABLED` | `false` | Aktiviert den externen Whitelist-Worker |
+| `EXTERNAL_WHITELIST_URLS` | *(leer)* | URL(s) zu Whitelist-Textdateien (kommagetrennt). Unterstützt IPv4, IPv6, CIDR und Hostnamen |
+| `EXTERNAL_WHITELIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.). Bei DynDNS-Einträgen ggf. kürzer wählen |
+| `EXTERNAL_WHITELIST_CACHE_DIR` | `/var/lib/adguard-shield/external-whitelist` | Lokaler Cache für heruntergeladene Listen und aufgelöste IPs |
+
+#### Externe Whitelist einrichten
+
+1. Erstelle eine Textdatei auf einem Webserver. Pro Zeile ein Eintrag — Domain, IPv4, IPv6 oder CIDR:
+
+```text
+# Domains (werden regelmäßig per DNS aufgelöst — ideal für DynDNS)
+mein-router.dyndns.org
+homeserver.example.com
+
+# Feste IPs
+192.168.1.100
+10.0.0.0/24
+2001:db8::1
+
+# Kommentare und Inline-Kommentare werden unterstützt
+192.168.1.200 # Backup-Server
+```
+
+2. Aktiviere die Whitelist in der Konfiguration:
+
+```bash
+EXTERNAL_WHITELIST_ENABLED=true
+EXTERNAL_WHITELIST_URLS="https://example.com/whitelist.txt"
+EXTERNAL_WHITELIST_INTERVAL=300
+```
+
+3. Mehrere Listen können kommagetrennt angegeben werden:
+
+```bash
+EXTERNAL_WHITELIST_URLS="https://example.com/trusted.txt,https://other.com/whitelist.txt"
+```
+
+4. Service neustarten:
+
+```bash
+sudo systemctl restart adguard-shield
+```
+
+> **Hinweis:** Da Domains bei jedem Prüfintervall neu aufgelöst werden, eignet sich diese Funktion besonders für DynDNS-Einträge. Ändert sich die IP eines DynDNS-Hostnamens, wird die neue IP beim nächsten Sync automatisch erkannt und in die Whitelist aufgenommen.
+
+> **Wichtig:** Wird eine bereits gesperrte IP durch eine Whitelist-Aktualisierung gewhitelistet, wird sie **automatisch entsperrt**.
+
 ### Externe Blocklist
 
 Ermöglicht das Einbinden externer Blocklisten, die IPv4-Adressen, IPv6-Adressen und Hostnamen enthalten können. Der Worker läuft als Hintergrundprozess, prüft periodisch auf Änderungen und löst Hostnamen automatisch über den lokalen DNS-Resolver auf.
@@ -339,3 +393,7 @@ Beispiel:
 ```
 WHITELIST="127.0.0.1,::1,192.168.1.1,192.168.1.10,fd00::1"
 ```
+
+### Externe Whitelist für dynamische IPs
+
+Für Clients mit wechselnden IP-Adressen (z.B. DynDNS) kann eine **externe Whitelist** genutzt werden. Der Whitelist-Worker löst Domains regelmäßig per DNS auf und fügt die aktuellen IPs automatisch zur Whitelist hinzu. Siehe [Externe Whitelist](#externe-whitelist) für die Konfiguration.

@@ -8,7 +8,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.6.2"
+VERSION="v0.7.0"
 
 set -euo pipefail
 
@@ -329,6 +329,7 @@ cleanup() {
         sleep 1
     fi
     stop_blocklist_worker
+    stop_whitelist_worker
     rm -f "$PID_FILE"
     exit 0
 }
@@ -356,6 +357,13 @@ is_whitelisted() {
             return 0
         fi
     done
+
+    # Externe Whitelist prüfen (aufgelöste IPs aus dem Whitelist-Worker)
+    local ext_wl_file="${EXTERNAL_WHITELIST_CACHE_DIR:-/var/lib/adguard-shield/external-whitelist}/resolved_ips.txt"
+    if [[ -f "$ext_wl_file" ]] && grep -qxF "$ip" "$ext_wl_file" 2>/dev/null; then
+        return 0
+    fi
+
     return 1
 }
 
@@ -1171,6 +1179,39 @@ stop_blocklist_worker() {
     fi
 }
 
+# ─── Externer Whitelist-Worker starten ───────────────────────────────────────
+start_whitelist_worker() {
+    if [[ "${EXTERNAL_WHITELIST_ENABLED:-false}" != "true" ]]; then
+        log "DEBUG" "Externer Whitelist-Worker ist deaktiviert"
+        return
+    fi
+
+    local worker_script="${SCRIPT_DIR}/external-whitelist-worker.sh"
+    if [[ ! -f "$worker_script" ]]; then
+        log "WARN" "Whitelist-Worker Script nicht gefunden: $worker_script"
+        return
+    fi
+
+    log "INFO" "Starte externen Whitelist-Worker im Hintergrund..."
+    bash "$worker_script" start &
+    WHITELIST_WORKER_PID=$!
+    log "INFO" "Whitelist-Worker gestartet (PID: $WHITELIST_WORKER_PID)"
+}
+
+# ─── Externer Whitelist-Worker stoppen ───────────────────────────────────────
+stop_whitelist_worker() {
+    local worker_pid_file="/var/run/adguard-whitelist-worker.pid"
+    if [[ -f "$worker_pid_file" ]]; then
+        local wpid
+        wpid=$(cat "$worker_pid_file")
+        if kill -0 "$wpid" 2>/dev/null; then
+            log "INFO" "Stoppe Whitelist-Worker (PID: $wpid)..."
+            kill "$wpid" 2>/dev/null || true
+            rm -f "$worker_pid_file"
+        fi
+    fi
+}
+
 # ─── Hauptschleife ──────────────────────────────────────────────────────────
 main_loop() {
     log "INFO" "═══════════════════════════════════════════════════════════"
@@ -1181,6 +1222,7 @@ main_loop() {
     log "INFO" "  Dry-Run: ${DRY_RUN}"
     log "INFO" "  Whitelist: ${WHITELIST}"
     log "INFO" "  Externe Blocklist: ${EXTERNAL_BLOCKLIST_ENABLED:-false}"
+    log "INFO" "  Externe Whitelist: ${EXTERNAL_WHITELIST_ENABLED:-false}"
     if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
         log "INFO" "  Progressive Sperren: AKTIV (×${PROGRESSIVE_BAN_MULTIPLIER:-2}, Max-Stufe: ${PROGRESSIVE_BAN_MAX_LEVEL:-0}, Reset: $(format_duration "${PROGRESSIVE_BAN_RESET_AFTER:-86400}"))"
     else
@@ -1205,6 +1247,9 @@ main_loop() {
 
     # Blocklist-Worker als Hintergrundprozess starten
     start_blocklist_worker
+
+    # Whitelist-Worker als Hintergrundprozess starten
+    start_whitelist_worker
 
     while true; do
         # Abgelaufene Sperren prüfen
@@ -1272,6 +1317,33 @@ case "${1:-start}" in
             echo "Blocklist-Worker nicht gefunden"
         fi
         ;;
+    whitelist-status)
+        init_directories
+        _worker_script="${SCRIPT_DIR}/external-whitelist-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" status
+        else
+            echo "Whitelist-Worker nicht gefunden"
+        fi
+        ;;
+    whitelist-sync)
+        init_directories
+        _worker_script="${SCRIPT_DIR}/external-whitelist-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" sync
+        else
+            echo "Whitelist-Worker nicht gefunden"
+        fi
+        ;;
+    whitelist-flush)
+        init_directories
+        _worker_script="${SCRIPT_DIR}/external-whitelist-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" flush
+        else
+            echo "Whitelist-Worker nicht gefunden"
+        fi
+        ;;
     status)
         init_directories
         show_status
@@ -1335,7 +1407,7 @@ Service-Steuerung (empfohlen):
   sudo systemctl restart adguard-shield
   sudo systemctl status adguard-shield
 
-Nutzung: $0 {status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush}
+Nutzung: $0 {status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush|whitelist-status|whitelist-sync|whitelist-flush}
 
 Verwaltungsbefehle:
   status             Zeigt aktive Sperren, Regeln und Wiederholungstäter
@@ -1348,6 +1420,9 @@ Verwaltungsbefehle:
   blocklist-status   Zeigt Status der externen Blocklisten
   blocklist-sync     Einmalige Synchronisation der externen Blocklisten
   blocklist-flush    Entfernt alle Sperren der externen Blocklisten
+  whitelist-status   Zeigt Status der externen Whitelisten
+  whitelist-sync     Einmalige Synchronisation der externen Whitelisten
+  whitelist-flush    Entfernt alle aufgelösten Whitelist-IPs
 
 Interne Befehle (nicht direkt verwenden — nur über systemd):
   start              Startet den Monitor im Vordergrund

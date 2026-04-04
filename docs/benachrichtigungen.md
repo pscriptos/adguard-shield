@@ -116,12 +116,12 @@ Bei Sperren aus der **externen Blocklist** werden Benachrichtigungen separat üb
 ### Service gestartet
 **Überschrift:** ✅ AdGuard Shield
 
-> 🟢 AdGuard Shield v0.6.2 wurde auf dns1 gestartet.
+> 🟢 AdGuard Shield v0.7.0 wurde auf dns1 gestartet.
 
 ### Service gestoppt
 **Überschrift:** 🚨 🛡️ AdGuard Shield
 
-> 🔴 AdGuard Shield v0.6.2 wurde auf dns1 gestoppt.
+> 🔴 AdGuard Shield v0.7.0 wurde auf dns1 gestoppt.
 
 ### Sperre (Ban)
 **Überschrift:** 🚨 🛡️ AdGuard Shield
