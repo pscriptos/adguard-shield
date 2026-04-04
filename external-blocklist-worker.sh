@@ -82,6 +82,13 @@ is_whitelisted() {
             return 0
         fi
     done
+
+    # Externe Whitelist prüfen (aufgelöste IPs aus dem Whitelist-Worker)
+    local ext_wl_file="${EXTERNAL_WHITELIST_CACHE_DIR:-/var/lib/adguard-shield/external-whitelist}/resolved_ips.txt"
+    if [[ -f "$ext_wl_file" ]] && grep -qxF "$ip" "$ext_wl_file" 2>/dev/null; then
+        return 0
+    fi
+
     return 1
 }
 

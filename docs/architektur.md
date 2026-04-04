@@ -134,6 +134,7 @@ Das ermöglicht:
 ├── adguard-shield.conf.old        # Backup der Konfig nach Update
 ├── iptables-helper.sh             # iptables Verwaltung
 ├── external-blocklist-worker.sh   # Externer Blocklist-Worker
+├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DNS-Auflösung)
 └── unban-expired.sh               # Cron-basiertes Entsperren
 
 /etc/systemd/system/
@@ -142,7 +143,8 @@ Das ermöglicht:
 /var/lib/adguard-shield/
 ├── *.ban                          # State-Dateien aktiver Sperren
 ├── *.offenses                     # Offense-Zähler (Progressive Sperren)
-└── external-blocklist/            # Cache für externe Blocklisten
+├── external-blocklist/            # Cache für externe Blocklisten
+└── external-whitelist/            # Cache für externe Whitelisten + aufgelöste IPs
 
 /var/log/
 ├── adguard-shield.log             # Laufzeit-Log

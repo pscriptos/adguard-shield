@@ -106,6 +106,7 @@ do_uninstall() {
         rm -f "$INSTALL_DIR/iptables-helper.sh"
         rm -f "$INSTALL_DIR/unban-expired.sh"
         rm -f "$INSTALL_DIR/external-blocklist-worker.sh"
+        rm -f "$INSTALL_DIR/external-whitelist-worker.sh"
         rm -f "$INSTALL_DIR/report-generator.sh"
         rm -f "$INSTALL_DIR/uninstall.sh"
         rm -rf "$INSTALL_DIR/templates"

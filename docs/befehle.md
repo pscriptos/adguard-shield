@@ -158,6 +158,40 @@ sudo /opt/adguard-shield/iptables-helper.sh save
 sudo /opt/adguard-shield/iptables-helper.sh restore
 ```
 
+## Externer Whitelist-Worker
+
+Der Whitelist-Worker löst Domains aus externen Listen regelmäßig per DNS auf und stellt die IPs als dynamische Whitelist bereit:
+
+```bash
+# Status anzeigen (aufgelöste IPs, konfigurierte Listen)
+sudo /opt/adguard-shield/adguard-shield.sh whitelist-status
+
+# Einmalige Synchronisation (z.B. nach Konfigurationsänderung)
+sudo /opt/adguard-shield/adguard-shield.sh whitelist-sync
+
+# Alle aufgelösten Whitelist-IPs entfernen
+sudo /opt/adguard-shield/adguard-shield.sh whitelist-flush
+```
+
+Der Worker kann auch standalone gesteuert werden:
+
+```bash
+# Worker manuell starten (normalerweise automatisch per Hauptscript)
+sudo /opt/adguard-shield/external-whitelist-worker.sh start
+
+# Worker stoppen
+sudo /opt/adguard-shield/external-whitelist-worker.sh stop
+
+# Einmalige Synchronisation
+sudo /opt/adguard-shield/external-whitelist-worker.sh sync
+
+# Status anzeigen
+sudo /opt/adguard-shield/external-whitelist-worker.sh status
+
+# Aufgelöste IPs entfernen
+sudo /opt/adguard-shield/external-whitelist-worker.sh flush
+```
+
 ## Externer Blocklist-Worker
 
 Der Worker kann auch standalone gesteuert werden:
