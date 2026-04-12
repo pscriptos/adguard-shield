@@ -36,6 +36,7 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 - Whitelist für vertrauenswürdige IPs
 - Dry-Run Modus zum gefahrlosen Testen
 - Benachrichtigungen (Discord, Slack, Gotify, Ntfy)
+- **Watchdog** — automatischer Health Check alle 5 Minuten mit Recovery und Benachrichtigung bei Service-Ausfall
 - systemd Service für dauerhaften Betrieb
 
 ## Voraussetzungen
@@ -97,32 +98,10 @@ sudo /opt/adguard-shield/report-generator.sh send                # Report jetzt 
 sudo /opt/adguard-shield/report-generator.sh status              # Report-Status anzeigen
 sudo /opt/adguard-shield/report-generator.sh install             # Cron-Job einrichten
 sudo journalctl -u adguard-shield -f                             # Logs live verfolgen
-```
 
-## Projektstruktur
-
-```
-├── adguard-shield.sh              # Haupt-Monitor-Script
-├── adguard-shield.conf            # Konfiguration
-├── adguard-shield.service         # systemd Unit
-├── external-blocklist-worker.sh   # Externer Blocklist-Worker
-├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DynDNS-Auflösung)
-├── iptables-helper.sh             # Manuelle iptables-Verwaltung
-├── unban-expired.sh               # Cron-basiertes Entsperren
-├── report-generator.sh            # E-Mail Report Generator
-├── install.sh                     # Installer / Updater
-├── uninstall.sh                   # Uninstaller (wird ins Installationsverzeichnis kopiert)
-├── templates/
-│   ├── report.html                # HTML-Report-Template
-│   └── report.txt                 # TXT-Report-Template
-├── README.md
-└── docs/
-    ├── architektur.md               # Architektur & Funktionsweise
-    ├── konfiguration.md             # Alle Parameter erklärt + Konfig-Migration
-    ├── befehle.md                   # Vollständige Befehlsreferenz inkl. Installer
-    ├── benachrichtigungen.md        # Webhook-Setup (Discord, Slack, Gotify, Ntfy)
-    ├── report.md                    # E-Mail Report Setup & Konfiguration
-    └── tipps-und-troubleshooting.md
+# Watchdog (automatischer Health Check)
+sudo systemctl status adguard-shield-watchdog.timer               # Watchdog-Status
+sudo systemctl list-timers adguard-shield-watchdog.timer          # Nächste Ausführung
 ```
 
 ## Dokumentation
@@ -134,7 +113,7 @@ sudo journalctl -u adguard-shield -f                             # Logs live ver
 | [Befehle](docs/befehle.md) | Vollständige Befehlsreferenz für Installer, Monitor, iptables-Helper und systemd |
 | [Benachrichtigungen](docs/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
 | [E-Mail Report](docs/report.md) | Periodische Statistik-Reports per E-Mail (HTML/TXT) |
-| [Tipps & Troubleshooting](docs/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Deinstallation |
+| [Tipps & Troubleshooting](docs/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Watchdog, Deinstallation |
 
 ## Lizenz
 
