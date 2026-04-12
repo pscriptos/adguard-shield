@@ -42,8 +42,9 @@ Beim Update passiert automatisch:
 2. Die bestehende Konfiguration wird als `adguard-shield.conf.old` gesichert
 3. Neue Konfigurationsparameter werden automatisch zur bestehenden Konfig hinzugefügt
 4. Bestehende Einstellungen bleiben **immer** erhalten
-5. Der systemd Service wird per `daemon-reload` neu geladen
-6. Der Service wird automatisch neu gestartet (falls er lief)
+5. Der systemd Service und Watchdog-Timer werden per `daemon-reload` neu geladen
+6. Der Watchdog-Timer wird automatisch aktiviert (falls noch nicht aktiv)
+7. Der Service wird automatisch neu gestartet (falls er lief)
 
 ### API-Verbindungstest nach Installation
 
@@ -85,6 +86,31 @@ sudo systemctl disable adguard-shield
 ```
 
 > **Hinweis:** Der Service wird bei der Installation automatisch für den Autostart beim Booten aktiviert. Nach einem Update wird der Service automatisch neu gestartet — ein manueller Neustart ist nicht nötig.
+
+## Watchdog (automatischer Health Check)
+
+Der Watchdog prüft alle 5 Minuten ob der Hauptservice läuft und startet ihn bei Bedarf automatisch neu. Er wird als systemd Timer betrieben und bei der Installation automatisch aktiviert.
+
+```bash
+# Watchdog-Status
+sudo systemctl status adguard-shield-watchdog.timer
+
+# Nächste geplante Ausführung anzeigen
+sudo systemctl list-timers adguard-shield-watchdog.timer
+
+# Watchdog aktivieren / deaktivieren
+sudo systemctl enable adguard-shield-watchdog.timer
+sudo systemctl disable adguard-shield-watchdog.timer
+
+# Watchdog starten / stoppen
+sudo systemctl start adguard-shield-watchdog.timer
+sudo systemctl stop adguard-shield-watchdog.timer
+
+# Watchdog-Logs anzeigen
+sudo journalctl -u adguard-shield-watchdog.service --no-pager -n 20
+```
+
+> **Hinweis:** Der Watchdog sendet automatisch Benachrichtigungen (falls `NOTIFY_ENABLED=true`), wenn er den Service wiederbeleben muss oder die Recovery fehlschlägt.
 
 ## Monitor — Verwaltungsbefehle
 

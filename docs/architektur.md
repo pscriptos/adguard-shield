@@ -132,13 +132,16 @@ Das ermöglicht:
 ├── adguard-shield.sh              # Haupt-Monitor-Script
 ├── adguard-shield.conf            # Konfiguration (chmod 600)
 ├── adguard-shield.conf.old        # Backup der Konfig nach Update
+├── adguard-shield-watchdog.sh     # Watchdog Health-Check-Script
 ├── iptables-helper.sh             # iptables Verwaltung
 ├── external-blocklist-worker.sh   # Externer Blocklist-Worker
 ├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DNS-Auflösung)
 └── unban-expired.sh               # Cron-basiertes Entsperren
 
 /etc/systemd/system/
-└── adguard-shield.service         # systemd Service (Autostart aktiv)
+├── adguard-shield.service         # systemd Service (Autostart aktiv)
+├── adguard-shield-watchdog.service # systemd Watchdog-Unit (oneshot)
+└── adguard-shield-watchdog.timer  # systemd Timer (alle 5 Min.)
 
 /var/lib/adguard-shield/
 ├── *.ban                          # State-Dateien aktiver Sperren
@@ -157,8 +160,8 @@ Der Installer (`install.sh`) bietet ein interaktives Menü und folgende Funktion
 
 | Befehl | Beschreibung |
 |--------|--------------|
-| `install` | Vollständige Neuinstallation (Abhängigkeiten, Dateien, Konfiguration, Service) |
-| `update` | Update mit automatischer Konfigurations-Migration und Service-Neustart |
+| `install` | Vollständige Neuinstallation (Abhängigkeiten, Dateien, Konfiguration, Service, Watchdog) |
+| `update` | Update mit automatischer Konfigurations-Migration, Watchdog-Aktivierung und Service-Neustart |
 | `uninstall` | Deinstallation mit optionalem Behalten der Konfiguration |
 | `status` | Installationsstatus, Version und Service-Status anzeigen |
 | `--help` | Hilfe und Befehlsübersicht |

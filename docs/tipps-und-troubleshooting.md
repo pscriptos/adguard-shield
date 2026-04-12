@@ -193,6 +193,37 @@ sudo rm -f /var/run/adguard-shield.pid
 sudo systemctl start adguard-shield
 ```
 
+### Service ist ausgefallen und startet nicht mehr
+
+Wenn systemd das Restart-Limit erreicht hat (z.B. `"Start request repeated too quickly"`), hilft der **Watchdog** — er prüft alle 5 Minuten ob der Service läuft und startet ihn automatisch neu.
+
+**Watchdog-Status prüfen:**
+```bash
+# Timer-Status anzeigen
+sudo systemctl status adguard-shield-watchdog.timer
+
+# Letzte Watchdog-Ausführungen anzeigen
+sudo systemctl list-timers adguard-shield-watchdog.timer
+
+# Watchdog-Logs prüfen
+sudo journalctl -u adguard-shield-watchdog.service --no-pager -n 20
+```
+
+**Manuelles Recovery (sofort):**
+```bash
+# systemd-Fehlerzähler zurücksetzen und Service starten
+sudo systemctl reset-failed adguard-shield.service
+sudo systemctl start adguard-shield.service
+```
+
+**Watchdog nachträglich aktivieren:**
+```bash
+sudo systemctl enable adguard-shield-watchdog.timer
+sudo systemctl start adguard-shield-watchdog.timer
+```
+
+> **Hinweis:** Der Watchdog sendet automatisch eine Benachrichtigung (falls `NOTIFY_ENABLED=true`), wenn er den Service wiederbeleben muss oder die Recovery fehlschlägt.
+
 ## Update durchführen
 
 ```bash
@@ -229,9 +260,13 @@ Oder manuell:
 ```bash
 sudo systemctl stop adguard-shield
 sudo systemctl disable adguard-shield
+sudo systemctl stop adguard-shield-watchdog.timer
+sudo systemctl disable adguard-shield-watchdog.timer
 sudo /opt/adguard-shield/iptables-helper.sh remove
 sudo rm -rf /opt/adguard-shield
 sudo rm -f /etc/systemd/system/adguard-shield.service
+sudo rm -f /etc/systemd/system/adguard-shield-watchdog.service
+sudo rm -f /etc/systemd/system/adguard-shield-watchdog.timer
 sudo systemctl daemon-reload
 ```
 
