@@ -125,6 +125,13 @@ print_help() {
     echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh install${NC}   # Cron-Job einrichten"
     echo -e "  ${CYAN}sudo /opt/adguard-shield/report-generator.sh remove${NC}    # Cron-Job entfernen"
     echo ""
+    echo -e "${BOLD}Watchdog-Befehle:${NC}"
+    echo -e "  ${CYAN}sudo systemctl status adguard-shield-watchdog.timer${NC}    # Watchdog-Status"
+    echo -e "  ${CYAN}sudo systemctl list-timers adguard-shield-watchdog.timer${NC} # Nächste Ausführung"
+    echo -e "  ${CYAN}sudo systemctl enable adguard-shield-watchdog.timer${NC}    # Watchdog aktivieren"
+    echo -e "  ${CYAN}sudo systemctl disable adguard-shield-watchdog.timer${NC}   # Watchdog deaktivieren"
+    echo -e "  ${CYAN}sudo journalctl -u adguard-shield-watchdog.service${NC}     # Watchdog-Logs"
+    echo ""
     echo -e "${BOLD}Voraussetzungen:${NC}"
     echo "  - Linux Server (Debian/Ubuntu empfohlen)"
     echo "  - Root-Zugriff (sudo)"
@@ -248,6 +255,7 @@ install_files() {
     cp "$SCRIPT_DIR/external-blocklist-worker.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/external-whitelist-worker.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/report-generator.sh" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/adguard-shield-watchdog.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/"
 
     # Templates kopieren
@@ -262,6 +270,7 @@ install_files() {
     chmod +x "$INSTALL_DIR/external-blocklist-worker.sh"
     chmod +x "$INSTALL_DIR/external-whitelist-worker.sh"
     chmod +x "$INSTALL_DIR/report-generator.sh"
+    chmod +x "$INSTALL_DIR/adguard-shield-watchdog.sh"
     chmod +x "$INSTALL_DIR/uninstall.sh"
 
     echo -e "  ✅ Dateien installiert"
@@ -356,18 +365,22 @@ install_service() {
     echo -e "${YELLOW}Installiere systemd Service...${NC}"
 
     cp "$SCRIPT_DIR/adguard-shield.service" "$SERVICE_FILE"
+    cp "$SCRIPT_DIR/adguard-shield-watchdog.service" /etc/systemd/system/adguard-shield-watchdog.service
+    cp "$SCRIPT_DIR/adguard-shield-watchdog.timer" /etc/systemd/system/adguard-shield-watchdog.timer
     systemctl daemon-reload
 
-    echo -e "  ✅ Service-Datei installiert"
+    echo -e "  ✅ Service-Dateien installiert (inkl. Watchdog)"
     echo ""
 
     # Interaktiv: Autostart beim Booten?
     read -rep "  Soll AdGuard Shield beim Booten automatisch starten? [J/n]: " autostart
     if [[ "${autostart,,}" != "n" ]]; then
         systemctl enable adguard-shield.service
-        echo -e "  ✅ Autostart aktiviert"
+        systemctl enable adguard-shield-watchdog.timer
+        echo -e "  ✅ Autostart aktiviert (inkl. Watchdog-Timer)"
     else
         systemctl disable adguard-shield.service 2>/dev/null || true
+        systemctl disable adguard-shield-watchdog.timer 2>/dev/null || true
         echo -e "  ℹ️  Autostart nicht aktiviert"
         echo -e "  ${YELLOW}Später aktivieren mit: sudo systemctl enable adguard-shield${NC}"
     fi
@@ -500,6 +513,15 @@ print_summary() {
     echo "  Konfiguration:      $INSTALL_DIR/adguard-shield.conf"
     echo "  Service:            adguard-shield.service ($svc_status)"
     echo "  Autostart:          $autostart_status"
+
+    # Watchdog-Status
+    local watchdog_status="deaktiviert"
+    if systemctl is-active adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+        watchdog_status="aktiv ✅"
+    elif systemctl is-enabled adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+        watchdog_status="aktiviert (Timer nicht gestartet)"
+    fi
+    echo "  Watchdog:           $watchdog_status"
     echo "  Log-Datei:          /var/log/adguard-shield.log"
     echo ""
     echo "  Nützliche Befehle:"
@@ -579,6 +601,15 @@ do_status() {
         echo -e "  ❌ Konfiguration: fehlt!"
     fi
 
+    # Watchdog-Status
+    if systemctl is-active adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+        echo -e "  ✅ Watchdog-Timer: aktiv"
+    elif systemctl is-enabled adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+        echo -e "  ⚠️  Watchdog-Timer: aktiviert aber nicht gestartet"
+    else
+        echo -e "  ❌ Watchdog-Timer: nicht installiert/deaktiviert"
+    fi
+
     echo ""
 }
 
@@ -618,7 +649,8 @@ do_install() {
     read -rep "  Soll der AdGuard Shield Service jetzt gestartet werden? [J/n]: " start_now
     if [[ "${start_now,,}" != "n" ]]; then
         systemctl start adguard-shield
-        echo -e "  ✅ Service gestartet"
+        systemctl start adguard-shield-watchdog.timer 2>/dev/null || true
+        echo -e "  ✅ Service gestartet (inkl. Watchdog-Timer)"
     else
         echo -e "  ℹ️  Service nicht gestartet"
         echo -e "  ${YELLOW}Später starten mit: sudo systemctl start adguard-shield${NC}"
@@ -651,18 +683,28 @@ do_update() {
     # Service-Datei aktualisieren
     echo -e "${YELLOW}Aktualisiere systemd Service...${NC}"
     cp "$SCRIPT_DIR/adguard-shield.service" "$SERVICE_FILE"
+    cp "$SCRIPT_DIR/adguard-shield-watchdog.service" /etc/systemd/system/adguard-shield-watchdog.service
+    cp "$SCRIPT_DIR/adguard-shield-watchdog.timer" /etc/systemd/system/adguard-shield-watchdog.timer
     systemctl daemon-reload
-    echo -e "  ✅ Service-Datei aktualisiert"
+    echo -e "  ✅ Service-Dateien aktualisiert (inkl. Watchdog)"
     echo ""
 
     # Interaktiv: Autostart beim Booten?
     if systemctl is-enabled adguard-shield &>/dev/null; then
         echo -e "  ℹ️  Autostart ist bereits aktiviert"
+        # Watchdog-Timer auch aktivieren falls noch nicht aktiv
+        if ! systemctl is-enabled adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+            systemctl enable adguard-shield-watchdog.timer
+            systemctl start adguard-shield-watchdog.timer
+            echo -e "  ✅ Watchdog-Timer aktiviert"
+        fi
     else
         read -rep "  Soll AdGuard Shield beim Booten automatisch starten? [J/n]: " autostart
         if [[ "${autostart,,}" != "n" ]]; then
             systemctl enable adguard-shield.service
-            echo -e "  ✅ Autostart aktiviert"
+            systemctl enable adguard-shield-watchdog.timer
+            systemctl start adguard-shield-watchdog.timer
+            echo -e "  ✅ Autostart aktiviert (inkl. Watchdog-Timer)"
         else
             echo -e "  ℹ️  Autostart bleibt deaktiviert"
         fi

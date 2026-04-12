@@ -4,7 +4,7 @@ Documentation=https://git.techniverse.net/scriptos/adguard-shield
 After=network.target AdGuardHome.service
 Wants=AdGuardHome.service
 StartLimitBurst=5
-StartLimitIntervalSec=60
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
@@ -14,7 +14,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 
 # Neustart-Verhalten
 Restart=on-failure
-RestartSec=10
+RestartSec=30
 
 # Sicherheits-Hardening
 ProtectSystem=full

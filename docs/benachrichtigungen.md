@@ -123,6 +123,24 @@ Bei Sperren aus der **externen Blocklist** werden Benachrichtigungen separat üb
 
 > 🔴 AdGuard Shield v0.7.0 wurde auf dns1 gestoppt.
 
+### Watchdog — Service wiederhergestellt
+**Überschrift:** 🔄 AdGuard Shield Watchdog
+
+> 🔄 AdGuard Shield Watchdog auf dns1
+> ---
+> Der Service war ausgefallen und wurde automatisch neu gestartet.
+> Versuch: 1
+
+### Watchdog — Recovery fehlgeschlagen
+**Überschrift:** 🚨 AdGuard Shield Watchdog
+
+> 🚨 AdGuard Shield Watchdog auf dns1
+> ---
+> Der Service konnte NICHT automatisch neu gestartet werden!
+> Manuelles Eingreifen erforderlich.
+> Fehlversuche: 1
+> Letzter Fehler: (systemd Statusausgabe)
+
 ### Sperre (Ban)
 **Überschrift:** 🚨 🛡️ AdGuard Shield
 
