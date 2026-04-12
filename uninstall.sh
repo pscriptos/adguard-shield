@@ -13,6 +13,8 @@
 # INSTALL_DIR ergibt sich aus dem Verzeichnis, in dem dieses Script liegt
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_FILE="/etc/systemd/system/adguard-shield.service"
+WATCHDOG_SERVICE_FILE="/etc/systemd/system/adguard-shield-watchdog.service"
+WATCHDOG_TIMER_FILE="/etc/systemd/system/adguard-shield-watchdog.timer"
 
 # Farben
 RED='\033[0;31m'
@@ -79,6 +81,16 @@ do_uninstall() {
     fi
     echo ""
 
+    # Watchdog-Timer stoppen und deaktivieren
+    if systemctl is-active adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+        systemctl stop adguard-shield-watchdog.timer
+        echo "  ✅ Watchdog-Timer gestoppt"
+    fi
+    if systemctl is-enabled adguard-shield-watchdog.timer &>/dev/null 2>&1; then
+        systemctl disable adguard-shield-watchdog.timer
+        echo "  ✅ Watchdog-Timer deaktiviert"
+    fi
+
     # Service stoppen und deaktivieren
     if systemctl is-active adguard-shield &>/dev/null; then
         systemctl stop adguard-shield
@@ -90,9 +102,13 @@ do_uninstall() {
     fi
     if [[ -f "$SERVICE_FILE" ]]; then
         rm -f "$SERVICE_FILE"
-        systemctl daemon-reload
         echo "  ✅ Service-Datei entfernt"
     fi
+    rm -f "$WATCHDOG_SERVICE_FILE" "$WATCHDOG_TIMER_FILE"
+    if [[ -f "$WATCHDOG_SERVICE_FILE" ]] || [[ -f "$WATCHDOG_TIMER_FILE" ]]; then
+        echo "  ✅ Watchdog-Dateien entfernt"
+    fi
+    systemctl daemon-reload
 
     # iptables Chain aufräumen
     if [[ -f "$INSTALL_DIR/iptables-helper.sh" ]]; then
@@ -108,6 +124,7 @@ do_uninstall() {
         rm -f "$INSTALL_DIR/external-blocklist-worker.sh"
         rm -f "$INSTALL_DIR/external-whitelist-worker.sh"
         rm -f "$INSTALL_DIR/report-generator.sh"
+        rm -f "$INSTALL_DIR/adguard-shield-watchdog.sh"
         rm -f "$INSTALL_DIR/uninstall.sh"
         rm -rf "$INSTALL_DIR/templates"
         echo "  ✅ Scripts entfernt (Konfiguration und Logs behalten)"
