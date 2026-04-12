@@ -104,35 +104,6 @@ sudo systemctl status adguard-shield-watchdog.timer               # Watchdog-Sta
 sudo systemctl list-timers adguard-shield-watchdog.timer          # Nächste Ausführung
 ```
 
-## Projektstruktur
-
-```
-├── adguard-shield.sh              # Haupt-Monitor-Script
-├── adguard-shield.conf            # Konfiguration
-├── adguard-shield.service         # systemd Unit
-├── adguard-shield-watchdog.sh     # Watchdog Health-Check-Script
-├── adguard-shield-watchdog.service # systemd Watchdog-Unit (oneshot)
-├── adguard-shield-watchdog.timer  # systemd Timer (alle 5 Min.)
-├── external-blocklist-worker.sh   # Externer Blocklist-Worker
-├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DynDNS-Auflösung)
-├── iptables-helper.sh             # Manuelle iptables-Verwaltung
-├── unban-expired.sh               # Cron-basiertes Entsperren
-├── report-generator.sh            # E-Mail Report Generator
-├── install.sh                     # Installer / Updater
-├── uninstall.sh                   # Uninstaller (wird ins Installationsverzeichnis kopiert)
-├── templates/
-│   ├── report.html                # HTML-Report-Template
-│   └── report.txt                 # TXT-Report-Template
-├── README.md
-└── docs/
-    ├── architektur.md               # Architektur & Funktionsweise
-    ├── konfiguration.md             # Alle Parameter erklärt + Konfig-Migration
-    ├── befehle.md                   # Vollständige Befehlsreferenz inkl. Installer
-    ├── benachrichtigungen.md        # Webhook-Setup (Discord, Slack, Gotify, Ntfy)
-    ├── report.md                    # E-Mail Report Setup & Konfiguration
-    └── tipps-und-troubleshooting.md
-```
-
 ## Dokumentation
 
 | Dokument | Inhalt |
