@@ -255,6 +255,93 @@ Der Report an AbuseIPDB enthält (auf Englisch):
 - **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com in 60s (random subdomain attack). Banned by Adguard Shield 🔗 https://tnvs.de/as`
 
 Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
+
+### GeoIP-basierte Länderfilter
+
+Ermöglicht das Sperren oder Erlauben von DNS-Anfragen basierend auf dem Herkunftsland der Client-IP. Unterstützt zwei Modi:
+
+- **Blocklist-Modus:** Nur die gelisteten Länder werden gesperrt (alle anderen erlaubt)
+- **Allowlist-Modus:** Nur die gelisteten Länder werden erlaubt (alle anderen gesperrt)
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `GEOIP_ENABLED` | `false` | GeoIP-Filter aktivieren |
+| `GEOIP_MODE` | `blocklist` | Modus: `blocklist` oder `allowlist` |
+| `GEOIP_COUNTRIES` | *(leer)* | ISO 3166-1 Alpha-2 Ländercodes (kommagetrennt), z.B. `CN,RU,KP,IR` |
+| `GEOIP_CHECK_INTERVAL` | `0` | Prüfintervall in Sekunden (`0` = nutzt `CHECK_INTERVAL`) |
+| `GEOIP_NOTIFY` | `true` | Benachrichtigungen bei GeoIP-Sperren senden |
+| `GEOIP_SKIP_PRIVATE` | `true` | Private/lokale IPs von der GeoIP-Prüfung ausnehmen |
+| `GEOIP_LICENSE_KEY` | *(leer)* | MaxMind License-Key für automatischen DB-Download (kostenlos) |
+| `GEOIP_MMDB_PATH` | *(leer)* | Manueller Pfad zur MaxMind GeoLite2 Datenbank (überschreibt Auto-Download) |
+
+#### Voraussetzungen
+
+Es muss mindestens eines der folgenden GeoIP-Tools installiert sein:
+
+1. **Automatischer MaxMind-Download** (empfohlen):
+   ```bash
+   # Kostenlosen Account erstellen: https://www.maxmind.com/en/geolite2/signup
+   # License-Key generieren und in adguard-shield.conf eintragen:
+   GEOIP_LICENSE_KEY="dein_license_key_hier"
+   ```
+   Die GeoLite2-Country-Datenbank wird automatisch heruntergeladen und alle 24 Stunden aktualisiert.
+   Es wird zusätzlich `mmdbinspect` oder `mmdblookup` benötigt:
+   ```bash
+   sudo apt install mmdb-bin    # für mmdblookup
+   ```
+
+2. **geoiplookup** (einfachster Einstieg, weniger genau):
+   ```bash
+   sudo apt install geoip-bin geoip-database
+   ```
+
+3. **Manueller MaxMind-Pfad** (eigene Datenbank):
+   ```bash
+   # mmdbinspect oder mmdblookup installieren
+   # Datenbank manuell herunterladen: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+   GEOIP_MMDB_PATH="/usr/share/GeoIP/GeoLite2-Country.mmdb"
+   ```
+
+> **Priorität:** `GEOIP_MMDB_PATH` (manuell) → Auto-Download-DB → `geoiplookup` (Legacy-Fallback)
+
+#### Beispiel: Bestimmte Länder sperren (Blocklist)
+
+```bash
+GEOIP_ENABLED=true
+GEOIP_MODE="blocklist"
+GEOIP_COUNTRIES="CN,RU,KP,IR"
+GEOIP_LICENSE_KEY="dein_maxmind_license_key"   # optional, für Auto-Download
+```
+
+→ Alle Anfragen aus China, Russland, Nordkorea und Iran werden permanent gesperrt.
+
+#### Beispiel: Nur bestimmte Länder erlauben (Allowlist)
+
+```bash
+GEOIP_ENABLED=true
+GEOIP_MODE="allowlist"
+GEOIP_COUNTRIES="DE,AT,CH"
+```
+
+→ Nur Anfragen aus Deutschland, Österreich und der Schweiz werden erlaubt. Alle anderen Länder werden gesperrt.
+
+> **Hinweis:** Private IP-Adressen (10.x.x.x, 192.168.x.x, etc.) und Whitelist-IPs werden niemals durch GeoIP gesperrt. GeoIP-Sperren sind **immer permanent**.
+
+> **Auto-Unban:** Wird ein Land aus `GEOIP_COUNTRIES` entfernt oder der Modus (`GEOIP_MODE`) geändert, werden die nicht mehr zutreffenden Sperren beim nächsten Sync **automatisch aufgehoben**. Dasselbe gilt, wenn GeoIP komplett deaktiviert wird (`GEOIP_ENABLED=false`).
+
+> **Tipp:** GeoIP-Lookups werden für 24 Stunden gecacht. Mit `geoip-flush-cache` kann der Cache manuell geleert werden.
+
+> **Auto-Download:** Ist `GEOIP_LICENSE_KEY` gesetzt, wird die GeoLite2-Country-Datenbank automatisch nach `<INSTALL_DIR>/geoip/` heruntergeladen und alle 24 Stunden aktualisiert. Bei einem Update wird der Download im Hintergrund durchgeführt — der Worker läuft während des Downloads normal weiter. Ein manuell gesetzter `GEOIP_MMDB_PATH` hat immer Vorrang vor der automatisch heruntergeladenen Datenbank.
+
+#### GeoIP-Befehle
+
+| Befehl | Beschreibung |
+|--------|--------------|
+| `adguard-shield.sh geoip-status` | Zeigt GeoIP-Status, aktive Sperren und verfügbare Tools |
+| `adguard-shield.sh geoip-sync` | Einmalige GeoIP-Prüfung aller aktiven Clients |
+| `adguard-shield.sh geoip-flush` | Alle GeoIP-Sperren aufheben |
+| `adguard-shield.sh geoip-lookup <IP>` | GeoIP-Lookup einer einzelnen IP-Adresse |
+
 #### Externe Blocklist einrichten
 
 1. Erstelle eine Textdatei auf einem Webserver. Pro Zeile ein Eintrag — IPv4, IPv6, CIDR oder Hostname:
