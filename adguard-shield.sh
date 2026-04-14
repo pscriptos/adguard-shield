@@ -330,6 +330,8 @@ cleanup() {
     fi
     stop_blocklist_worker
     stop_whitelist_worker
+    stop_geoip_worker
+    stop_offense_cleanup_worker
     rm -f "$PID_FILE"
     exit 0
 }
@@ -987,6 +989,17 @@ show_status() {
         echo ""
     fi
 
+    # GeoIP-Filter Info
+    if [[ "${GEOIP_ENABLED:-false}" == "true" ]]; then
+        local geoip_mode_label
+        [[ "${GEOIP_MODE:-blocklist}" == "blocklist" ]] && geoip_mode_label="Blocklist" || geoip_mode_label="Allowlist"
+        echo "  🌍 GeoIP-Filter: AKTIV"
+        echo "     Modus: ${geoip_mode_label}"
+        echo "     Länder: ${GEOIP_COUNTRIES:-<keine>}"
+        echo "     Sperrdauer: PERMANENT (Auto-Unban bei Änderung der Länderliste)"
+        echo ""
+    fi
+
     # Aktive Sperren
     local ban_count=0
     if [[ -d "$STATE_DIR" ]]; then
@@ -1212,6 +1225,72 @@ stop_whitelist_worker() {
     fi
 }
 
+# ─── GeoIP-Worker starten ────────────────────────────────────────────────────
+start_geoip_worker() {
+    if [[ "${GEOIP_ENABLED:-false}" != "true" ]]; then
+        log "DEBUG" "GeoIP-Worker ist deaktiviert"
+        return
+    fi
+
+    local worker_script="${SCRIPT_DIR}/geoip-worker.sh"
+    if [[ ! -f "$worker_script" ]]; then
+        log "WARN" "GeoIP-Worker Script nicht gefunden: $worker_script"
+        return
+    fi
+
+    log "INFO" "Starte GeoIP-Worker im Hintergrund..."
+    bash "$worker_script" start &
+    GEOIP_WORKER_PID=$!
+    log "INFO" "GeoIP-Worker gestartet (PID: $GEOIP_WORKER_PID)"
+}
+
+# ─── GeoIP-Worker stoppen ────────────────────────────────────────────────────
+stop_geoip_worker() {
+    local worker_pid_file="/var/run/adguard-geoip-worker.pid"
+    if [[ -f "$worker_pid_file" ]]; then
+        local wpid
+        wpid=$(cat "$worker_pid_file")
+        if kill -0 "$wpid" 2>/dev/null; then
+            log "INFO" "Stoppe GeoIP-Worker (PID: $wpid)..."
+            kill "$wpid" 2>/dev/null || true
+            rm -f "$worker_pid_file"
+        fi
+    fi
+}
+
+# ─── Offense-Cleanup-Worker starten ──────────────────────────────────────────
+start_offense_cleanup_worker() {
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" != "true" ]]; then
+        log "DEBUG" "Offense-Cleanup-Worker ist deaktiviert (Progressive Sperren inaktiv)"
+        return
+    fi
+
+    local worker_script="${SCRIPT_DIR}/offense-cleanup-worker.sh"
+    if [[ ! -f "$worker_script" ]]; then
+        log "WARN" "Offense-Cleanup-Worker Script nicht gefunden: $worker_script"
+        return
+    fi
+
+    log "INFO" "Starte Offense-Cleanup-Worker im Hintergrund..."
+    bash "$worker_script" start &
+    OFFENSE_CLEANUP_WORKER_PID=$!
+    log "INFO" "Offense-Cleanup-Worker gestartet (PID: $OFFENSE_CLEANUP_WORKER_PID)"
+}
+
+# ─── Offense-Cleanup-Worker stoppen ──────────────────────────────────────────
+stop_offense_cleanup_worker() {
+    local worker_pid_file="/var/run/adguard-offense-cleanup-worker.pid"
+    if [[ -f "$worker_pid_file" ]]; then
+        local wpid
+        wpid=$(cat "$worker_pid_file")
+        if kill -0 "$wpid" 2>/dev/null; then
+            log "INFO" "Stoppe Offense-Cleanup-Worker (PID: $wpid)..."
+            kill "$wpid" 2>/dev/null || true
+            rm -f "$worker_pid_file"
+        fi
+    fi
+}
+
 # ─── Hauptschleife ──────────────────────────────────────────────────────────
 main_loop() {
     log "INFO" "═══════════════════════════════════════════════════════════"
@@ -1238,6 +1317,14 @@ main_loop() {
     else
         log "INFO" "  AbuseIPDB Reporting: deaktiviert"
     fi
+    if [[ "${GEOIP_ENABLED:-false}" == "true" ]]; then
+        log "INFO" "  GeoIP-Filter: AKTIV (Modus: ${GEOIP_MODE:-blocklist}, Länder: ${GEOIP_COUNTRIES:-<keine>})"
+    else
+        log "INFO" "  GeoIP-Filter: deaktiviert"
+    fi
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        log "INFO" "  Offense-Cleanup: AKTIV (Reset: $(format_duration "${PROGRESSIVE_BAN_RESET_AFTER:-86400}"), Prüfintervall: 1h)"
+    fi
     log "INFO" "═══════════════════════════════════════════════════════════"
 
     # Service-Start-Benachrichtigung senden
@@ -1250,6 +1337,12 @@ main_loop() {
 
     # Whitelist-Worker als Hintergrundprozess starten
     start_whitelist_worker
+
+    # GeoIP-Worker als Hintergrundprozess starten
+    start_geoip_worker
+
+    # Offense-Cleanup-Worker als Hintergrundprozess starten
+    start_offense_cleanup_worker
 
     while true; do
         # Abgelaufene Sperren prüfen
@@ -1344,6 +1437,47 @@ case "${1:-start}" in
             echo "Whitelist-Worker nicht gefunden"
         fi
         ;;
+    geoip-status)
+        init_directories
+        _worker_script="${SCRIPT_DIR}/geoip-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" status
+        else
+            echo "GeoIP-Worker nicht gefunden"
+        fi
+        ;;
+    geoip-sync)
+        init_directories
+        setup_iptables_chain
+        _worker_script="${SCRIPT_DIR}/geoip-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" sync
+        else
+            echo "GeoIP-Worker nicht gefunden"
+        fi
+        ;;
+    geoip-flush)
+        init_directories
+        _worker_script="${SCRIPT_DIR}/geoip-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" flush
+        else
+            echo "GeoIP-Worker nicht gefunden"
+        fi
+        ;;
+    geoip-lookup)
+        if [[ -z "${2:-}" ]]; then
+            echo "Nutzung: $0 geoip-lookup <IP-Adresse>" >&2
+            exit 1
+        fi
+        init_directories
+        _worker_script="${SCRIPT_DIR}/geoip-worker.sh"
+        if [[ -f "$_worker_script" ]]; then
+            bash "$_worker_script" lookup "$2"
+        else
+            echo "GeoIP-Worker nicht gefunden"
+        fi
+        ;;
     status)
         init_directories
         show_status
@@ -1407,7 +1541,7 @@ Service-Steuerung (empfohlen):
   sudo systemctl restart adguard-shield
   sudo systemctl status adguard-shield
 
-Nutzung: $0 {status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush|whitelist-status|whitelist-sync|whitelist-flush}
+Nutzung: $0 {status|history|flush|unban|reset-offenses|test|dry-run|blocklist-status|blocklist-sync|blocklist-flush|whitelist-status|whitelist-sync|whitelist-flush|geoip-status|geoip-sync|geoip-flush|geoip-lookup}
 
 Verwaltungsbefehle:
   status             Zeigt aktive Sperren, Regeln und Wiederholungstäter
@@ -1423,6 +1557,10 @@ Verwaltungsbefehle:
   whitelist-status   Zeigt Status der externen Whitelisten
   whitelist-sync     Einmalige Synchronisation der externen Whitelisten
   whitelist-flush    Entfernt alle aufgelösten Whitelist-IPs
+  geoip-status       Zeigt Status der GeoIP-Länderfilter
+  geoip-sync         Einmalige GeoIP-Prüfung aller aktiven Clients
+  geoip-flush        Alle GeoIP-Sperren aufheben
+  geoip-lookup IP    GeoIP-Lookup für eine einzelne IP-Adresse
 
 Interne Befehle (nicht direkt verwenden — nur über systemd):
   start              Startet den Monitor im Vordergrund
