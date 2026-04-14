@@ -331,6 +331,7 @@ cleanup() {
     stop_blocklist_worker
     stop_whitelist_worker
     stop_geoip_worker
+    stop_offense_cleanup_worker
     rm -f "$PID_FILE"
     exit 0
 }
@@ -1257,6 +1258,39 @@ stop_geoip_worker() {
     fi
 }
 
+# ─── Offense-Cleanup-Worker starten ──────────────────────────────────────────
+start_offense_cleanup_worker() {
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" != "true" ]]; then
+        log "DEBUG" "Offense-Cleanup-Worker ist deaktiviert (Progressive Sperren inaktiv)"
+        return
+    fi
+
+    local worker_script="${SCRIPT_DIR}/offense-cleanup-worker.sh"
+    if [[ ! -f "$worker_script" ]]; then
+        log "WARN" "Offense-Cleanup-Worker Script nicht gefunden: $worker_script"
+        return
+    fi
+
+    log "INFO" "Starte Offense-Cleanup-Worker im Hintergrund..."
+    bash "$worker_script" start &
+    OFFENSE_CLEANUP_WORKER_PID=$!
+    log "INFO" "Offense-Cleanup-Worker gestartet (PID: $OFFENSE_CLEANUP_WORKER_PID)"
+}
+
+# ─── Offense-Cleanup-Worker stoppen ──────────────────────────────────────────
+stop_offense_cleanup_worker() {
+    local worker_pid_file="/var/run/adguard-offense-cleanup-worker.pid"
+    if [[ -f "$worker_pid_file" ]]; then
+        local wpid
+        wpid=$(cat "$worker_pid_file")
+        if kill -0 "$wpid" 2>/dev/null; then
+            log "INFO" "Stoppe Offense-Cleanup-Worker (PID: $wpid)..."
+            kill "$wpid" 2>/dev/null || true
+            rm -f "$worker_pid_file"
+        fi
+    fi
+}
+
 # ─── Hauptschleife ──────────────────────────────────────────────────────────
 main_loop() {
     log "INFO" "═══════════════════════════════════════════════════════════"
@@ -1288,6 +1322,9 @@ main_loop() {
     else
         log "INFO" "  GeoIP-Filter: deaktiviert"
     fi
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        log "INFO" "  Offense-Cleanup: AKTIV (Reset: $(format_duration "${PROGRESSIVE_BAN_RESET_AFTER:-86400}"), Prüfintervall: 1h)"
+    fi
     log "INFO" "═══════════════════════════════════════════════════════════"
 
     # Service-Start-Benachrichtigung senden
@@ -1303,6 +1340,9 @@ main_loop() {
 
     # GeoIP-Worker als Hintergrundprozess starten
     start_geoip_worker
+
+    # Offense-Cleanup-Worker als Hintergrundprozess starten
+    start_offense_cleanup_worker
 
     while true; do
         # Abgelaufene Sperren prüfen
