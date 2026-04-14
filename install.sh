@@ -265,6 +265,7 @@ install_files() {
     cp "$SCRIPT_DIR/adguard-shield-watchdog.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/geoip-worker.sh" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/offense-cleanup-worker.sh" "$INSTALL_DIR/"
 
     # Templates kopieren
     mkdir -p "$INSTALL_DIR/templates"
@@ -281,6 +282,7 @@ install_files() {
     chmod +x "$INSTALL_DIR/adguard-shield-watchdog.sh"
     chmod +x "$INSTALL_DIR/uninstall.sh"
     chmod +x "$INSTALL_DIR/geoip-worker.sh"
+    chmod +x "$INSTALL_DIR/offense-cleanup-worker.sh"
 
     echo -e "  ✅ Dateien installiert"
     echo ""
@@ -810,8 +812,13 @@ do_uninstall() {
         rm -f "$INSTALL_DIR/unban-expired.sh"
         rm -f "$INSTALL_DIR/external-blocklist-worker.sh"
         rm -f "$INSTALL_DIR/external-whitelist-worker.sh"
+        rm -f "$INSTALL_DIR/offense-cleanup-worker.sh"
+        rm -f "$INSTALL_DIR/geoip-worker.sh"
         rm -f "$INSTALL_DIR/report-generator.sh"
+        rm -f "$INSTALL_DIR/adguard-shield-watchdog.sh"
+        rm -f "$INSTALL_DIR/uninstall.sh"
         rm -rf "$INSTALL_DIR/templates"
+        rm -rf "$INSTALL_DIR/geoip"
         echo "  ✅ Scripts entfernt (Konfiguration und Logs behalten)"
     else
         rm -rf "$INSTALL_DIR"

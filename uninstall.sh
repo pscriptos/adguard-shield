@@ -123,6 +123,7 @@ do_uninstall() {
         rm -f "$INSTALL_DIR/unban-expired.sh"
         rm -f "$INSTALL_DIR/external-blocklist-worker.sh"
         rm -f "$INSTALL_DIR/external-whitelist-worker.sh"
+        rm -f "$INSTALL_DIR/offense-cleanup-worker.sh"
         rm -f "$INSTALL_DIR/report-generator.sh"
         rm -f "$INSTALL_DIR/adguard-shield-watchdog.sh"
         rm -f "$INSTALL_DIR/geoip-worker.sh"

@@ -282,6 +282,26 @@ sudo /opt/adguard-shield/geoip-worker.sh flush
 sudo /opt/adguard-shield/geoip-worker.sh flush-cache
 ```
 
+## Offense-Cleanup-Worker
+
+Der Offense-Cleanup-Worker räumt abgelaufene Offense-Zähler (progressive Sperren) automatisch auf. Er startet automatisch mit dem Hauptservice, wenn progressive Sperren aktiviert sind, und prüft stündlich ob Zähler aufgeräumt werden können.
+
+Der Worker kann auch standalone gesteuert werden:
+
+```bash
+# Worker manuell starten (normalerweise automatisch per Hauptscript)
+sudo /opt/adguard-shield/offense-cleanup-worker.sh start
+
+# Worker stoppen
+sudo /opt/adguard-shield/offense-cleanup-worker.sh stop
+
+# Einmaliger Cleanup-Durchlauf
+sudo /opt/adguard-shield/offense-cleanup-worker.sh run-once
+
+# Status anzeigen (aktive/abgelaufene Zähler)
+sudo /opt/adguard-shield/offense-cleanup-worker.sh status
+```
+
 ## E-Mail Report
 
 ```bash
