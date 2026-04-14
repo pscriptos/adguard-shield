@@ -23,13 +23,14 @@ Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wir
 
 - Automatische Erkennung und Sperre bei Rate-Limit-Verstößen
 - **Subdomain-Flood-Erkennung** — erkennt Random-Subdomain-Attacken (z.B. `abc123.microsoft.com`, `xyz456.microsoft.com`, ...)
-- **Progressive Sperren (Recidive)** — Wiederholungstäter werden stufenweise länger gesperrt (wie bei fail2ban)
+- **Progressive Sperren (Recidive)** — Wiederholungstäter werden stufenweise länger gesperrt (wie bei fail2ban), mit automatischem Cleanup abgelaufener Zähler
 - Unterstützt **alle DNS-Protokolle**: DNS (53), DoH (443), DoT (853), DoQ (784/853/8853)
 - **IPv4 + IPv6**
 - Eigene iptables Chain — greift nicht in bestehende Regeln ein
 - Automatisches Entsperren nach konfigurierbarer Dauer
 - **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
 - **Externe Whitelisten** — Domains/IPs aus externen Listen laden und automatisch whitelisten (ideal für DynDNS)
+- **GeoIP-Länderfilter** — Länder sperren oder erlauben (Blocklist/Allowlist), mit automatischem MaxMind-DB-Download
 - **AbuseIPDB Reporting** — permanent gesperrte IPs automatisch an AbuseIPDB melden
 - **E-Mail Reports** — periodische Statistik-Reports als HTML oder TXT (täglich, wöchentlich, zweiwöchentlich, monatlich)
 - **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
@@ -94,6 +95,9 @@ sudo /opt/adguard-shield/adguard-shield.sh blocklist-status   # Externe Blocklis
 sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync     # Blocklisten manuell synchronisieren
 sudo /opt/adguard-shield/adguard-shield.sh whitelist-status   # Externe Whitelisten Status
 sudo /opt/adguard-shield/adguard-shield.sh whitelist-sync     # Whitelisten manuell synchronisieren
+sudo /opt/adguard-shield/adguard-shield.sh geoip-status       # GeoIP-Status anzeigen
+sudo /opt/adguard-shield/adguard-shield.sh geoip-sync         # GeoIP einmalig prüfen
+sudo /opt/adguard-shield/adguard-shield.sh geoip-lookup IP    # GeoIP-Lookup einer IP
 sudo /opt/adguard-shield/report-generator.sh send                # Report jetzt senden
 sudo /opt/adguard-shield/report-generator.sh status              # Report-Status anzeigen
 sudo /opt/adguard-shield/report-generator.sh install             # Cron-Job einrichten

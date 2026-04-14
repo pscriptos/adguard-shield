@@ -136,7 +136,10 @@ Das ermöglicht:
 ├── iptables-helper.sh             # iptables Verwaltung
 ├── external-blocklist-worker.sh   # Externer Blocklist-Worker
 ├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DNS-Auflösung)
-└── unban-expired.sh               # Cron-basiertes Entsperren
+├── geoip-worker.sh                # GeoIP-Länderfilter-Worker
+├── offense-cleanup-worker.sh      # Automatisches Aufräumen abgelaufener Offense-Zähler
+├── unban-expired.sh               # Cron-basiertes Entsperren
+└── geoip/                         # Auto-Download MaxMind GeoLite2 DB (optional)
 
 /etc/systemd/system/
 ├── adguard-shield.service         # systemd Service (Autostart aktiv)
@@ -147,7 +150,8 @@ Das ermöglicht:
 ├── *.ban                          # State-Dateien aktiver Sperren
 ├── *.offenses                     # Offense-Zähler (Progressive Sperren)
 ├── external-blocklist/            # Cache für externe Blocklisten
-└── external-whitelist/            # Cache für externe Whitelisten + aufgelöste IPs
+├── external-whitelist/            # Cache für externe Whitelisten + aufgelöste IPs
+└── geoip-cache/                   # Cache für GeoIP-Lookups (24h)
 
 /var/log/
 ├── adguard-shield.log             # Laufzeit-Log

@@ -239,6 +239,69 @@ sudo /opt/adguard-shield/external-blocklist-worker.sh status
 sudo /opt/adguard-shield/external-blocklist-worker.sh flush
 ```
 
+## GeoIP-Worker (Länderfilter)
+
+Der GeoIP-Worker prüft Client-IPs auf ihr Herkunftsland und sperrt/erlaubt sie basierend auf der Konfiguration:
+
+```bash
+# GeoIP-Status anzeigen (Modus, Länder, aktive Sperren, verfügbare Tools)
+sudo /opt/adguard-shield/adguard-shield.sh geoip-status
+
+# Einmalige GeoIP-Prüfung aller aktiven Clients
+sudo /opt/adguard-shield/adguard-shield.sh geoip-sync
+
+# Alle GeoIP-Sperren aufheben
+sudo /opt/adguard-shield/adguard-shield.sh geoip-flush
+
+# GeoIP-Lookup für eine einzelne IP
+sudo /opt/adguard-shield/adguard-shield.sh geoip-lookup 8.8.8.8
+```
+
+Der Worker kann auch standalone gesteuert werden:
+
+```bash
+# Worker manuell starten (normalerweise automatisch per Hauptscript)
+sudo /opt/adguard-shield/geoip-worker.sh start
+
+# Worker stoppen
+sudo /opt/adguard-shield/geoip-worker.sh stop
+
+# Einmalige Synchronisation
+sudo /opt/adguard-shield/geoip-worker.sh sync
+
+# Status anzeigen
+sudo /opt/adguard-shield/geoip-worker.sh status
+
+# IP nachschlagen
+sudo /opt/adguard-shield/geoip-worker.sh lookup 1.2.3.4
+
+# Alle GeoIP-Sperren aufheben
+sudo /opt/adguard-shield/geoip-worker.sh flush
+
+# GeoIP-Lookup-Cache leeren
+sudo /opt/adguard-shield/geoip-worker.sh flush-cache
+```
+
+## Offense-Cleanup-Worker
+
+Der Offense-Cleanup-Worker räumt abgelaufene Offense-Zähler (progressive Sperren) automatisch auf. Er startet automatisch mit dem Hauptservice, wenn progressive Sperren aktiviert sind, und prüft stündlich ob Zähler aufgeräumt werden können.
+
+Der Worker kann auch standalone gesteuert werden:
+
+```bash
+# Worker manuell starten (normalerweise automatisch per Hauptscript)
+sudo /opt/adguard-shield/offense-cleanup-worker.sh start
+
+# Worker stoppen
+sudo /opt/adguard-shield/offense-cleanup-worker.sh stop
+
+# Einmaliger Cleanup-Durchlauf
+sudo /opt/adguard-shield/offense-cleanup-worker.sh run-once
+
+# Status anzeigen (aktive/abgelaufene Zähler)
+sudo /opt/adguard-shield/offense-cleanup-worker.sh status
+```
+
 ## E-Mail Report
 
 ```bash
