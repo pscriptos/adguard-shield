@@ -137,7 +137,7 @@ Das ermöglicht:
 ├── external-blocklist-worker.sh   # Externer Blocklist-Worker
 ├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DNS-Auflösung)
 ├── geoip-worker.sh                # GeoIP-Länderfilter-Worker
-├── offense-cleanup-worker.sh      # Automatisches Aufräumen abgelaufener Offense-Zähler
+├── offense-cleanup-worker.sh      # Aufräumen abgelaufener Offense-Zähler (nice 19, idle I/O)
 ├── unban-expired.sh               # Cron-basiertes Entsperren
 └── geoip/                         # Auto-Download MaxMind GeoLite2 DB (optional)
 
