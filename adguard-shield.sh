@@ -1271,8 +1271,8 @@ start_offense_cleanup_worker() {
         return
     fi
 
-    log "INFO" "Starte Offense-Cleanup-Worker im Hintergrund..."
-    bash "$worker_script" start &
+    log "INFO" "Starte Offense-Cleanup-Worker im Hintergrund (nice 19, idle I/O)..."
+    nice -n 19 ionice -c 3 bash "$worker_script" start &
     OFFENSE_CLEANUP_WORKER_PID=$!
     log "INFO" "Offense-Cleanup-Worker gestartet (PID: $OFFENSE_CLEANUP_WORKER_PID)"
 }

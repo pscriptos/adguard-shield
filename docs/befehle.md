@@ -284,7 +284,7 @@ sudo /opt/adguard-shield/geoip-worker.sh flush-cache
 
 ## Offense-Cleanup-Worker
 
-Der Offense-Cleanup-Worker räumt abgelaufene Offense-Zähler (progressive Sperren) automatisch auf. Er startet automatisch mit dem Hauptservice, wenn progressive Sperren aktiviert sind, und prüft stündlich ob Zähler aufgeräumt werden können.
+Der Offense-Cleanup-Worker räumt abgelaufene Offense-Zähler (progressive Sperren) automatisch auf. Er startet automatisch mit dem Hauptservice, wenn progressive Sperren aktiviert sind, und prüft stündlich ob Zähler aufgeräumt werden können. Der Worker läuft mit niedrigster CPU- und I/O-Priorität (`nice 19`, `ionice idle`), um den DNS-Dienst nicht zu beeinträchtigen.
 
 Der Worker kann auch standalone gesteuert werden:
 
