@@ -8,7 +8,7 @@
 #
 # Autor:   Patrick Asmus
 # E-Mail:  support@techniverse.net
-# Datum:   2026-04-14
+# Datum:   2026-04-16
 # Lizenz:  MIT
 ###############################################################################
 
@@ -24,6 +24,12 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 # shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
+
+# ─── Niedrigste Priorität setzen (CPU + I/O) ─────────────────────────────────
+# Stellt sicher, dass der Worker auch bei manuellem Start nie andere Dienste
+# verdrängt. nice 19 = niedrigste CPU-Priorität, ionice idle = nur bei freier I/O.
+renice -n 19 $$ >/dev/null 2>&1 || true
+ionice -c 3 -p $$ >/dev/null 2>&1 || true
 
 # ─── Worker PID-File ──────────────────────────────────────────────────────────
 WORKER_PID_FILE="/var/run/adguard-offense-cleanup-worker.pid"
@@ -80,6 +86,7 @@ cleanup_expired_offenses() {
     now=$(date '+%s')
     local cleaned=0
 
+    local batch_count=0
     for offense_file in "${STATE_DIR}"/*.offenses; do
         [[ -f "$offense_file" ]] || continue
 
@@ -100,6 +107,12 @@ cleanup_expired_offenses() {
             log "INFO" "Offense-Zähler abgelaufen: $client_ip (Stufe $offense_level, letztes Vergehen vor $(format_duration $elapsed)) → entfernt"
             rm -f "$offense_file"
             cleaned=$((cleaned + 1))
+        fi
+
+        # Alle 10 Dateien kurz pausieren, um I/O-Bursts zu vermeiden
+        batch_count=$((batch_count + 1))
+        if (( batch_count % 10 == 0 )); then
+            sleep 0.1
         fi
     done
 

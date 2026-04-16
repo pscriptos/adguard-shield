@@ -100,7 +100,7 @@ Wiederholungstäter werden wie bei fail2ban stufenweise länger gesperrt. Wird e
 | 4. Mal   | 4     | 8 Stunden  | 3600 × 8   |
 | 5. Mal   | 5     | **PERMANENT** | Max-Stufe erreicht |
 
-> **Hinweis:** Abgelaufene Offense-Zähler werden automatisch vom **Offense-Cleanup-Worker** aufgeräumt, der stündlich prüft, ob das letzte Vergehen einer IP länger als `PROGRESSIVE_BAN_RESET_AFTER` zurückliegt. Der Worker startet automatisch zusammen mit dem Hauptservice, wenn progressive Sperren aktiviert sind. Manuelles Zurücksetzen ist jederzeit mit `reset-offenses` möglich. Permanente Sperren werden **nicht** automatisch aufgehoben – sie müssen manuell mit `unban` oder `flush` entfernt werden.
+> **Hinweis:** Abgelaufene Offense-Zähler werden automatisch vom **Offense-Cleanup-Worker** aufgeräumt, der stündlich prüft, ob das letzte Vergehen einer IP länger als `PROGRESSIVE_BAN_RESET_AFTER` zurückliegt. Der Worker startet automatisch zusammen mit dem Hauptservice, wenn progressive Sperren aktiviert sind. Er läuft mit niedrigster CPU- und I/O-Priorität (`nice 19`, `ionice idle`), sodass andere Dienste nicht beeinträchtigt werden. Manuelles Zurücksetzen ist jederzeit mit `reset-offenses` möglich. Permanente Sperren werden **nicht** automatisch aufgehoben – sie müssen manuell mit `unban` oder `flush` entfernt werden.
 
 ### Logging
 
