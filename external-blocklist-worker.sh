@@ -501,8 +501,8 @@ parse_blocklist_ips() {
                 log "WARN" "Eintrag übersprungen (ungültige IPv6-Adresse oder IP:Port): $line"
             fi
 
-        elif [[ "$line" =~ ^[0-9] ]]; then
-            # ── IPv4 ──────────────────────────────────────────────────────────
+        elif [[ "$line" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$ ]]; then
+            # ── IPv4 (nur Ziffern, Punkte und optionaler CIDR-Suffix) ────────
             [[ "$line" == "0.0.0.0"* ]] && continue
             if _is_valid_ipv4 "$line"; then
                 echo "$line"
