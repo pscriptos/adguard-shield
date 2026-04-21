@@ -1,153 +1,166 @@
-```
- ▄▄▄      ▓█████▄   ▄████  █    ██  ▄▄▄       ██▀███  ▓█████▄      ██████  ██░ ██  ██▓▓█████  ██▓    ▓█████▄ 
-▒████▄    ▒██▀ ██▌ ██▒ ▀█▒ ██  ▓██▒▒████▄    ▓██ ▒ ██▒▒██▀ ██▌   ▒██    ▒ ▓██░ ██▒▓██▒▓█   ▀ ▓██▒    ▒██▀ ██▌
-▒██  ▀█▄  ░██   █▌▒██░▄▄▄░▓██  ▒██░▒██  ▀█▄  ▓██ ░▄█ ▒░██   █▌   ░ ▓██▄   ▒██▀▀██░▒██▒▒███   ▒██░    ░██   █▌
-░██▄▄▄▄██ ░▓█▄   ▌░▓█  ██▓▓▓█  ░██░░██▄▄▄▄██ ▒██▀▀█▄  ░▓█▄   ▌     ▒   ██▒░▓█ ░██ ░██░▒▓█  ▄ ▒██░    ░▓█▄   ▌
- ▓█   ▓██▒░▒████▓ ░▒▓███▀▒▒▒█████▓  ▓█   ▓██▒░██▓ ▒██▒░▒████▓    ▒██████▒▒░▓█▒░██▓░██░░▒████▒░██████▒░▒████▓ 
- ▒▒   ▓▒█░ ▒▒▓  ▒  ░▒   ▒ ░▒▓▒ ▒ ▒  ▒▒   ▓▒█░░ ▒▓ ░▒▓░ ▒▒▓  ▒    ▒ ▒▓▒ ▒ ░ ▒ ░░▒░▒░▓  ░░ ▒░ ░░ ▒░▓  ░ ▒▒▓  ▒ 
-  ▒   ▒▒ ░ ░ ▒  ▒   ░   ░ ░░▒░ ░ ░   ▒   ▒▒ ░  ░▒ ░ ▒░ ░ ▒  ▒    ░ ░▒  ░ ░ ▒ ░▒░ ░ ▒ ░ ░ ░  ░░ ░ ▒  ░ ░ ▒  ▒ 
-  ░   ▒    ░ ░  ░ ░ ░   ░  ░░░ ░ ░   ░   ▒     ░░   ░  ░ ░  ░    ░  ░  ░   ░  ░░ ░ ▒ ░   ░     ░ ░    ░ ░  ░ 
-      ░  ░   ░          ░    ░           ░  ░   ░        ░             ░   ░  ░  ░ ░     ░  ░    ░  ░   ░    
-           ░                                           ░                                              ░      
-```
+<p align="center">
+  <a href="https://techniverse.net">
+    <img src="https://assets.techniverse.net/f1/git/graphics/repo-techniverse-logo.png" alt="Techniverse Community" height="70" />
+  </a>
+</p>
 
-# AdGuard Shield
+<h1 align="center">🛡️ AdGuard Shield</h1>
 
-Automatischer Schutz für deinen AdGuard Home DNS-Server gegen übermäßige Anfragen einzelner Clients. Überwacht die AdGuard Home API, erkennt Rate-Limit-Verstöße und sperrt missbrauchende Clients per iptables — für alle DNS-Protokolle (DNS, DoH, DoT, DoQ).
+<h4 align="center">
+  Automatischer Schutz für AdGuard Home: erkennt auffällige DNS-Clients, sperrt sie per Firewall und hebt temporäre Sperren selbstständig wieder auf.
+</h4>
 
-## Was macht das Tool?
+<h6 align="center">
+  <a href="https://www.cleveradmin.de">🏰 Website</a>
+  ·
+  <a href="https://techniverse.net">📰 Community</a>
+  ·
+  <a href="https://social.techniverse.net/@donnerwolke">🐘 Mastodon</a>
+  ·
+  <a href="https://matrix.to/#/#support:techniverse.net">💬 Support</a>
+</h6>
+<br><br>
 
-Wenn ein Client eine bestimmte Domain zu oft anfragt (z.B. >30x pro Minute), wird er automatisch auf Firewall-Ebene für alle DNS-Ports gesperrt. Nach einer konfigurierbaren Zeitspanne wird die Sperre automatisch aufgehoben.
 
-## Features
+## ✨ Was ist AdGuard Shield?
 
-- Automatische Erkennung und Sperre bei Rate-Limit-Verstößen
-- **Subdomain-Flood-Erkennung** — erkennt Random-Subdomain-Attacken (z.B. `abc123.microsoft.com`, `xyz456.microsoft.com`, ...)
-- **Progressive Sperren (Recidive)** — Wiederholungstäter werden stufenweise länger gesperrt (wie bei fail2ban), mit automatischem Cleanup abgelaufener Zähler
-- Unterstützt **alle DNS-Protokolle**: DNS (53), DoH (443), DoT (853), DoQ (784/853/8853)
-- **IPv4 + IPv6**
-- Eigene iptables Chain — greift nicht in bestehende Regeln ein
-- Automatisches Entsperren nach konfigurierbarer Dauer
-- **Externe Blocklisten** — IP-Adressen von externen Textdateien (URLs) laden und automatisch sperren
-- **Externe Whitelisten** — Domains/IPs aus externen Listen laden und automatisch whitelisten (ideal für DynDNS)
-- **GeoIP-Länderfilter** — Länder sperren oder erlauben (Blocklist/Allowlist), mit automatischem MaxMind-DB-Download
-- **AbuseIPDB Reporting** — permanent gesperrte IPs automatisch an AbuseIPDB melden
-- **E-Mail Reports** — periodische Statistik-Reports als HTML oder TXT (täglich, wöchentlich, zweiwöchentlich, monatlich)
-- **Ban-History** — lückenlose Protokollierung aller Sperren/Entsperrungen mit Zeitstempel
-- Whitelist für vertrauenswürdige IPs
-- Dry-Run Modus zum gefahrlosen Testen
-- Benachrichtigungen (Discord, Slack, Gotify, Ntfy)
-- **Watchdog** — automatischer Health Check alle 5 Minuten mit Recovery und Benachrichtigung bei Service-Ausfall
-- systemd Service für dauerhaften Betrieb
+AdGuard Shield überwacht das Query Log deiner AdGuard-Home-Instanz und erkennt Clients, die eine Domain oder viele zufällige Subdomains in kurzer Zeit übermäßig oft anfragen. Auffällige Clients werden über eine eigene `iptables`/`ip6tables`-Chain auf DNS-relevanten Ports blockiert.
 
-## Voraussetzungen
+Das schützt klassische DNS-Anfragen genauso wie DoH, DoT und DoQ, ohne deine bestehenden Firewall-Regeln unnötig anzufassen.
 
-- Linux Server mit AdGuard Home (bare metal)
-- Root-Zugriff (`sudo`)
-- AdGuard Home Web-API erreichbar (Standard: Port 3000)
-- Pakete: `curl`, `jq`, `iptables`, `gawk`, `systemd` — werden bei der Installation **automatisch** installiert
+## 🚀 Highlights
 
-## Schnellstart
+- Automatische Sperren bei Rate-Limit-Verstößen
+- Erkennung von Random-Subdomain-Floods, z.B. `abc123.example.com`
+- Progressive Sperren für Wiederholungstäter, ähnlich wie bei fail2ban
+- Unterstützung für DNS, DoH, DoT, DoQ und DNSCrypt
+- IPv4 und IPv6
+- Eigene Firewall-Chain für sauberes Debugging und einfache Entfernung
+- Externe Blocklisten und dynamische externe Whitelists
+- GeoIP-Länderfilter mit Blocklist- oder Allowlist-Modus
+- AbuseIPDB-Reporting für permanent gesperrte IPs
+- Benachrichtigungen über Ntfy, Discord, Slack, Gotify oder Generic Webhook
+- E-Mail-Reports als HTML oder Text
+- Watchdog mit automatischem Health Check und Recovery
+
+## ✅ Voraussetzungen
+
+- Linux-Server mit AdGuard Home
+- Root-Zugriff per `sudo`
+- Erreichbare AdGuard Home Web-API, standardmäßig `http://127.0.0.1:3000`
+- `curl`, `jq`, `iptables`, `gawk` und `systemd`
+
+Die benötigten Pakete werden vom Installer automatisch installiert.
+
+## ⚡ Schnellstart
 
 ```bash
-# 1. Repository klonen
 git clone https://git.techniverse.net/scriptos/adguard-shield.git /tmp/adguard-shield
 cd /tmp/adguard-shield
 
-# 2. Installer aufrufen (interaktives Menü)
+# Interaktives Installationsmenü
 sudo bash install.sh
 
-# Oder direkt installieren:
-sudo bash install.sh install
-
-# 3. Erst im Dry-Run testen (loggt nur, sperrt nichts)
+# Vor dem produktiven Start testen: loggt nur, sperrt nichts
 sudo /opt/adguard-shield/adguard-shield.sh dry-run
 
-# 4. Wenn alles passt — Service starten
+# Service starten und prüfen
 sudo systemctl start adguard-shield
 sudo systemctl status adguard-shield
 ```
 
-> **Hinweis:** Bei der Installation werden alle benötigten Abhängigkeiten automatisch installiert und der Service wird für den Autostart beim Booten registriert.
+> Beim Installieren wird der systemd-Service für den Autostart registriert. Der Watchdog-Timer wird ebenfalls eingerichtet und prüft den Service regelmäßig.
 
 [![asciicast](https://asciinema.techniverse.net/a/77.svg)](https://asciinema.techniverse.net/a/77)
 
-## Wichtigste Befehle
+## 🔧 Wichtigste Befehle
+
+### Installation & Updates
 
 ```bash
-# Installer-Menü
-sudo bash install.sh                  # Interaktives Menü (Install/Update/Uninstall/Status)
-sudo bash install.sh --help           # Hilfe anzeigen
-sudo bash install.sh update           # Update mit automatischer Konfigurations-Migration
-sudo bash install.sh status           # Installationsstatus prüfen
-
-# Deinstallation (kein install.sh benötigt)
-sudo bash /opt/adguard-shield/uninstall.sh  # Direkt aus dem Installationsverzeichnis
-
-# Monitor
-sudo /opt/adguard-shield/adguard-shield.sh status             # Aktive Sperren anzeigen
-sudo /opt/adguard-shield/adguard-shield.sh history            # Ban-History anzeigen
-sudo /opt/adguard-shield/adguard-shield.sh unban IP           # Einzelne IP entsperren
-sudo /opt/adguard-shield/adguard-shield.sh flush              # Alle Sperren aufheben
-sudo /opt/adguard-shield/adguard-shield.sh reset-offenses     # Offense-Zähler zurücksetzen
-sudo /opt/adguard-shield/adguard-shield.sh test               # API-Verbindung testen
-sudo /opt/adguard-shield/adguard-shield.sh blocklist-status   # Externe Blocklisten Status
-sudo /opt/adguard-shield/adguard-shield.sh blocklist-sync     # Blocklisten manuell synchronisieren
-sudo /opt/adguard-shield/adguard-shield.sh whitelist-status   # Externe Whitelisten Status
-sudo /opt/adguard-shield/adguard-shield.sh whitelist-sync     # Whitelisten manuell synchronisieren
-sudo /opt/adguard-shield/adguard-shield.sh geoip-status       # GeoIP-Status anzeigen
-sudo /opt/adguard-shield/adguard-shield.sh geoip-sync         # GeoIP einmalig prüfen
-sudo /opt/adguard-shield/adguard-shield.sh geoip-lookup IP    # GeoIP-Lookup einer IP
-sudo /opt/adguard-shield/report-generator.sh send                # Report jetzt senden
-sudo /opt/adguard-shield/report-generator.sh status              # Report-Status anzeigen
-sudo /opt/adguard-shield/report-generator.sh install             # Cron-Job einrichten
-sudo journalctl -u adguard-shield -f                             # Logs live verfolgen
-
-# Watchdog (automatischer Health Check)
-sudo systemctl status adguard-shield-watchdog.timer               # Watchdog-Status
-sudo systemctl list-timers adguard-shield-watchdog.timer          # Nächste Ausführung
+sudo bash install.sh                 # Interaktives Menü
+sudo bash install.sh install         # Direkt installieren
+sudo bash install.sh update          # Update inkl. Konfigurations-Migration
+sudo bash install.sh status          # Installationsstatus prüfen
+sudo bash /opt/adguard-shield/uninstall.sh
 ```
 
-## Dokumentation
+### Betrieb & Diagnose
 
-| Dokument | Inhalt |
-|----------|--------|
-| [Architektur](docs/architektur.md) | Wie das Tool funktioniert, iptables-Strategie, Konfig-Migration |
-| [Konfiguration](docs/konfiguration.md) | Alle Parameter, Ports, Whitelist-Pflege, automatische Migration |
-| [Befehle](docs/befehle.md) | Vollständige Befehlsreferenz für Installer, Monitor, iptables-Helper und systemd |
-| [Benachrichtigungen](docs/benachrichtigungen.md) | Setup für Discord, Slack, Gotify, Ntfy |
-| [E-Mail Report](docs/report.md) | Periodische Statistik-Reports per E-Mail (HTML/TXT) |
-| [Tipps & Troubleshooting](docs/tipps-und-troubleshooting.md) | Best Practices, häufige Probleme, Watchdog, Deinstallation |
+```bash
+sudo systemctl status adguard-shield
+sudo systemctl restart adguard-shield
+sudo journalctl -u adguard-shield -f
 
-## Lizenz
+sudo /opt/adguard-shield/adguard-shield.sh status
+sudo /opt/adguard-shield/adguard-shield.sh history
+sudo /opt/adguard-shield/adguard-shield.sh test
+sudo /opt/adguard-shield/adguard-shield.sh unban 192.0.2.10
+sudo /opt/adguard-shield/adguard-shield.sh flush
+```
 
-[MIT](LICENSE)
+### Optionale Module
 
----
+```bash
+sudo /opt/adguard-shield/adguard-shield.sh blocklist-status
+sudo /opt/adguard-shield/adguard-shield.sh whitelist-status
+sudo /opt/adguard-shield/adguard-shield.sh geoip-status
 
-## 👥 Techniverse Community
+sudo /opt/adguard-shield/report-generator.sh status
+sudo /opt/adguard-shield/report-generator.sh send
+sudo /opt/adguard-shield/report-generator.sh install
+```
 
-Lust auf Austausch rund um Matrix, Selfhosting und andere smarte IT-Lösungen?
-In der **Techniverse Community** triffst du Gleichgesinnte, kannst Fragen stellen oder einfach nerdigen Talk genießen. 🚀
+Die vollständige Befehlsreferenz steht in [docs/befehle.md](docs/befehle.md).
 
-👉 **[Jetzt der Gruppe auf Matrix beitreten](https://matrix.to/#/#community:techniverse.net)**
-~ Direkte Raumadresse: `#community:techniverse.net`
+## ⚙️ Konfiguration
 
-👉 **[Für lockere Gespräche abseits der Kernthemen komm in den Talkraum](https://matrix.to/#/#talk:techniverse.net)**
-~ Direkte Raumadresse: `#talk:techniverse.net`
+Die zentrale Konfiguration liegt nach der Installation hier:
 
-Wir freuen uns, wenn du dabei bist!
+```text
+/opt/adguard-shield/adguard-shield.conf
+```
 
----
+Wichtige Startpunkte:
 
-📝 **Blog:** [www.cleveradmin.de](https://www.cleveradmin.de)
-🌐 **Webseite:** [www.patrick-asmus.de](https://www.patrick-asmus.de)
-📧 **E-Mail:** [support@techniverse.net](mailto:support@techniverse.net)
+- `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASS` für die AdGuard-Home-API
+- `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW` und `CHECK_INTERVAL` für die Erkennung
+- `BAN_DURATION` und `PROGRESSIVE_BAN_*` für temporäre und progressive Sperren
+- `WHITELIST` für vertrauenswürdige Clients wie Router, Management-IPs oder lokale Resolver
+- `NOTIFY_*`, `REPORT_*`, `GEOIP_*`, `EXTERNAL_BLOCKLIST_*` und `EXTERNAL_WHITELIST_*` für optionale Funktionen
 
+Bei Updates migriert der Installer die bestehende Konfiguration automatisch: vorhandene Werte bleiben erhalten, neue Parameter werden ergänzt und die alte Datei wird als `adguard-shield.conf.old` gesichert.
+
+Mehr Details findest du in [docs/konfiguration.md](docs/konfiguration.md).
+
+## 🧭 Dokumentation
+
+| Thema | Link |
+|---|---|
+| Architektur & Funktionsweise | [docs/architektur.md](docs/architektur.md) |
+| Befehle & Nutzung | [docs/befehle.md](docs/befehle.md) |
+| Konfiguration | [docs/konfiguration.md](docs/konfiguration.md) |
+| Benachrichtigungen | [docs/benachrichtigungen.md](docs/benachrichtigungen.md) |
+| E-Mail Report | [docs/report.md](docs/report.md) |
+| Updates | [docs/update.md](docs/update.md) |
+| Tipps & Troubleshooting | [docs/tipps-und-troubleshooting.md](docs/tipps-und-troubleshooting.md) |
+
+## 🧩 Wie es arbeitet
+
+1. AdGuard Shield liest regelmäßig das AdGuard-Home-Query-Log über die API.
+2. Anfragen werden pro Client, Domain und Protokoll ausgewertet.
+3. Überschreitet ein Client die konfigurierten Limits, wird er gegen Whitelist und Sonderregeln geprüft.
+4. Die Sperre landet in der eigenen Firewall-Chain `ADGUARD_SHIELD`.
+5. Ban-History, Logs und optionale Benachrichtigungen dokumentieren das Ereignis.
+6. Temporäre Sperren werden automatisch entfernt, permanente Sperren bleiben bis zur manuellen Freigabe aktiv.
+
+<br><br>
 <p align="center">
   <img src="https://assets.techniverse.net/f1/git/graphics/gray0-catonline.svg" alt="">
 </p>
 
 <p align="center">
-<img src="https://assets.techniverse.net/f1/logos/small/license.png" alt="License" width="15" height="15"> <a href="./LICENSE">License</a> | <img src="https://assets.techniverse.net/f1/logos/small/matrix2.svg" alt="Matrix" width="15" height="15"> <a href="https://matrix.to/#/#community:techniverse.net">Matrix</a> | <img src="https://assets.techniverse.net/f1/logos/small/mastodon2.svg" alt="Mastodon" width="15" height="15"> <a href="https://social.techniverse.net/@donnerwolke">Mastodon</a>
+  <sub>
+    Patrick Asmus · Techniverse Network · <a href="./LICENSE">Lizenz</a>
+  </sub>
 </p>
