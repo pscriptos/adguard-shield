@@ -4,7 +4,7 @@
   </a>
 </p>
 
-<h1 align="center">🛡️ AdGuard Shield</h1>
+<h1 align="center">AdGuard Shield</h1>
 
 <h4 align="center">
   Automatischer Schutz für AdGuard Home: erkennt auffällige DNS-Clients, sperrt sie per Firewall und hebt temporäre Sperren selbstständig wieder auf.
