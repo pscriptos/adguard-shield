@@ -167,6 +167,19 @@ Bei permanenter Sperre mit aktiviertem AbuseIPDB-Reporting erscheint zusätzlich
 > Whois: https://www.whois.com/whois/95.71.42.116
 > AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
 
+Bei DNS-Flood-Watchlist-Treffer (sofort permanent, ohne Stufe):
+
+> 🚫 AdGuard Shield Ban auf dns1
+> ⚠️ IP wurde an AbuseIPDB gemeldet
+> ---
+> IP: 95.71.42.116
+> Hostname: example-host.provider.net
+> Grund: 45x microsoft.com in 60s via DNS, DNS-Flood-Watchlist
+> Dauer: PERMANENT
+>
+> Whois: https://www.whois.com/whois/95.71.42.116
+> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+
 ### Entsperrung (Unban)
 **Überschrift:** ✅ AdGuard Shield
 

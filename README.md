@@ -32,6 +32,7 @@ Das schützt klassische DNS-Anfragen genauso wie DoH, DoT und DoQ, ohne deine be
 
 - Automatische Sperren bei Rate-Limit-Verstößen
 - Erkennung von Random-Subdomain-Floods, z.B. `abc123.example.com`
+- DNS-Flood-Watchlist: sofortiger permanenter Ban + AbuseIPDB-Meldung für definierte Domains
 - Progressive Sperren für Wiederholungstäter, ähnlich wie bei fail2ban
 - Unterstützung für DNS, DoH, DoT, DoQ und DNSCrypt
 - IPv4 und IPv6
@@ -127,6 +128,7 @@ Wichtige Startpunkte:
 - `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW` und `CHECK_INTERVAL` für die Erkennung
 - `BAN_DURATION` und `PROGRESSIVE_BAN_*` für temporäre und progressive Sperren
 - `WHITELIST` für vertrauenswürdige Clients wie Router, Management-IPs oder lokale Resolver
+- `DNS_FLOOD_WATCHLIST_*` für sofortigen Permanent-Ban bei bekannten Flood-Domains
 - `NOTIFY_*`, `REPORT_*`, `GEOIP_*`, `EXTERNAL_BLOCKLIST_*` und `EXTERNAL_WHITELIST_*` für optionale Funktionen
 
 Bei Updates migriert der Installer die bestehende Konfiguration automatisch: vorhandene Werte bleiben erhalten, neue Parameter werden ergänzt und die alte Datei wird als `adguard-shield.conf.old` gesichert.
