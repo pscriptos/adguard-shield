@@ -8,7 +8,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.8.2"
+VERSION="v0.9.0"
 
 set -euo pipefail
 
@@ -369,6 +369,32 @@ is_whitelisted() {
     return 1
 }
 
+# ─── DNS-Flood-Watchlist Prüfung ────────────────────────────────────────────
+is_dns_flood_watchlist_match() {
+    local domain="$1"
+
+    if [[ "${DNS_FLOOD_WATCHLIST_ENABLED:-false}" != "true" ]]; then
+        return 1
+    fi
+
+    if [[ -z "${DNS_FLOOD_WATCHLIST:-}" ]]; then
+        return 1
+    fi
+
+    local entry
+    IFS=',' read -ra watchlist_entries <<< "$DNS_FLOOD_WATCHLIST"
+    for entry in "${watchlist_entries[@]}"; do
+        entry=$(echo "$entry" | xargs)
+        [[ -z "$entry" ]] && continue
+
+        if [[ "$domain" == "$entry" || "$domain" == *".$entry" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # ─── iptables Chain Setup ────────────────────────────────────────────────────
 setup_iptables_chain() {
     # IPv4 Chain erstellen falls nicht vorhanden
@@ -425,6 +451,13 @@ ban_client() {
         fi
     fi
 
+    # DNS-Flood-Watchlist: Sofort permanent sperren
+    if [[ "$reason" == "dns-flood-watchlist" ]]; then
+        is_permanent=true
+        effective_duration=0
+        log "WARN" "DNS-Flood-Watchlist: Erzwinge permanente Sperre für $client_ip ($domain)"
+    fi
+
     local ban_until
     local ban_until_display
     if [[ "$is_permanent" == "true" ]]; then
@@ -439,16 +472,16 @@ ban_client() {
     duration_display=$(format_duration "$effective_duration")
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && "$reason" != "dns-flood-watchlist" ]]; then
             log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [Stufe $offense_level] [${reason}]"
         else
-            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s via $protocol) [${reason}]"
+            log "WARN" "[DRY-RUN] WÜRDE sperren: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [${reason}]"
         fi
         log_ban_history "DRY" "$client_ip" "$domain" "$count" "dry-run (${reason})" "${duration_display}" "$protocol"
         return 0
     fi
 
-    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && "$reason" != "dns-flood-watchlist" ]]; then
         log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}] [${reason}]"
     else
         log "WARN" "SPERRE Client: $client_ip (${count}x $domain in ${window}s via $protocol) für ${duration_display} [${reason}]"
@@ -480,7 +513,7 @@ EOF
 
     # Ban-History Eintrag
     local history_duration="${duration_display}"
-    [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]] && history_duration="${duration_display} (Stufe ${offense_level})"
+    [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && "$reason" != "dns-flood-watchlist" ]] && history_duration="${duration_display} (Stufe ${offense_level})"
     log_ban_history "BAN" "$client_ip" "$domain" "$count" "$reason" "$history_duration" "$protocol"
 
     # Benachrichtigung senden
@@ -574,6 +607,7 @@ send_notification() {
 
     local reason_label="Rate-Limit"
     [[ "$reason" == "subdomain-flood" ]] && reason_label="Subdomain-Flood"
+    [[ "$reason" == "dns-flood-watchlist" ]] && reason_label="DNS-Flood-Watchlist"
 
     local title
     local message
@@ -591,12 +625,12 @@ send_notification() {
             abuseipdb_hint=$'\n⚠️ IP wurde an AbuseIPDB gemeldet'
         fi
 
-        # Dauer-Anzeige mit Stufe
+        # Dauer-Anzeige mit Stufe (nicht bei Watchlist – dort ist es immer permanent)
         local dur_line
-        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -n "$offense_level" ]]; then
+        if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -n "$offense_level" && "$reason" != "dns-flood-watchlist" ]]; then
             dur_line="**${duration_display}** [Stufe ${offense_level}/${PROGRESSIVE_BAN_MAX_LEVEL:-0}]"
         else
-            dur_line=$(format_duration "${BAN_DURATION}")
+            dur_line="**${duration_display}**"
         fi
 
         message="🚫 AdGuard Shield Ban auf ${my_hostname}${abuseipdb_hint}
@@ -839,7 +873,13 @@ analyze_queries() {
                 continue
             fi
 
-            ban_client "$client" "$domain" "$count" "rate-limit" "$RATE_LIMIT_WINDOW" "$proto_display"
+            local ban_reason="rate-limit"
+            if is_dns_flood_watchlist_match "$domain"; then
+                ban_reason="dns-flood-watchlist"
+                log "WARN" "DNS-Flood-Watchlist Treffer: $client → $domain (${count}x in ${RATE_LIMIT_WINDOW}s) → permanenter Ban + AbuseIPDB"
+            fi
+
+            ban_client "$client" "$domain" "$count" "$ban_reason" "$RATE_LIMIT_WINDOW" "$proto_display"
         fi
     done <<< "$violations"
 }
@@ -961,7 +1001,13 @@ analyze_subdomain_flood() {
             continue
         fi
 
-        ban_client "$client" "*.${base_domain}" "$unique_count" "subdomain-flood" "$window" "$proto_display"
+        local ban_reason="subdomain-flood"
+        if is_dns_flood_watchlist_match "$base_domain"; then
+            ban_reason="dns-flood-watchlist"
+            log "WARN" "DNS-Flood-Watchlist Treffer (Subdomain-Flood): $client → *.${base_domain} → permanenter Ban + AbuseIPDB"
+        fi
+
+        ban_client "$client" "*.${base_domain}" "$unique_count" "$ban_reason" "$window" "$proto_display"
     done <<< "$violations"
 }
 
@@ -986,6 +1032,14 @@ show_status() {
         echo "  🌐 Subdomain-Flood-Schutz: AKTIV"
         echo "     Max eindeutige Subdomains: ${SUBDOMAIN_FLOOD_MAX_UNIQUE:-50} pro Basisdomain"
         echo "     Zeitfenster: ${SUBDOMAIN_FLOOD_WINDOW:-60}s"
+        echo ""
+    fi
+
+    # DNS-Flood-Watchlist Info
+    if [[ "${DNS_FLOOD_WATCHLIST_ENABLED:-false}" == "true" ]]; then
+        echo "  🎯 DNS-Flood-Watchlist: AKTIV"
+        echo "     Domains: ${DNS_FLOOD_WATCHLIST:-<keine>}"
+        echo "     Aktion: Sofort permanenter Ban + AbuseIPDB-Meldung"
         echo ""
     fi
 
@@ -1021,6 +1075,7 @@ show_status() {
 
             local reason_tag=""
             [[ "$s_reason" == "subdomain-flood" ]] && reason_tag=" (Subdomain-Flood)"
+            [[ "$s_reason" == "dns-flood-watchlist" ]] && reason_tag=" (DNS-Flood-Watchlist)"
 
             local count_info=""
             if [[ -n "$s_count" && "$s_count" != "-" ]]; then
@@ -1033,7 +1088,9 @@ show_status() {
 
             local proto_tag=" via ${s_proto}"
 
-            if [[ "$s_perm" == "true" ]]; then
+            if [[ "$s_perm" == "true" && "$s_reason" == "dns-flood-watchlist" ]]; then
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT${count_info}${proto_tag}]${reason_tag}"
+            elif [[ "$s_perm" == "true" ]]; then
                 echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT, Stufe ${s_level:-?}${count_info}${proto_tag}]${reason_tag}"
             elif [[ -n "$s_level" && "$s_level" -gt 0 ]]; then
                 echo "  🚫 Gesperrt: $s_ip → $s_domain [Stufe ${s_level}, $(format_duration "${s_dur:-$BAN_DURATION}"), bis $s_until${count_info}${proto_tag}]${reason_tag}"
@@ -1311,6 +1368,11 @@ main_loop() {
         log "INFO" "  Subdomain-Flood-Schutz: AKTIV (max ${SUBDOMAIN_FLOOD_MAX_UNIQUE:-50} Subdomains/${SUBDOMAIN_FLOOD_WINDOW:-60}s)"
     else
         log "INFO" "  Subdomain-Flood-Schutz: deaktiviert"
+    fi
+    if [[ "${DNS_FLOOD_WATCHLIST_ENABLED:-false}" == "true" ]]; then
+        log "INFO" "  DNS-Flood-Watchlist: AKTIV (Domains: ${DNS_FLOOD_WATCHLIST:-<keine>})"
+    else
+        log "INFO" "  DNS-Flood-Watchlist: deaktiviert"
     fi
     if [[ "${ABUSEIPDB_ENABLED:-false}" == "true" ]]; then
         log "INFO" "  AbuseIPDB Reporting: AKTIV (Kategorien: ${ABUSEIPDB_CATEGORIES:-4})"

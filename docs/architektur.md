@@ -56,6 +56,17 @@
 
 > **Hinweis:** Die Subdomain-Flood-Erkennung hat ein eigenes Zeitfenster (`SUBDOMAIN_FLOOD_WINDOW`) und einen eigenen Schwellwert (`SUBDOMAIN_FLOOD_MAX_UNIQUE`), unabhängig von den Rate-Limit-Einstellungen.
 
+### DNS-Flood-Watchlist-Sperre
+
+1. Client `10.0.0.42` fragt `microsoft.com` 35x in 60 Sekunden an
+2. Monitor erkennt: 35 > 30 (Limit überschritten)
+3. Domain `microsoft.com` steht auf der DNS-Flood-Watchlist → **sofortige permanente Sperre**
+4. Progressive-Ban-Stufe wird ignoriert — kein stufenweises Hochstufen
+5. IP wird an AbuseIPDB gemeldet (falls aktiviert)
+6. Permanente Sperre bleibt bis zur manuellen Freigabe aktiv
+
+> **Hinweis:** Die Watchlist greift sowohl bei normalen Rate-Limit-Verstößen als auch bei Subdomain-Flood-Erkennungen. Subdomains werden automatisch erkannt: `foo.microsoft.com` matcht den Watchlist-Eintrag `microsoft.com`.
+
 ## iptables Strategie
 
 Das Tool erstellt eine eigene Chain `ADGUARD_SHIELD`:
@@ -210,8 +221,10 @@ ZEITSTEMPEL         | AKTION | CLIENT-IP                               | DOMAIN 
 |-------|----------|
 | `rate-limit` | Automatische Sperre wegen Limit-Überschreitung |
 | `subdomain-flood` | Sperre wegen zu vieler eindeutiger Subdomains einer Basisdomain |
+| `dns-flood-watchlist` | Sofortige permanente Sperre + AbuseIPDB-Meldung (Domain auf der Watchlist) |
 | `dry-run` | Im Dry-Run erkannt (nicht wirklich gesperrt) |
 | `dry-run (subdomain-flood)` | Subdomain-Flood im Dry-Run erkannt |
+| `dry-run (dns-flood-watchlist)` | Watchlist-Treffer im Dry-Run erkannt |
 | `expired` | Automatisch entsperrt nach Ablauf der Sperrdauer |
 | `expired-cron` | Entsperrt durch den Cron-Job (`unban-expired.sh`) |
 | `manual` | Manuell entsperrt per `unban`-Befehl |

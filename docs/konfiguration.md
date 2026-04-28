@@ -70,6 +70,34 @@ xk9z3a.microsoft.com
 
 > **Tipp:** Der Schwellwert `SUBDOMAIN_FLOOD_MAX_UNIQUE` sollte hoch genug sein, um legitime Clients nicht zu stören (z.B. CDNs nutzen oft viele Subdomains). Ein Wert von 50–100 ist in den meisten Fällen sinnvoll.
 
+### DNS-Flood-Watchlist
+
+Domains bei denen eine Rate-Limit-Überschreitung **sofort** zu einer **permanenten Sperre** und einer **AbuseIPDB-Meldung** führt — ohne progressive Eskalation. Ideal für bekannte Angriffsziele, die regelmäßig geflutet werden (z.B. `microsoft.com`, `google.com`).
+
+| Parameter | Standard | Beschreibung |
+|-----------|----------|--------------|
+| `DNS_FLOOD_WATCHLIST_ENABLED` | `false` | DNS-Flood-Watchlist aktivieren |
+| `DNS_FLOOD_WATCHLIST` | *(leer)* | Überwachte Domains, kommagetrennt (z.B. `"microsoft.com,google.com"`) |
+
+#### Wie funktioniert die Watchlist?
+
+1. Die reguläre Rate-Limit-Prüfung erkennt, dass ein Client mehr als `RATE_LIMIT_MAX_REQUESTS` Anfragen für eine Domain gestellt hat
+2. Zusätzlich wird geprüft, ob die angefragte Domain in der Watchlist steht (inkl. Subdomains: `foo.microsoft.com` matcht `microsoft.com`)
+3. Trifft beides zu → **sofortige permanente Sperre** + **AbuseIPDB-Meldung** (falls aktiviert)
+
+Die Watchlist greift sowohl bei normalen Rate-Limit-Verstößen als auch bei Subdomain-Flood-Erkennungen.
+
+#### Beispiel
+
+```bash
+DNS_FLOOD_WATCHLIST_ENABLED=true
+DNS_FLOOD_WATCHLIST="microsoft.com,google.com,apple.com"
+```
+
+→ Ein Client der `35x foo.microsoft.com` in 60s abfragt (bei `RATE_LIMIT_MAX_REQUESTS=30`) wird **sofort permanent** gesperrt und an AbuseIPDB gemeldet.
+
+> **Hinweis:** Damit die AbuseIPDB-Meldung funktioniert, muss `ABUSEIPDB_ENABLED=true` und ein gültiger `ABUSEIPDB_API_KEY` konfiguriert sein. Ohne AbuseIPDB-Konfiguration wird nur permanent gesperrt.
+
 ### Sperr-Einstellungen
 
 | Parameter | Standard | Beschreibung |
@@ -251,7 +279,7 @@ sudo systemctl restart adguard-shield
 
 Der Report an AbuseIPDB enthält (auf Englisch):
 
-- **Bei Rate-Limit:** `DNS flooding on our DNS server: 100x microsoft.com in 60s. Banned by Adguard Shield 🔗 https://tnvs.de/as`
+- **Bei Rate-Limit / DNS-Flood-Watchlist:** `DNS flooding on our DNS server: 100x microsoft.com in 60s. Banned by Adguard Shield 🔗 https://tnvs.de/as`
 - **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com in 60s (random subdomain attack). Banned by Adguard Shield 🔗 https://tnvs.de/as`
 
 Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
