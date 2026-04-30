@@ -1,6 +1,6 @@
 # Architektur & Funktionsweise
 
-Dieses Dokument erklärt, wie AdGuard Shield intern arbeitet. Es geht dabei nicht nur um die Dateien auf dem System, sondern auch um den Weg einer DNS-Anfrage vom AdGuard-Home-Querylog bis zur Firewall-Sperre.
+Dieses Dokument erklärt, wie AdGuard Shield intern arbeitet. Es geht dabei nicht nur um die Dateien auf dem System, sondern auch um den Weg einer DNS-Anfrage vom AdGuard-Home-Querylog bis zur Firewall-Sperre und die Logik hinter jeder Erkennungsmethode.
 
 ## Kurzüberblick
 
@@ -29,32 +29,33 @@ Das Binary übernimmt alle Aufgaben, die früher auf mehrere Shell-Skripte verte
 
 ```text
 Clients
-  |
-  | DNS, DoH, DoT, DoQ, DNSCrypt
-  v
+  │
+  │ DNS, DoH, DoT, DoQ, DNSCrypt
+  ▼
 AdGuard Home
-  |
-  | /control/querylog
-  v
+  │
+  │ /control/querylog
+  ▼
 AdGuard Shield Go-Daemon
-  |
-  |-- Rate-Limit-Prüfung pro Client + Domain
-  |-- Subdomain-Flood-Prüfung pro Client + Basisdomain
-  |-- Watchlist-Prüfung
-  |-- Whitelist-Prüfung
-  |-- GeoIP-Prüfung
-  |-- externe Listen
-  v
+  │
+  ├── Rate-Limit-Prüfung pro Client + Domain
+  ├── Subdomain-Flood-Prüfung pro Client + Basisdomain
+  ├── Watchlist-Prüfung
+  ├── Whitelist-Prüfung (statisch + extern)
+  ├── GeoIP-Prüfung
+  ├── Progressive Ban-Berechnung
+  ├── externe Listen-Abgleich
+  ▼
 SQLite State
-  |
-  v
+  │
+  ▼
 ipset + iptables/ip6tables
-  |
-  v
+  │
+  ▼
 DNS-relevante Ports werden für gesperrte Clients blockiert
 ```
 
-Wichtig: AdGuard Shield analysiert nicht den Netzwerkverkehr direkt. Es liest das Querylog von AdGuard Home. Dadurch erkennt es auch Anfragen über moderne DNS-Protokolle, solange diese in AdGuard Home sichtbar sind.
+**Wichtig:** AdGuard Shield analysiert nicht den Netzwerkverkehr direkt. Es liest das Querylog von AdGuard Home. Dadurch erkennt es auch Anfragen über verschlüsselte DNS-Protokolle (DoH, DoT, DoQ, DNSCrypt), solange diese in AdGuard Home sichtbar sind.
 
 ## Laufzeit im produktiven Betrieb
 
@@ -66,18 +67,20 @@ Der systemd-Service startet den Daemon so:
 
 Beim Start passiert in dieser Reihenfolge:
 
-1. Konfiguration wird geladen.
-2. SQLite-Datenbank unter `STATE_DIR` wird geöffnet oder angelegt.
-3. Logdatei wird geöffnet.
-4. Firewall-Chain und ipsets werden vorbereitet.
-5. GeoIP-Datenbank wird geöffnet, falls GeoIP aktiv ist.
-6. Whitelist-Cache wird aus SQLite geladen.
-7. GeoIP-Sperren werden gegen die aktuelle GeoIP-Konfiguration geprüft.
-8. Aktive Sperren aus SQLite werden wieder in die Firewall geschrieben.
-9. Hintergrundjobs für externe Whitelist, externe Blocklist und Offense-Cleanup starten, falls aktiviert.
-10. Der zentrale Querylog-Poller beginnt mit der regelmäßigen Auswertung.
+| Schritt | Aktion | Beschreibung |
+|---:|---|---|
+| 1 | Konfiguration laden | Liest `adguard-shield.conf` und validiert alle Parameter |
+| 2 | SQLite-Datenbank öffnen | Öffnet oder erstellt die Datenbank unter `STATE_DIR` im WAL-Modus |
+| 3 | Logdatei öffnen | Initialisiert die Datei unter `LOG_FILE` |
+| 4 | Firewall vorbereiten | Erstellt Chain und ipsets, falls nicht vorhanden |
+| 5 | GeoIP öffnen | Lädt die MaxMind-Datenbank, falls GeoIP aktiviert ist |
+| 6 | Whitelist-Cache laden | Liest aufgelöste externe Whitelist-IPs aus SQLite |
+| 7 | GeoIP-Reconcile | Prüft bestehende GeoIP-Sperren gegen aktuelle Konfiguration |
+| 8 | Firewall-Reconcile | Überträgt aktive Sperren aus SQLite wieder in die Firewall |
+| 9 | Hintergrundjobs starten | Startet Goroutines für externe Listen und Offense-Cleanup |
+| 10 | Querylog-Poller starten | Beginnt mit der regelmäßigen Auswertung des Querylogs |
 
-Das Reconcile beim Start ist wichtig: Wenn der Server neu startet oder iptables-Regeln verloren gehen, bleiben die Sperren in SQLite erhalten und werden beim nächsten Start wieder in die Firewall übertragen.
+Das Reconcile beim Start ist besonders wichtig: Wenn der Server neu startet oder `iptables`-Regeln verloren gehen (z.B. durch einen Reboot), bleiben die Sperren in SQLite erhalten und werden beim nächsten Start wieder in die Firewall übertragen.
 
 ## Querylog-Poller
 
@@ -90,8 +93,8 @@ Der Daemon ruft regelmäßig den AdGuard-Home-Endpunkt ab:
 Gesteuert wird das über:
 
 ```bash
-CHECK_INTERVAL=10
-API_QUERY_LIMIT=500
+CHECK_INTERVAL=10       # Abstand zwischen Abfragen in Sekunden
+API_QUERY_LIMIT=500     # Maximale Einträge pro API-Abfrage
 ```
 
 Aus jedem Querylog-Eintrag werden diese Informationen extrahiert:
@@ -103,20 +106,22 @@ Aus jedem Querylog-Eintrag werden diese Informationen extrahiert:
 | Domain | Schlüssel für Rate-Limit und Subdomain-Flood |
 | `client_proto` | Anzeige von DNS, DoH, DoT, DoQ oder DNSCrypt |
 
-Bereits gesehene Querylog-Einträge werden im Speicher dedupliziert. Der Daemon hält nur Ereignisse aus dem relevanten Zeitfenster plus kleinem Puffer vor.
+Bereits gesehene Querylog-Einträge werden im Speicher dedupliziert. Der Daemon hält nur Ereignisse aus dem relevanten Zeitfenster plus kleinem Puffer vor, sodass der Speicherverbrauch auch bei hohem DNS-Aufkommen stabil bleibt.
 
-## Rate-Limit-Sperre
+## Erkennungsmethoden im Detail
+
+### Rate-Limit-Sperre
 
 Eine Rate-Limit-Sperre entsteht, wenn ein Client dieselbe Domain innerhalb des konfigurierten Fensters zu oft abfragt.
 
-Beispiel:
+**Konfiguration:**
 
 ```bash
-RATE_LIMIT_MAX_REQUESTS=30
-RATE_LIMIT_WINDOW=60
+RATE_LIMIT_MAX_REQUESTS=30   # Maximale Anfragen pro Client und Domain
+RATE_LIMIT_WINDOW=60         # Zeitfenster in Sekunden
 ```
 
-Ablauf:
+**Ablauf am Beispiel:**
 
 1. Client `192.168.1.50` fragt `example.com` 45-mal innerhalb von 60 Sekunden ab.
 2. Der Poller sieht diese Einträge im Querylog.
@@ -128,134 +133,153 @@ Ablauf:
 8. Die IP wird in SQLite gespeichert und per Firewall blockiert.
 9. History, Log und optionale Benachrichtigung werden geschrieben.
 
-## Subdomain-Flood-Erkennung
+### Subdomain-Flood-Erkennung
 
-Random-Subdomain-Floods sehen anders aus als normale Wiederholungen. Ein Client fragt nicht eine Domain ständig neu ab, sondern viele zufällige Subdomains:
+Random-Subdomain-Floods sehen anders aus als normale Wiederholungen. Ein Client fragt nicht eine Domain ständig ab, sondern erzeugt viele verschiedene, oft zufällige Subdomains:
 
 ```text
 a8f3.example.com
 k29x.example.com
 z9p1.example.com
+m7q2.example.com
 ```
 
-AdGuard Shield extrahiert daraus die Basisdomain `example.com` und zählt pro Client, wie viele unterschiedliche Subdomains im Fenster vorkommen.
+AdGuard Shield extrahiert daraus die Basisdomain `example.com` und zählt pro Client, wie viele **unterschiedliche** Subdomains im Fenster vorkommen. Direkte Anfragen an `example.com` selbst werden bei dieser Erkennung nicht mitgezählt.
 
-Gesteuert wird das über:
+**Konfiguration:**
 
 ```bash
 SUBDOMAIN_FLOOD_ENABLED=true
-SUBDOMAIN_FLOOD_MAX_UNIQUE=50
-SUBDOMAIN_FLOOD_WINDOW=60
+SUBDOMAIN_FLOOD_MAX_UNIQUE=50    # Maximale eindeutige Subdomains
+SUBDOMAIN_FLOOD_WINDOW=60        # Zeitfenster in Sekunden
 ```
 
-Ablauf:
+**Ablauf am Beispiel:**
 
 1. Client `10.0.0.99` fragt 63 verschiedene Subdomains von `example.com` ab.
-2. Direkte Anfragen an `example.com` zählen für diese Erkennung nicht.
-3. Sobald mehr als `SUBDOMAIN_FLOOD_MAX_UNIQUE` eindeutige Subdomains erkannt werden, wird gesperrt.
-4. In der History erscheint die Domain als `*.example.com`.
-5. Der Grund lautet `subdomain-flood`, außer die Basisdomain steht auf der DNS-Flood-Watchlist.
+2. Sobald mehr als `SUBDOMAIN_FLOOD_MAX_UNIQUE` eindeutige Subdomains erkannt werden, wird gesperrt.
+3. In der History erscheint die Domain als `*.example.com`.
+4. Der Grund lautet `subdomain-flood`, außer die Basisdomain steht auf der DNS-Flood-Watchlist.
 
-## DNS-Flood-Watchlist
+**Hinweise:**
+
+- Multi-Part-TLDs wie `.co.uk` werden korrekt als Basisdomain erkannt.
+- CDNs und manche Apps erzeugen legitim viele Subdomains. In solchen Fällen den Grenzwert erhöhen oder den Client whitelisten.
+
+### DNS-Flood-Watchlist
 
 Die Watchlist ist für Domains gedacht, bei denen du nicht stufenweise reagieren möchtest. Wenn eine Domain auf der Watchlist steht und gleichzeitig ein Rate-Limit- oder Subdomain-Flood-Verstoß erkannt wird, wird sofort permanent gesperrt.
+
+**Konfiguration:**
 
 ```bash
 DNS_FLOOD_WATCHLIST_ENABLED=true
 DNS_FLOOD_WATCHLIST="microsoft.com,google.com"
 ```
 
-Matching:
+**Matching-Logik:**
 
-- `microsoft.com` matcht `microsoft.com`
-- `login.microsoft.com` matcht ebenfalls `microsoft.com`
-- `evil-microsoft.com` matcht nicht
+| Anfrage | Watchlist-Eintrag | Treffer? |
+|---|---|---|
+| `microsoft.com` | `microsoft.com` | Ja |
+| `login.microsoft.com` | `microsoft.com` | Ja |
+| `evil-microsoft.com` | `microsoft.com` | Nein |
 
-Bei einem Treffer:
+**Bei einem Treffer:**
 
 - Reason wird `dns-flood-watchlist`
-- Sperre ist permanent
+- Sperre ist immer permanent
 - Progressive-Ban-Stufen werden für die Dauer ignoriert
-- AbuseIPDB-Reporting kann ausgelöst werden, wenn es aktiviert und ein API-Key vorhanden ist
+- AbuseIPDB-Reporting wird ausgelöst, wenn aktiviert und ein API-Key vorhanden ist
 
-## Progressive Sperren
+### Progressive Sperren
 
-Progressive Sperren erhöhen die Sperrdauer bei wiederholten Monitor-Sperren. Das Verhalten ähnelt fail2ban.
+Progressive Sperren erhöhen die Sperrdauer bei wiederholten Verstößen. Das Verhalten ähnelt fail2ban.
 
-Standard:
+**Konfiguration:**
 
 ```bash
-BAN_DURATION=3600
+BAN_DURATION=3600                   # Basis-Sperrdauer: 1 Stunde
 PROGRESSIVE_BAN_ENABLED=true
-PROGRESSIVE_BAN_MULTIPLIER=2
-PROGRESSIVE_BAN_MAX_LEVEL=5
-PROGRESSIVE_BAN_RESET_AFTER=86400
+PROGRESSIVE_BAN_MULTIPLIER=2        # Verdopplung pro Stufe
+PROGRESSIVE_BAN_MAX_LEVEL=5          # Ab Stufe 5 permanent
+PROGRESSIVE_BAN_RESET_AFTER=86400    # Zähler-Reset nach 24h ohne Vergehen
 ```
 
-Beispiel:
+**Stufenverlauf mit Standardwerten:**
 
-| Vergehen | Stufe | Dauer |
-|---|---:|---|
-| 1 | 1 | 1 Stunde |
-| 2 | 2 | 2 Stunden |
-| 3 | 3 | 4 Stunden |
-| 4 | 4 | 8 Stunden |
-| 5 | 5 | permanent |
+| Vergehen | Stufe | Berechnung | Sperrdauer |
+|---:|---:|---|---|
+| 1 | 1 | 3600 × 2⁰ | 1 Stunde |
+| 2 | 2 | 3600 × 2¹ | 2 Stunden |
+| 3 | 3 | 3600 × 2² | 4 Stunden |
+| 4 | 4 | 3600 × 2³ | 8 Stunden |
+| 5 | 5 | Max-Level erreicht | Permanent |
 
-Der Offense-Zähler wird in SQLite gespeichert. Wenn eine IP länger als `PROGRESSIVE_BAN_RESET_AFTER` nicht auffällig war, kann der Cleanup sie entfernen.
+Der Offense-Zähler wird in SQLite gespeichert. Wenn eine IP länger als `PROGRESSIVE_BAN_RESET_AFTER` (Standard: 24 Stunden) nicht auffällig war, wird der Zähler vom Cleanup-Job entfernt.
 
-Progressive Sperren gelten für Monitor-Sperren. GeoIP- und externe Blocklist-Sperren haben eigene Regeln.
+**Geltungsbereich:** Progressive Sperren gelten nur für Monitor-Sperren (`rate-limit`, `subdomain-flood`). Watchlist-Treffer sind sofort permanent. GeoIP- und externe Blocklist-Sperren haben eigene Regeln.
 
 ## Firewall-Modell
 
-AdGuard Shield nutzt eine eigene Chain und zwei ipsets:
+AdGuard Shield nutzt eine eigene Chain und zwei ipsets, um gesperrte IPs effizient zu verwalten:
 
 ```text
-ADGUARD_SHIELD
-adguard_shield_v4
-adguard_shield_v6
+Chain:  ADGUARD_SHIELD
+IPv4:   adguard_shield_v4
+IPv6:   adguard_shield_v6
 ```
+
+### Chain-Einbindung
 
 Die Chain wird je nach `FIREWALL_MODE` in die passende Host-Chain eingehängt:
 
-| Modus | Parent-Chain |
-|---|---|
-| `host` / `docker-host` | `INPUT` |
-| `docker-bridge` | `DOCKER-USER` |
-| `hybrid` | `INPUT` und `DOCKER-USER` |
+| Modus | Parent-Chain | Einsatzgebiet |
+|---|---|---|
+| `host` / `docker-host` | `INPUT` | Klassische Installation oder Docker mit Host-Netzwerk |
+| `docker-bridge` | `DOCKER-USER` | Docker mit veröffentlichten Ports (`-p 53:53`) |
+| `hybrid` | `INPUT` und `DOCKER-USER` | Gemischte Setups oder Migrationsphasen |
 
-Für klassische Installationen und Docker mit Host-Netzwerk sieht das so aus:
+### Regelstruktur im Host-Modus
 
 ```text
 INPUT
-  |- tcp/53  -> ADGUARD_SHIELD
-  |- udp/53  -> ADGUARD_SHIELD
-  |- tcp/443 -> ADGUARD_SHIELD
-  |- udp/443 -> ADGUARD_SHIELD
-  |- tcp/853 -> ADGUARD_SHIELD
-  |- udp/853 -> ADGUARD_SHIELD
+  ├── tcp/53  → ADGUARD_SHIELD
+  ├── udp/53  → ADGUARD_SHIELD
+  ├── tcp/443 → ADGUARD_SHIELD
+  ├── udp/443 → ADGUARD_SHIELD
+  ├── tcp/853 → ADGUARD_SHIELD
+  └── udp/853 → ADGUARD_SHIELD
 
 ADGUARD_SHIELD
-  |- src in adguard_shield_v4 -> DROP
-  |- src in adguard_shield_v6 -> DROP
+  ├── src in adguard_shield_v4 → DROP
+  └── src in adguard_shield_v6 → DROP
 ```
 
-Bei Docker Bridge mit veröffentlichten Ports ersetzt `DOCKER-USER` die `INPUT`-Chain im oberen Teil des Diagramms. Docker leitet solche Pakete nach DNAT über `FORWARD`; `INPUT` sieht sie dort nicht zuverlässig.
+Bei Docker Bridge mit veröffentlichten Ports ersetzt `DOCKER-USER` die `INPUT`-Chain. Docker leitet solche Pakete nach DNAT über `FORWARD`; die `INPUT`-Chain sieht sie dort nicht zuverlässig.
 
-Die Ports kommen aus:
+### Blockierte Ports
+
+Die Ports werden über `BLOCKED_PORTS` konfiguriert:
 
 ```bash
 BLOCKED_PORTS="53 443 853"
 ```
 
-Das blockiert klassische DNS-Anfragen und die üblichen Ports für DoH, DoT und DoQ. Die Erkennung selbst basiert weiterhin auf dem AdGuard-Home-Querylog.
+| Port | Protokoll | Zweck |
+|---:|---|---|
+| 53 | UDP/TCP | Klassisches DNS |
+| 443 | TCP | DNS-over-HTTPS (DoH) |
+| 853 | TCP/UDP | DNS-over-TLS (DoT) und DNS-over-QUIC (DoQ) |
 
-Warum `ipset`?
+Die Erkennung basiert auf dem AdGuard-Home-Querylog, die Sperre blockiert aber alle konfigurierten Ports, unabhängig davon, welches Protokoll den Verstoß ausgelöst hat.
 
-- viele gesperrte IPs erzeugen nicht tausende einzelne iptables-Regeln
+### Warum ipset?
+
+- Viele gesperrte IPs erzeugen nicht tausende einzelne `iptables`-Regeln
 - IPv4 und IPv6 werden getrennt sauber verwaltet
-- Sperren und Freigaben sind schneller
-- die eigene Chain bleibt übersichtlich
+- Sperren und Freigaben sind performant, auch bei hunderten IPs
+- Die eigene Chain bleibt übersichtlich und beeinträchtigt bestehende Regeln nicht
 
 ## SQLite-State
 
@@ -265,17 +289,25 @@ Der zentrale Zustand liegt standardmäßig hier:
 /var/lib/adguard-shield/adguard-shield.db
 ```
 
-Wichtige Tabellen:
+### Tabellen
 
-| Tabelle | Inhalt |
+| Tabelle | Inhalt | Beschreibung |
+|---|---|---|
+| `active_bans` | Aktive Sperren | IP, Grund, Dauer, Quelle, Ablaufzeit, Offense-Level, GeoIP-Metadaten |
+| `ban_history` | Dauerhafte Historie | Zeitstempel, Aktion (BAN/UNBAN/DRY), Client-IP, Domain, Protokoll, Grund |
+| `offense_tracking` | Progressive-Ban-Stufen | Client-IP, aktuelle Offense-Stufe, letzter Verstoß |
+| `whitelist_cache` | Externe Whitelist | Aufgelöste IPs aus externen Whitelist-URLs mit Quellzuordnung |
+| `geoip_cache` | GeoIP-Ergebnisse | IP, Ländercode, Zeitstempel der Abfrage, DB-Änderungszeitpunkt |
+
+Die Datenbank nutzt WAL-Modus (Write-Ahead Logging) und einen Busy-Timeout, damit Daemon und CLI-Befehle gleichzeitig lesen und schreiben können, ohne sich gegenseitig zu blockieren.
+
+### History-Aktionen
+
+| Aktion | Bedeutung |
 |---|---|
-| `active_bans` | aktuell aktive Sperren mit IP, Grund, Dauer, Quelle und Ablaufzeit |
-| `ban_history` | dauerhafte Historie von `BAN`, `UNBAN` und `DRY` |
-| `offense_tracking` | Progressive-Ban-Stufen pro Client-IP |
-| `whitelist_cache` | aufgelöste IPs aus externen Whitelists |
-| `geoip_cache` | gecachte GeoIP-Ergebnisse |
-
-Die Datenbank nutzt WAL-Modus und einen Busy-Timeout, damit Daemon und CLI-Befehle gleichzeitig lesen können.
+| `BAN` | Aktive Sperre gesetzt (Firewall-Regel erstellt) |
+| `UNBAN` | Sperre aufgehoben (manuell, abgelaufen oder durch Whitelist) |
+| `DRY` | Sperre wäre gesetzt worden, wurde aber im Dry-Run nur protokolliert |
 
 ## Verzeichnisstruktur
 
@@ -292,116 +324,155 @@ Nach einer Standardinstallation sieht die Struktur so aus:
 └── adguard-shield.service
 
 /var/lib/adguard-shield/
-├── adguard-shield.db
-├── external-blocklist/
-├── external-whitelist/
-├── iptables-rules.v4
-└── iptables-rules.v6
+├── adguard-shield.db              # SQLite State-Datenbank
+├── adguard-shield.db-wal          # WAL-Datei (im laufenden Betrieb)
+├── adguard-shield.db-shm          # Shared-Memory-Datei (im laufenden Betrieb)
+├── external-blocklist/            # Cache für heruntergeladene Blocklisten
+├── external-whitelist/            # Cache für heruntergeladene Whitelists
+├── iptables-rules.v4              # Gesicherte IPv4-Regeln (nach firewall-save)
+└── iptables-rules.v6              # Gesicherte IPv6-Regeln (nach firewall-save)
 
 /var/log/
-└── adguard-shield.log
+└── adguard-shield.log             # Daemon-Logdatei
+
+/etc/cron.d/
+└── adguard-shield-report          # Cron-Job für Reports (optional)
 ```
 
 ## Hintergrundjobs im Daemon
 
 Es gibt in der Go-Version keine separaten Worker-Skripte mehr. Diese Aufgaben laufen als Goroutines im Daemon:
 
-| Aufgabe | Wann aktiv | Zweck |
-|---|---|---|
-| Querylog-Poller | immer | liest und analysiert AdGuard-Home-Querylogs |
-| externe Whitelist | `EXTERNAL_WHITELIST_ENABLED=true` | lädt Listen, löst Hostnamen auf, aktualisiert Whitelist-Cache |
-| externe Blocklist | `EXTERNAL_BLOCKLIST_ENABLED=true` | lädt Listen, sperrt gewünschte IPs und hebt entfernte IPs optional auf |
-| Offense-Cleanup | `PROGRESSIVE_BAN_ENABLED=true` | entfernt abgelaufene Offense-Zähler |
-| GeoIP-Lookups | `GEOIP_ENABLED=true` | prüft neue öffentliche Client-IPs gegen Länderregeln |
+| Aufgabe | Wann aktiv | Intervall | Zweck |
+|---|---|---|---|
+| Querylog-Poller | Immer | `CHECK_INTERVAL` | Liest und analysiert AdGuard-Home-Querylogs |
+| Externe Whitelist | `EXTERNAL_WHITELIST_ENABLED=true` | `EXTERNAL_WHITELIST_INTERVAL` | Lädt Listen, löst Hostnamen auf, aktualisiert Whitelist-Cache |
+| Externe Blocklist | `EXTERNAL_BLOCKLIST_ENABLED=true` | `EXTERNAL_BLOCKLIST_INTERVAL` | Lädt Listen, sperrt neue IPs, hebt entfernte IPs optional auf |
+| Offense-Cleanup | `PROGRESSIVE_BAN_ENABLED=true` | Stündlich | Entfernt abgelaufene Offense-Zähler |
+| GeoIP-Lookups | `GEOIP_ENABLED=true` | Mit jedem Poll | Prüft neue öffentliche Client-IPs gegen Länderregeln |
 
-Externe Whitelist und Blocklist laufen sofort beim Start einmalig und danach im jeweiligen Intervall.
+Externe Whitelist und Blocklist laufen sofort beim Start einmalig und danach im jeweiligen Intervall. Die Sperren-Freigabe abgelaufener Bans wird bei jedem Querylog-Poll mit geprüft.
 
 ## Whitelist-Logik
 
 Vor jeder Sperre wird geprüft, ob die IP vertrauenswürdig ist.
 
-Quellen:
+**Quellen (in Prüfreihenfolge):**
 
-- statische `WHITELIST` aus der Konfiguration
-- aufgelöste IPs aus externen Whitelists
+1. Statische `WHITELIST` aus der Konfiguration (kommagetrennt)
+2. Aufgelöste IPs aus externen Whitelists (gespeichert in SQLite)
 
-Eine gewhitelistete IP wird nicht gesperrt. Wenn eine externe Whitelist später eine bereits gesperrte IP enthält, hebt der Daemon diese Sperre automatisch auf.
+**Verhalten:**
+
+- Eine gewhitelistete IP wird nie gesperrt, unabhängig von der Sperrquelle.
+- Dies gilt für automatische Sperren, manuelle Sperren, GeoIP-Sperren und externe Blocklist-Sperren.
+- Wenn eine externe Whitelist später eine bereits gesperrte IP enthält, hebt der Daemon diese Sperre automatisch auf.
 
 ## GeoIP-Logik
 
-GeoIP arbeitet nur mit öffentlichen IPs, wenn `GEOIP_SKIP_PRIVATE=true` gesetzt ist. Private Netze, Loopback, Link-Local und CGNAT werden übersprungen.
+GeoIP arbeitet mit der MaxMind GeoLite2-Datenbank und filtert DNS-Clients nach ihrem geografischen Herkunftsland.
 
-Modi:
+### Private IPs
+
+Wenn `GEOIP_SKIP_PRIVATE=true` gesetzt ist (Standard), werden folgende Adressbereiche übersprungen:
+
+- Private Netze (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- Loopback (127.0.0.0/8, ::1)
+- Link-Local (169.254.0.0/16, fe80::/10)
+- CGNAT (100.64.0.0/10)
+
+### Modi
 
 | Modus | Verhalten |
 |---|---|
-| `blocklist` | Länder aus `GEOIP_COUNTRIES` werden gesperrt |
-| `allowlist` | nur Länder aus `GEOIP_COUNTRIES` sind erlaubt, alle anderen öffentlichen Länder werden gesperrt |
+| `blocklist` | Nur die in `GEOIP_COUNTRIES` genannten Länder werden gesperrt. Alle anderen sind erlaubt. |
+| `allowlist` | Nur die in `GEOIP_COUNTRIES` genannten Länder sind erlaubt. Alle anderen öffentlichen IPs werden gesperrt. |
 
-GeoIP-Sperren sind permanent, werden aber beim Start gegen die aktuelle Konfiguration geprüft. Wenn GeoIP deaktiviert wird, der Modus wechselt oder ein Land nicht mehr blockiert werden müsste, kann die Sperre automatisch aufgehoben werden.
+Die Ländercodes folgen dem Standard ISO 3166-1 Alpha-2 (siehe [ISO-3166-1-Kodierliste auf Wikipedia](https://de.wikipedia.org/wiki/ISO-3166-1-Kodierliste)).
+
+### GeoIP-Datenquellen (Priorität)
+
+| Priorität | Quelle | Konfiguration |
+|---:|---|---|
+| 1 | Manueller MMDB-Pfad | `GEOIP_MMDB_PATH="/pfad/zur/GeoLite2-Country.mmdb"` |
+| 2 | Automatischer MaxMind-Download | `GEOIP_LICENSE_KEY="dein_key"` |
+| 3 | Legacy-Fallback | `geoiplookup` / `geoiplookup6` (Systembefehle) |
+
+**GeoIP-Sperren sind permanent**, werden aber beim Start gegen die aktuelle Konfiguration geprüft. Wenn GeoIP deaktiviert wird, der Modus wechselt oder ein Land nicht mehr blockiert werden müsste, wird die Sperre automatisch aufgehoben.
 
 ## AbuseIPDB-Reporting
 
-AbuseIPDB wird nur für permanente Monitor-Sperren genutzt:
+AbuseIPDB wird nur für **permanente** Monitor-Sperren genutzt:
 
-- DNS-Flood-Watchlist-Treffer
-- Progressive-Ban-Sperren, die die maximale Stufe erreicht haben
+| Wird gemeldet | Wird nicht gemeldet |
+|---|---|
+| DNS-Flood-Watchlist-Treffer | Temporäre Rate-Limit-Sperren |
+| Progressive-Ban auf Maximalstufe | Manuelle Sperren |
+| | GeoIP-Sperren |
+| | Externe Blocklist-Sperren |
 
-Nicht gemeldet werden:
-
-- temporäre Rate-Limit-Sperren
-- manuelle Sperren
-- GeoIP-Sperren
-- externe Blocklist-Sperren
-
-Voraussetzung:
+**Konfiguration:**
 
 ```bash
 ABUSEIPDB_ENABLED=true
 ABUSEIPDB_API_KEY="..."
+ABUSEIPDB_CATEGORIES="4"     # 4 = DDoS Attack
 ```
+
+Die Kategorie-Nummern sind auf [abuseipdb.com/categories](https://www.abuseipdb.com/categories) dokumentiert.
+
+## Protokollerkennung
+
+AdGuard Shield liest das Feld `client_proto` aus der AdGuard-Home-API und zeigt das Protokoll in History, Logs und Benachrichtigungen an:
+
+| API-Wert | Anzeige | Beschreibung |
+|---|---|---|
+| leer oder `dns` | `DNS` | Klassisches DNS über UDP/TCP |
+| `doh` | `DoH` | DNS-over-HTTPS |
+| `dot` | `DoT` | DNS-over-TLS |
+| `doq` | `DoQ` | DNS-over-QUIC |
+| `dnscrypt` | `DNSCrypt` | DNSCrypt-Protokoll |
+
+Die Sperre blockiert die konfigurierten Ports unabhängig davon, welches Protokoll den Verstoß ausgelöst hat. So wird verhindert, dass ein gesperrter Client einfach auf ein anderes DNS-Protokoll ausweicht.
 
 ## History und Logs
 
-Es gibt zwei unterschiedliche Blickwinkel:
+Es gibt zwei unterschiedliche Blickwinkel auf das Geschehen:
 
-| Quelle | Inhalt |
+| Quelle | Inhalt | Befehl |
+|---|---|---|
+| `ban_history` in SQLite | Sperren, Freigaben und Dry-Run-Ereignisse | `history [N]` |
+| `LOG_FILE` | Daemon-Ereignisse, Worker-Läufe, Warnungen, Fehler | `logs`, `logs-follow` |
+| Live-Ansicht | Aktuelle Queries, Top-Clients, Sperren, Systemereignisse | `live` |
+
+**Wichtig:** Query-Inhalte werden nicht dauerhaft in die Logdatei geschrieben. Für aktuelle Queries ist die Live-Ansicht (`live`) gedacht.
+
+### History-Gründe
+
+| Grund | Bedeutung |
 |---|---|
-| `ban_history` in SQLite | Sperren, Freigaben und Dry-Run-Ereignisse |
-| `LOG_FILE` | Daemon-Ereignisse, Worker-Läufe, Warnungen, Fehler |
-
-Query-Inhalte werden nicht dauerhaft in die Logdatei geschrieben. Für aktuelle Queries gibt es die Live-Ansicht:
-
-```bash
-sudo /opt/adguard-shield/adguard-shield live
-```
-
-History:
-
-```bash
-sudo /opt/adguard-shield/adguard-shield history
-sudo /opt/adguard-shield/adguard-shield history 200
-```
-
-Logs:
-
-```bash
-sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
-sudo journalctl -u adguard-shield -f
-```
+| `rate-limit` | Gleiche Domain zu oft angefragt |
+| `subdomain-flood` | Zu viele eindeutige Subdomains einer Basisdomain |
+| `dns-flood-watchlist` | Watchlist-Treffer mit sofortigem Permanent-Ban |
+| `external-blocklist` | Sperre aus externer Blocklist |
+| `geoip` | GeoIP-Länderfilter |
+| `manual` | Manueller Ban oder Unban |
+| `manual-flush` | Freigabe aller Sperren durch `flush` |
+| `expired` | Temporäre Sperre ist abgelaufen |
+| `external-whitelist` | Freigabe durch externe Whitelist |
 
 ## Unterschied zur alten Shell-Architektur
 
 Früher gab es unter anderem:
 
-- `adguard-shield.sh`
-- `iptables-helper.sh`
-- `external-blocklist-worker.sh`
-- `external-whitelist-worker.sh`
-- `geoip-worker.sh`
-- `offense-cleanup-worker.sh`
-- `report-generator.sh`
-- `unban-expired.sh`
-- Watchdog-Service und Watchdog-Timer
+- `adguard-shield.sh` (Hauptskript)
+- `iptables-helper.sh` (Firewall-Management)
+- `external-blocklist-worker.sh` (Blocklist-Synchronisation)
+- `external-whitelist-worker.sh` (Whitelist-Synchronisation)
+- `geoip-worker.sh` (GeoIP-Prüfung)
+- `offense-cleanup-worker.sh` (Offense-Bereinigung)
+- `report-generator.sh` (Report-Erstellung)
+- `unban-expired.sh` (Ablauf temporärer Sperren)
+- Watchdog-Service und Watchdog-Timer (Überwachung)
 
-In der Go-Version gibt es diese Skripte nicht mehr. Der systemd-Service nutzt `Restart=on-failure`; die eigentlichen Worker laufen im Daemon. Alte Artefakte werden vom Installer erkannt und müssen vor der Go-Installation entfernt werden, damit keine zwei Implementierungen parallel dieselbe Firewall und dieselben Dateien verwalten.
+In der Go-Version gibt es diese Skripte nicht mehr. Der systemd-Service nutzt `Restart=on-failure`; die eigentlichen Worker laufen als Goroutines im Daemon. Alte Artefakte werden vom Installer erkannt und müssen vor der Go-Installation entfernt werden, damit nicht zwei Implementierungen parallel dieselbe Firewall und dieselben Dateien verwalten.

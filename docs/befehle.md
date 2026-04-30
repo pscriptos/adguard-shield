@@ -20,19 +20,20 @@ Wenn du eine andere Konfigurationsdatei verwenden möchtest, muss `-config` dire
 sudo /opt/adguard-shield/adguard-shield -config /pfad/zur/adguard-shield.conf status
 ```
 
-Standardpfade:
+### Standardpfade
 
-```text
-Konfiguration: /opt/adguard-shield/adguard-shield.conf
-SQLite-State:  /var/lib/adguard-shield/adguard-shield.db
-Logdatei:      /var/log/adguard-shield.log
-PID-Datei:     /var/run/adguard-shield.pid
-```
+| Datei | Pfad |
+|---|---|
+| Binary | `/opt/adguard-shield/adguard-shield` |
+| Konfiguration | `/opt/adguard-shield/adguard-shield.conf` |
+| SQLite-Datenbank | `/var/lib/adguard-shield/adguard-shield.db` |
+| Logdatei | `/var/log/adguard-shield.log` |
+| PID-Datei | `/var/run/adguard-shield.pid` |
 
 ## Schnellübersicht
 
 ```bash
-# Version
+# Version anzeigen
 /opt/adguard-shield/adguard-shield version
 
 # Installation und Update
@@ -41,13 +42,13 @@ sudo ./adguard-shield update
 sudo ./adguard-shield install-status
 sudo /opt/adguard-shield/adguard-shield uninstall --keep-config
 
-# Service
+# Service-Management über systemd
 sudo systemctl start adguard-shield
 sudo systemctl stop adguard-shield
 sudo systemctl restart adguard-shield
 sudo systemctl status adguard-shield
 
-# Diagnose
+# Diagnose und Monitoring
 sudo /opt/adguard-shield/adguard-shield test
 sudo /opt/adguard-shield/adguard-shield status
 sudo /opt/adguard-shield/adguard-shield live
@@ -55,10 +56,12 @@ sudo /opt/adguard-shield/adguard-shield history 100
 sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
 
 # Manuelle Eingriffe
-sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
 sudo /opt/adguard-shield/adguard-shield ban 192.168.1.100
+sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
 sudo /opt/adguard-shield/adguard-shield flush
 ```
+
+---
 
 ## Installation
 
@@ -68,61 +71,70 @@ Das installierte Binary landet standardmäßig unter:
 /opt/adguard-shield/adguard-shield
 ```
 
-Typischer Ablauf:
+### Standardinstallation
 
 ```bash
-# Binary ausführbar machen
 chmod +x ./adguard-shield
-
-# Standardinstallation
 sudo ./adguard-shield install
-
-# Bestehende Konfigurationsdatei als Vorlage übernehmen
-sudo ./adguard-shield install --config-source ./adguard-shield.conf
 ```
 
 Am Ende fragt der Installer, ob AdGuard Shield direkt gestartet oder neu gestartet werden soll.
 
-Weitere Optionen:
+### Installationsoptionen
+
+| Option | Beschreibung |
+|---|---|
+| `--config-source <pfad>` | Bestehende Konfigurationsdatei als Vorlage übernehmen |
+| `--skip-deps` | Automatische Paketprüfung und -installation überspringen |
+| `--no-enable` | systemd-Autostart nicht aktivieren |
+| `--install-dir <pfad>` | Abweichendes Installationsverzeichnis verwenden |
+
+**Beispiele:**
 
 ```bash
-# Paketprüfung überspringen
+# Konfiguration aus anderem Pfad übernehmen
+sudo ./adguard-shield install --config-source ./adguard-shield.conf
+
+# Ohne Paketprüfung installieren
 sudo ./adguard-shield install --skip-deps
 
-# systemd-Autostart nicht aktivieren
-sudo ./adguard-shield install --no-enable
-
-# abweichendes Installationsverzeichnis
+# In anderes Verzeichnis installieren
 sudo ./adguard-shield install --install-dir /opt/adguard-shield-test
 ```
 
-Der Installer erledigt:
+### Was der Installer macht
 
-1. Linux- und root-Prüfung
-2. Prüfung auf alte Shell-Artefakte
-3. Installation fehlender Abhängigkeiten über `apt-get`, sofern möglich
-4. Anlage von Installations- und State-Verzeichnissen
-5. Kopieren des laufenden Binarys
-6. Anlage oder Migration der Konfiguration
-7. Schreiben der systemd-Unit
-8. `systemctl daemon-reload`
-9. optional Autostart aktivieren
-10. fragen, ob der Service direkt gestartet oder neu gestartet werden soll
+Der Installer führt diese Schritte automatisch durch:
 
-Benötigte Systembefehle:
+| Schritt | Beschreibung |
+|---:|---|
+| 1 | Linux- und Root-Prüfung |
+| 2 | Prüfung auf alte Shell-Artefakte |
+| 3 | Installation fehlender Abhängigkeiten über `apt-get` (sofern möglich) |
+| 4 | Anlage von Installations- und State-Verzeichnissen |
+| 5 | Kopieren des Binarys nach `/opt/adguard-shield/` |
+| 6 | Anlage oder Migration der Konfiguration |
+| 7 | Schreiben der systemd-Unit |
+| 8 | `systemctl daemon-reload` |
+| 9 | Optional: Autostart aktivieren |
+| 10 | Nachfrage: Service direkt starten oder neu starten |
 
-```text
-iptables
-ip6tables
-ipset
-systemctl
-```
+### Benötigte Systembefehle
+
+| Befehl | Paket (Debian/Ubuntu) | Zweck |
+|---|---|---|
+| `iptables` | `iptables` | IPv4-Firewall |
+| `ip6tables` | `iptables` | IPv6-Firewall |
+| `ipset` | `ipset` | IP-Set-Verwaltung für performante Sperren |
+| `systemctl` | `systemd` | Service-Management |
 
 Auf Debian/Ubuntu installiert der Installer passende Pakete automatisch, sofern `apt-get` verfügbar ist und `--skip-deps` nicht gesetzt wurde.
 
+---
+
 ## Update
 
-Ein Update wird mit dem neuen Binary ausgeführt, nicht mit dem bereits installierten alten Binary.
+Ein Update wird immer mit dem **neuen** Binary ausgeführt, nicht mit dem bereits installierten alten Binary:
 
 ```bash
 chmod +x ./adguard-shield
@@ -131,20 +143,23 @@ sudo ./adguard-shield update
 
 Am Ende fragt der Updater, ob AdGuard Shield direkt neu gestartet werden soll.
 
-Mit expliziter Konfigurationsquelle:
+### Update mit expliziter Konfigurationsquelle
 
 ```bash
 sudo ./adguard-shield update --config-source ./adguard-shield.conf
 ```
 
-Beim Update:
+### Was beim Update passiert
 
-- wird die Installation wie bei `install` aktualisiert
-- bleibt die vorhandene Konfiguration erhalten
-- werden neue Konfigurationsparameter ergänzt
-- wird bei einer Migration `adguard-shield.conf.old` geschrieben
-- wird die systemd-Unit neu geschrieben
-- wird systemd neu geladen
+- Die Installation wird wie bei `install` aktualisiert
+- Vorhandene Konfiguration bleibt erhalten
+- Neue Konfigurationsparameter werden ergänzt
+- Bei einer Migration wird `adguard-shield.conf.old` geschrieben
+- Die systemd-Unit wird neu geschrieben und systemd neu geladen
+
+Weitere Details stehen in der [Update-Anleitung](update.md).
+
+---
 
 ## Installationsstatus
 
@@ -152,43 +167,47 @@ Beim Update:
 sudo ./adguard-shield install-status
 ```
 
+Zeigt eine Übersicht mit:
+
+- Installationspfad und Binary-Status
+- Installierte Version
+- Konfiguration vorhanden
+- systemd-Service vorhanden und Status
+- Autostart aktiv
+- Gefundene Legacy-Artefakte
+
 Für ein anderes Installationsverzeichnis:
 
 ```bash
 sudo ./adguard-shield install-status --install-dir /opt/adguard-shield-test
 ```
 
-`install-status` zeigt:
-
-- Installationspfad
-- Binary vorhanden
-- installierte Version
-- Konfiguration vorhanden
-- systemd-Service vorhanden
-- Autostart aktiv
-- Service aktiv
-- gefundene Legacy-Artefakte
+---
 
 ## Deinstallation
 
 ```bash
-# Alles entfernen
+# Vollständige Deinstallation
 sudo /opt/adguard-shield/adguard-shield uninstall
 
-# Konfiguration behalten
+# Deinstallation mit Konfigurationserhalt
 sudo /opt/adguard-shield/adguard-shield uninstall --keep-config
 ```
 
-Bei der Deinstallation wird:
+**Was bei der Deinstallation passiert:**
 
-1. der Service gestoppt
-2. der Autostart deaktiviert
-3. die Shield-Firewall-Struktur entfernt
-4. die systemd-Unit gelöscht
-5. systemd neu geladen
-6. je nach Option Installationsverzeichnis, State und Log entfernt
+| Schritt | Beschreibung |
+|---:|---|
+| 1 | Service stoppen |
+| 2 | Autostart deaktivieren |
+| 3 | Shield-Firewall-Struktur entfernen (Chain, ipsets) |
+| 4 | systemd-Unit löschen |
+| 5 | systemd neu laden |
+| 6 | Installationsverzeichnis, State und Log entfernen |
 
 Mit `--keep-config` bleiben Konfigurationsdaten erhalten. Das ist sinnvoll, wenn du neu installieren oder migrieren möchtest.
+
+---
 
 ## Alte Shell-Installation
 
@@ -202,7 +221,7 @@ Die Go-Version darf nicht parallel zur alten Shell-Version laufen. Der Installer
 /etc/systemd/system/adguard-shield-watchdog.timer
 ```
 
-Empfohlener Ablauf:
+**Empfohlener Ablauf:**
 
 1. Bestehende `/opt/adguard-shield/adguard-shield.conf` sichern.
 2. Alte Shell-Version mit deren Uninstaller entfernen und die Konfiguration behalten.
@@ -210,54 +229,62 @@ Empfohlener Ablauf:
 4. Konfiguration prüfen.
 5. Zuerst `dry-run`, dann produktiven Service starten.
 
+Weitere Details stehen in der [Update-Anleitung](update.md).
+
+---
+
 ## systemd-Service
 
 Im produktiven Betrieb sollte AdGuard Shield über systemd laufen:
 
 ```bash
-sudo systemctl start adguard-shield
-sudo systemctl stop adguard-shield
-sudo systemctl restart adguard-shield
-sudo systemctl status adguard-shield
+sudo systemctl start adguard-shield      # Service starten
+sudo systemctl stop adguard-shield       # Service stoppen
+sudo systemctl restart adguard-shield    # Service neu starten
+sudo systemctl status adguard-shield     # Status anzeigen
 ```
 
-Autostart:
+### Autostart
 
 ```bash
-sudo systemctl enable adguard-shield
-sudo systemctl disable adguard-shield
+sudo systemctl enable adguard-shield     # Autostart aktivieren
+sudo systemctl disable adguard-shield    # Autostart deaktivieren
 ```
 
-Nach manuellen Änderungen an der Unit:
+### Nach manuellen Änderungen an der Unit
 
 ```bash
 sudo systemctl daemon-reload
 ```
 
-Die Unit startet:
+### Startbefehl der Unit
+
+Die systemd-Unit startet den Daemon mit:
 
 ```bash
 /opt/adguard-shield/adguard-shield -config /opt/adguard-shield/adguard-shield.conf run
 ```
 
-Die Go-Version nutzt `Restart=on-failure`. Einen separaten Watchdog-Service oder Watchdog-Timer gibt es nicht mehr.
+Die Go-Version nutzt `Restart=on-failure` mit `RestartSec=30s`. Einen separaten Watchdog-Service oder Watchdog-Timer gibt es nicht mehr.
+
+---
 
 ## Daemon direkt starten
 
 Für Debugging oder Dry-Run kann der Daemon im Vordergrund gestartet werden:
 
 ```bash
-# normaler Vordergrundlauf
+# Normaler Vordergrundlauf
 sudo /opt/adguard-shield/adguard-shield run
 
 # Alias für run
 sudo /opt/adguard-shield/adguard-shield start
 
-# analysieren ohne echte Sperren
+# Analysieren ohne echte Sperren
 sudo /opt/adguard-shield/adguard-shield dry-run
 ```
 
-Stop über PID-Datei:
+### Daemon über PID-Datei stoppen
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield stop
@@ -265,20 +292,24 @@ sudo /opt/adguard-shield/adguard-shield stop
 
 Für den Alltag gilt: Nutze `systemctl`. Der direkte Vordergrundlauf endet, sobald die Shell beendet wird oder du `Strg+C` drückst.
 
+---
+
 ## API-Test
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield test
 ```
 
-Der Test ruft `/control/querylog` auf und prüft damit:
+Der `test`-Befehl prüft die Verbindung zur AdGuard-Home-API:
 
-- ist `ADGUARD_URL` erreichbar?
-- funktionieren HTTP/TLS und Netzwerk?
-- stimmen `ADGUARD_USER` und `ADGUARD_PASS`?
-- liefert AdGuard Home Querylog-Daten?
+| Prüfung | Was getestet wird |
+|---|---|
+| Netzwerk | Ist `ADGUARD_URL` erreichbar? |
+| TLS | Funktioniert HTTPS/TLS? |
+| Authentifizierung | Stimmen `ADGUARD_USER` und `ADGUARD_PASS`? |
+| Querylog | Liefert AdGuard Home Querylog-Daten? |
 
-Bei Erfolg erscheint sinngemäß:
+**Bei Erfolg:**
 
 ```text
 Verbindung erfolgreich. 123 Querylog-Einträge gefunden.
@@ -286,22 +317,26 @@ Verbindung erfolgreich. 123 Querylog-Einträge gefunden.
 
 Wenn der Test fehlschlägt, zuerst die Konfiguration und die AdGuard-Home-Weboberfläche prüfen.
 
+---
+
 ## Status
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield status
 ```
 
-`status` zeigt:
+Zeigt eine Übersicht des aktuellen Zustands:
 
-- verwendete Konfigurationsdatei
-- Firewall-Backend und Chain
-- GeoIP-Aktivierung, Modus und Länder
-- externe Blocklist und Anzahl der URLs
-- externe Whitelist und Anzahl der URLs
-- aktive Sperren mit IP, Quelle, Grund und Ablaufzeit
+- Verwendete Konfigurationsdatei
+- Firewall-Backend, -Modus und Chain
+- GeoIP-Aktivierung, Modus und Länderliste
+- Externe Blocklist (aktiv/inaktiv, Anzahl URLs)
+- Externe Whitelist (aktiv/inaktiv, Anzahl URLs)
+- Aktive Sperren mit IP, Quelle, Grund und Ablaufzeit
 
-Bei sehr vielen aktiven Sperren werden nur die ersten 50 angezeigt. Details stehen in der History oder direkt in SQLite.
+Bei sehr vielen aktiven Sperren werden nur die ersten 50 angezeigt. Für Details nutze `history` oder frage SQLite direkt ab.
+
+---
 
 ## Live-Ansicht
 
@@ -309,83 +344,81 @@ Bei sehr vielen aktiven Sperren werden nur die ersten 50 angezeigt. Details steh
 sudo /opt/adguard-shield/adguard-shield live
 ```
 
-`live` ist die beste Ansicht, wenn du verstehen möchtest, was gerade passiert.
+Die `live`-Ansicht ist das beste Werkzeug, wenn du verstehen möchtest, was gerade passiert. Sie zeigt in Echtzeit:
 
-Sie zeigt:
+| Bereich | Inhalt |
+|---|---|
+| Query-Poller | API-Einträge, Zeitfenster und Rate-Limit-Status |
+| Top-Kombinationen | Häufigste Client/Domain-Paare |
+| Subdomain-Flood | Aktuelle Subdomain-Flood-Kandidaten |
+| Letzte Queries | Die neuesten Querylog-Einträge |
+| Aktive Sperren | Alle derzeit gesperrten IPs |
+| Externe Listen | Status von Blocklist und Whitelist |
+| GeoIP | GeoIP-Konfiguration und Status |
+| Offense-Cleanup | Progressive-Ban-Status |
+| Systemereignisse | Aktuelle Logeinträge |
 
-- Query-Poller, API-Einträge, Zeitfenster und Rate-Limit
-- Top Client/Domain-Kombinationen
-- Subdomain-Flood-Kandidaten
-- letzte Querylog-Einträge
-- aktive Sperren
-- externe Listen
-- GeoIP-Status
-- Offense-Cleanup-Status
-- Systemereignisse aus der Logdatei
+### Optionen
 
-Optionen:
+| Option | Beschreibung | Beispiel |
+|---|---|---|
+| `--interval <sek>` | Aktualisierungsintervall in Sekunden | `live --interval 2` |
+| `--top <n>` | Anzahl der Top-Einträge | `live --top 20` |
+| `--recent <n>` | Anzahl letzter Queries und Logs | `live --recent 25` |
+| `--logs <level>` | Log-Level anzeigen (`debug`, `info`, `warn`, `error`, `off`) | `live --logs debug` |
+| `--once` | Einmaligen Snapshot ausgeben, nicht fortlaufend | `live --once` |
 
-```bash
-# alle 2 Sekunden aktualisieren
-sudo /opt/adguard-shield/adguard-shield live --interval 2
-
-# Top 20 anzeigen
-sudo /opt/adguard-shield/adguard-shield live --top 20
-
-# mehr letzte Queries und Logs anzeigen
-sudo /opt/adguard-shield/adguard-shield live --recent 25
-
-# DEBUG-Logs einblenden
-sudo /opt/adguard-shield/adguard-shield live --logs debug
-
-# Logbereich ausblenden
-sudo /opt/adguard-shield/adguard-shield live --logs off
-
-# nur einmaligen Snapshot ausgeben
-sudo /opt/adguard-shield/adguard-shield live --once
-```
-
-Alias:
+### Alias
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield watch
 ```
 
+---
+
 ## History
 
 ```bash
-# letzte 50 Einträge
+# Letzte 50 Einträge (Standard)
 sudo /opt/adguard-shield/adguard-shield history
 
-# letzte 200 Einträge
+# Letzte 200 Einträge
 sudo /opt/adguard-shield/adguard-shield history 200
 ```
 
-Die History kommt aus der SQLite-Tabelle `ban_history`. Sie enthält:
+Die History kommt aus der SQLite-Tabelle `ban_history`.
 
-- `BAN`: echte Sperre
-- `UNBAN`: Freigabe
-- `DRY`: im Dry-Run erkannt, aber nicht gesperrt
-
-Format:
+### Ausgabeformat
 
 ```text
 Zeit | Aktion | Client-IP | Domain | Anzahl | Dauer | Protokoll | Grund
 ```
 
-Typische Gründe:
+### Aktionstypen
+
+| Aktion | Bedeutung |
+|---|---|
+| `BAN` | Echte Sperre gesetzt |
+| `UNBAN` | Sperre aufgehoben |
+| `DRY` | Im Dry-Run erkannt, aber nicht gesperrt |
+
+### Sperrgründe
 
 | Grund | Bedeutung |
 |---|---|
-| `rate-limit` | gleiche Domain zu oft angefragt |
-| `subdomain-flood` | zu viele eindeutige Subdomains einer Basisdomain |
-| `dns-flood-watchlist` | Watchlist-Treffer mit Permanent-Ban |
+| `rate-limit` | Gleiche Domain zu oft angefragt |
+| `subdomain-flood` | Zu viele eindeutige Subdomains einer Basisdomain |
+| `dns-flood-watchlist` | Watchlist-Treffer mit sofortigem Permanent-Ban |
 | `external-blocklist` | Sperre aus externer Blocklist |
 | `geoip` | GeoIP-Länderfilter |
-| `manual` | manuelle Freigabe |
+| `manual` | Manueller Ban oder Unban |
 | `manual-flush` | Freigabe durch `flush` |
-| `expired` | temporäre Sperre abgelaufen |
+| `expired` | Temporäre Sperre abgelaufen |
 | `external-whitelist` | Freigabe durch externe Whitelist |
+| `geoip-flush` | Freigabe aller GeoIP-Sperren |
+| `external-blocklist-flush` | Freigabe aller Blocklist-Sperren |
+
+---
 
 ## Logs
 
@@ -395,205 +428,329 @@ AdGuard Shield schreibt Daemon-Ereignisse in `LOG_FILE`, standardmäßig:
 /var/log/adguard-shield.log
 ```
 
-CLI:
+### CLI-Befehle
 
 ```bash
-# letzte INFO/WARN/ERROR-Einträge
+# Letzte INFO/WARN/ERROR-Einträge
 sudo /opt/adguard-shield/adguard-shield logs
 
-# letzte 100 Warnungen und Fehler
+# Letzte 100 Warnungen und Fehler
 sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
 
-# Kurzform
+# Kurzform (Level als Argument)
 sudo /opt/adguard-shield/adguard-shield logs debug
 
-# laufende Ansicht
+# Laufende Ansicht (wie tail -f)
 sudo /opt/adguard-shield/adguard-shield logs-follow --level info
 ```
 
-Erlaubte Level:
+### Erlaubte Log-Level
 
-```text
-DEBUG
-INFO
-WARN
-ERROR
-```
+| Level | Beschreibung |
+|---|---|
+| `DEBUG` | Detaillierte Informationen für Fehlersuche |
+| `INFO` | Normale Betriebsmeldungen (Start, Sperren, Freigaben) |
+| `WARN` | Warnungen (z.B. API-Fehler, fehlende Dateien) |
+| `ERROR` | Fehler, die den Betrieb beeinträchtigen |
 
-systemd-Journal:
+### systemd-Journal
 
 ```bash
 sudo journalctl -u adguard-shield -f
 sudo journalctl -u adguard-shield --no-pager -n 100
 ```
 
-Hinweis: Query-Inhalte werden nicht dauerhaft in die Logdatei geschrieben. Für Query-nahe Diagnose ist `live` gedacht.
+**Hinweis:** Query-Inhalte werden nicht dauerhaft in die Logdatei geschrieben. Für Query-nahe Diagnose ist die `live`-Ansicht gedacht.
+
+---
 
 ## Manuelle Sperren und Freigaben
 
+### IP permanent sperren
+
 ```bash
-# IP permanent sperren
 sudo /opt/adguard-shield/adguard-shield ban 192.168.1.100
+```
 
-# IP entsperren
+Legt eine manuelle permanente Sperre an. Die IP wird sofort in die Firewall eingetragen.
+
+### IP entsperren
+
+```bash
 sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+```
 
-# alle aktiven Sperren aufheben
+Entfernt die IP aus Firewall und Datenbank. Funktioniert für alle Sperrtypen (automatisch, manuell, GeoIP, Blocklist).
+
+### Alle Sperren aufheben
+
+```bash
 sudo /opt/adguard-shield/adguard-shield flush
 ```
 
-`ban` legt eine manuelle permanente Sperre an. `unban` entfernt die IP aus Firewall und Datenbank. `flush` hebt alle aktiven Sperren auf.
+Hebt alle aktiven Sperren auf. Bei aktivierten Benachrichtigungen wird eine zusammenfassende Meldung gesendet, nicht eine Nachricht pro IP.
 
-Whitelist-Regeln gelten auch für manuelle Sperren. Eine IP aus `WHITELIST` oder externer Whitelist wird nicht gesperrt.
+**Wichtig:** Whitelist-Regeln gelten auch für manuelle Sperren. Eine IP aus `WHITELIST` oder externer Whitelist wird nicht gesperrt.
 
-Bulk-Kommandos senden bei aktivierten Benachrichtigungen eine zusammenfassende Freigabe-Meldung, nicht eine Nachricht pro IP.
+---
 
 ## Progressive Sperren und Offenses
 
+### Offense-Status anzeigen
+
 ```bash
-# Offense-Zähler anzeigen
 sudo /opt/adguard-shield/adguard-shield offense-status
-
-# abgelaufene Zähler entfernen
-sudo /opt/adguard-shield/adguard-shield offense-cleanup
-
-# alle Offense-Zähler zurücksetzen
-sudo /opt/adguard-shield/adguard-shield reset-offenses
-
-# Zähler für eine IP zurücksetzen
-sudo /opt/adguard-shield/adguard-shield reset-offenses 192.168.1.100
 ```
 
-Nützlich nach Fehlkonfigurationen:
+Zeigt die Gesamtzahl der Offense-Zähler, davon abgelaufene, und die Konfiguration.
+
+### Abgelaufene Zähler entfernen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+sudo /opt/adguard-shield/adguard-shield offense-cleanup
+```
+
+### Alle Offense-Zähler zurücksetzen
+
+```bash
+sudo /opt/adguard-shield/adguard-shield reset-offenses
+```
+
+### Zähler für eine IP zurücksetzen
+
+```bash
 sudo /opt/adguard-shield/adguard-shield reset-offenses 192.168.1.100
 ```
+
+### Typischer Ablauf nach Fehlkonfiguration
+
+Wenn ein Client fälschlicherweise eskaliert wurde:
+
+```bash
+# Sperre aufheben
+sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+
+# Offense-Zähler zurücksetzen
+sudo /opt/adguard-shield/adguard-shield reset-offenses 192.168.1.100
+
+# IP dauerhaft in Whitelist aufnehmen (in adguard-shield.conf)
+# WHITELIST="127.0.0.1,::1,192.168.1.100"
+sudo systemctl restart adguard-shield
+```
+
+---
 
 ## Firewall-Befehle
 
+### Chain und ipsets anlegen
+
 ```bash
-# Chain und ipsets anlegen
 sudo /opt/adguard-shield/adguard-shield firewall-create
-
-# Status anzeigen
-sudo /opt/adguard-shield/adguard-shield firewall-status
-
-# ipsets leeren
-sudo /opt/adguard-shield/adguard-shield firewall-flush
-
-# Chain, Regeln und ipsets entfernen
-sudo /opt/adguard-shield/adguard-shield firewall-remove
-
-# aktuelle iptables-Regeln sichern
-sudo /opt/adguard-shield/adguard-shield firewall-save
-
-# gespeicherte Regeln wiederherstellen
-sudo /opt/adguard-shield/adguard-shield firewall-restore
 ```
 
-Normalerweise musst du diese Befehle nicht manuell ausführen. Der Daemon erstellt die Firewall beim Start und schreibt aktive Sperren aus SQLite wieder hinein.
+### Status anzeigen
 
-Welche Host-Chain genutzt wird, hängt von `FIREWALL_MODE` ab. Klassische Installationen und Docker Host Network nutzen `INPUT`; Docker mit veröffentlichten Ports nutzt `DOCKER-USER`. Details stehen in [Docker-Installationen](docker.md).
+```bash
+sudo /opt/adguard-shield/adguard-shield firewall-status
+```
 
-Gespeicherte Regeln:
+Zeigt die aktuelle Firewall-Struktur: Chain, ipsets und eingehängte Regeln.
+
+### ipsets leeren
+
+```bash
+sudo /opt/adguard-shield/adguard-shield firewall-flush
+```
+
+Entfernt alle IPs aus den ipsets. Die Firewall-Struktur (Chain, Regeln) bleibt bestehen.
+
+### Chain und ipsets vollständig entfernen
+
+```bash
+sudo /opt/adguard-shield/adguard-shield firewall-remove
+```
+
+### Firewall-Regeln sichern
+
+```bash
+sudo /opt/adguard-shield/adguard-shield firewall-save
+```
+
+Speichert die aktuellen Regeln nach:
 
 ```text
 /var/lib/adguard-shield/iptables-rules.v4
 /var/lib/adguard-shield/iptables-rules.v6
 ```
 
-## Externe Whitelist
+### Gesicherte Regeln wiederherstellen
 
 ```bash
-# Status anzeigen
+sudo /opt/adguard-shield/adguard-shield firewall-restore
+```
+
+**Hinweis:** Normalerweise musst du diese Befehle nicht manuell ausführen. Der Daemon erstellt die Firewall beim Start und schreibt aktive Sperren aus SQLite wieder hinein. Welche Host-Chain genutzt wird, hängt von `FIREWALL_MODE` ab. Details stehen in [Docker-Installationen](docker.md).
+
+---
+
+## Externe Whitelist
+
+### Status anzeigen
+
+```bash
 sudo /opt/adguard-shield/adguard-shield whitelist-status
+```
 
-# sofort synchronisieren
+### Sofort synchronisieren
+
+```bash
 sudo /opt/adguard-shield/adguard-shield whitelist-sync
+```
 
-# aufgelöste externe Whitelist entfernen
+### Aufgelöste externe Whitelist entfernen
+
+```bash
 sudo /opt/adguard-shield/adguard-shield whitelist-flush
 ```
 
-Die externe Whitelist kann IPs, CIDR-Netze und Hostnamen enthalten. Hostnamen werden per DNS aufgelöst und als IPs in SQLite gespeichert.
+### Hinweise
 
-Wichtig:
-
+- Die externe Whitelist kann IPs, CIDR-Netze und Hostnamen enthalten.
+- Hostnamen werden per DNS aufgelöst und als IPs in SQLite gespeichert.
 - Eine gewhitelistete IP wird nicht gesperrt.
-- Wird eine bereits gesperrte IP später gewhitelistet, wird sie freigegeben.
-- Die dauerhafte Synchronisation läuft im Daemon.
-- `whitelist-sync` erzwingt nur einen einzelnen Lauf.
+- Wird eine bereits gesperrte IP später gewhitelistet, wird sie automatisch freigegeben.
+- Die dauerhafte Synchronisation läuft im Daemon im konfigurierten Intervall.
+- `whitelist-sync` erzwingt nur einen einzelnen, sofortigen Lauf.
+
+---
 
 ## Externe Blocklist
 
+### Status anzeigen
+
 ```bash
-# Status anzeigen
 sudo /opt/adguard-shield/adguard-shield blocklist-status
+```
 
-# sofort synchronisieren
+### Sofort synchronisieren
+
+```bash
 sudo /opt/adguard-shield/adguard-shield blocklist-sync
+```
 
-# alle Sperren aus externer Blocklist aufheben
+### Alle Sperren aus externer Blocklist aufheben
+
+```bash
 sudo /opt/adguard-shield/adguard-shield blocklist-flush
 ```
 
-Die externe Blocklist kann IPs, CIDR-Netze und Hostnamen enthalten. Hostnamen werden aufgelöst. Einträge aus der Whitelist werden übersprungen.
+### Hinweise
 
-Wenn `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` gesetzt ist, hebt der Daemon Blocklist-Sperren wieder auf, sobald sie nicht mehr in der externen Liste vorkommen.
+- Die externe Blocklist kann IPs, CIDR-Netze und Hostnamen enthalten.
+- Hostnamen werden per DNS aufgelöst.
+- IPs aus der Whitelist werden übersprungen.
+- Bei `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` hebt der Daemon Blocklist-Sperren automatisch auf, sobald sie nicht mehr in der externen Liste vorkommen.
+
+---
 
 ## GeoIP
 
+### Status anzeigen
+
 ```bash
-# Status anzeigen
 sudo /opt/adguard-shield/adguard-shield geoip-status
+```
 
-# aktuelle Clients aus dem Querylog einmalig prüfen
-sudo /opt/adguard-shield/adguard-shield geoip-sync
+### Einzelne IP nachschlagen
 
-# alle GeoIP-Sperren aufheben
-sudo /opt/adguard-shield/adguard-shield geoip-flush
-
-# Cache leeren
-sudo /opt/adguard-shield/adguard-shield geoip-flush-cache
-
-# einzelne IP nachschlagen
+```bash
 sudo /opt/adguard-shield/adguard-shield geoip-lookup 8.8.8.8
 ```
 
-GeoIP-Sperren sind permanent, werden aber bei Konfigurationsänderungen automatisch neu bewertet.
+**Ausgabe:**
+
+```text
+IP: 8.8.8.8 -> Land: US
+```
+
+### Aktuelle Clients prüfen
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-sync
+```
+
+Liest das aktuelle Querylog und prüft alle darin enthaltenen Client-IPs einmalig gegen die GeoIP-Regeln.
+
+### Alle GeoIP-Sperren aufheben
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-flush
+```
+
+### Cache leeren
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-flush-cache
+```
+
+### Hinweise
+
+- GeoIP-Sperren sind permanent, werden aber bei Konfigurationsänderungen automatisch neu bewertet.
+- Die Ländercodes verwenden ISO 3166-1 Alpha-2 (siehe [ISO-3166-1-Kodierliste auf Wikipedia](https://de.wikipedia.org/wiki/ISO-3166-1-Kodierliste)).
+
+---
 
 ## Reports
 
+### Konfiguration und Cron-Status anzeigen
+
 ```bash
-# Konfiguration und Cron-Status anzeigen
 sudo /opt/adguard-shield/adguard-shield report-status
+```
 
-# HTML-Report in Datei schreiben
+### HTML-Report in Datei schreiben
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-generate html /tmp/adguard-shield-report.html
+```
 
-# Text-Report auf stdout ausgeben
+### Text-Report auf stdout ausgeben
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-generate txt
+```
 
-# Testmail senden
+### Testmail senden
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-test
+```
 
-# aktuellen Report senden
+Sendet eine einfache Testmail. Erst wenn diese funktioniert, lohnt sich die Fehlersuche am eigentlichen Report.
+
+### Aktuellen Report erzeugen und versenden
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-send
+```
 
-# Cron-Job installieren
+### Cron-Job installieren
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-install
+```
 
-# Cron-Job entfernen
+Erstellt die Datei `/etc/cron.d/adguard-shield-report` mit dem konfigurierten Intervall und der Versandzeit.
+
+### Cron-Job entfernen
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-remove
 ```
 
-Der Cron-Job liegt hier:
+Details zum Report-System stehen in [E-Mail Report](report.md).
 
-```text
-/etc/cron.d/adguard-shield-report
-```
+---
 
 ## Dry-Run
 
@@ -601,23 +758,39 @@ Der Cron-Job liegt hier:
 sudo /opt/adguard-shield/adguard-shield dry-run
 ```
 
-Der Dry-Run ist der sicherste Weg, neue Konfigurationen zu prüfen.
+Der Dry-Run ist der sicherste Weg, neue Konfigurationen zu prüfen, bevor sie produktiv gehen.
 
-Im Dry-Run:
+### Verhalten im Dry-Run
 
-- werden Querylogs normal gelesen
-- Rate-Limit, Subdomain-Flood, Watchlist, externe Blocklist und GeoIP werden ausgewertet
-- mögliche Sperren landen als `DRY` in der History
-- es werden keine aktiven Bans angelegt
-- es werden keine Firewall-Regeln gesetzt
+| Was passiert | Was nicht passiert |
+|---|---|
+| Querylogs werden normal gelesen | Keine aktiven Bans werden angelegt |
+| Rate-Limit, Subdomain-Flood, Watchlist werden ausgewertet | Keine Firewall-Regeln werden gesetzt |
+| GeoIP und externe Blocklist werden geprüft | Keine Benachrichtigungen werden gesendet |
+| Mögliche Sperren werden als `DRY` in die History geschrieben | |
 
-Typischer Ablauf nach größeren Änderungen:
+### Typischer Ablauf nach größeren Änderungen
 
 ```bash
+# Dry-Run starten (Strg+C zum Beenden)
 sudo /opt/adguard-shield/adguard-shield dry-run
+
+# Ergebnisse prüfen
 sudo /opt/adguard-shield/adguard-shield history 50
 sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 80
 ```
+
+---
+
+## Version
+
+```bash
+/opt/adguard-shield/adguard-shield version
+```
+
+Zeigt die installierte Version an. Aliase: `--version`, `-v`.
+
+---
 
 ## Typische Betriebsabläufe
 
@@ -665,28 +838,25 @@ sudo /opt/adguard-shield/adguard-shield test
 sudo /opt/adguard-shield/adguard-shield logs --level debug --limit 100
 ```
 
+---
+
 ## DNS-Abfragen zum Testen
 
-Die folgenden Befehle sind ausschließlich für kontrollierte Tests gegen deinen eigenen DNS-Server gedacht. Ersetze `203.0.113.50` durch deine eigene DNS-Server-IP und `example.com` durch eine Testdomain.
+Die folgenden Befehle sind **ausschließlich für kontrollierte Tests gegen deinen eigenen DNS-Server** gedacht. Ersetze `203.0.113.50` durch deine eigene DNS-Server-IP und `example.com` durch eine Testdomain.
 
-Nicht gegen fremde DNS-Server, fremde Dienste oder fremde Infrastruktur verwenden.
+**Nicht gegen fremde DNS-Server, fremde Dienste oder fremde Infrastruktur verwenden.**
 
 ### Voraussetzungen auf dem Testclient
 
-```bash
-# klassisches DNS
-sudo apt install dnsutils
+| Protokoll | Paket | Installationsbefehl |
+|---|---|---|
+| Klassisches DNS | `dnsutils` | `sudo apt install dnsutils` |
+| DNS-over-HTTPS | `curl` | `sudo apt install curl` |
+| DNS-over-TLS | `knot-dnsutils` | `sudo apt install knot-dnsutils` |
 
-# DoH
-sudo apt install curl
+### Klassisches DNS: Rate-Limit testen
 
-# DoT
-sudo apt install knot-dnsutils
-```
-
-### Klassisches DNS
-
-Gleiche Domain mehrfach abfragen:
+Gleiche Domain mehrfach abfragen (40 parallele Anfragen):
 
 ```bash
 for i in {1..40}; do \
@@ -694,7 +864,9 @@ for i in {1..40}; do \
 done; wait
 ```
 
-Viele zufällige Subdomains:
+### Klassisches DNS: Subdomain-Flood testen
+
+Viele zufällige Subdomains abfragen (60 parallele Anfragen):
 
 ```bash
 for i in {1..60}; do \
@@ -702,7 +874,7 @@ for i in {1..60}; do \
 done; wait
 ```
 
-### DNS over HTTPS
+### DNS-over-HTTPS testen
 
 ```bash
 for i in {1..40}; do \
@@ -713,7 +885,7 @@ done; wait
 
 Bei selbstsigniertem Zertifikat auf dem eigenen Testserver kann für diesen lokalen Test `-k` ergänzt werden.
 
-### DNS over TLS
+### DNS-over-TLS testen
 
 ```bash
 for i in {1..40}; do \
@@ -723,20 +895,12 @@ done; wait
 
 Die Beispielzahlen liegen bewusst nahe an den Standardlimits `RATE_LIMIT_MAX_REQUESTS=30` und `SUBDOMAIN_FLOOD_MAX_UNIQUE=50`.
 
+---
+
 ## Eingebaute Hilfe
 
 ```bash
 /opt/adguard-shield/adguard-shield --help
 ```
 
-Bei unbekannten Befehlen gibt das Binary die Usage-Ausgabe aus. Der wichtigste Merksatz für die Go-Version:
-
-```bash
-sudo /opt/adguard-shield/adguard-shield <befehl>
-```
-
-Nicht mehr:
-
-```bash
-sudo /opt/adguard-shield/adguard-shield.sh <befehl>
-```
+Bei unbekannten Befehlen gibt das Binary die Usage-Ausgabe aus.

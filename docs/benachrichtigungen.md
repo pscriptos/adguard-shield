@@ -2,33 +2,36 @@
 
 AdGuard Shield kann Ereignisse an Ntfy, Discord, Slack, Gotify oder einen eigenen Webhook senden. Benachrichtigungen sind optional und werden über `adguard-shield.conf` gesteuert.
 
-Typische Ereignisse:
+## Unterstützte Ereignisse
 
-- Service gestartet
-- Service gestoppt
-- automatische Sperre
-- manuelle Sperre
-- GeoIP-Sperre
-- externe Blocklist-Sperre, falls separat aktiviert
-- Freigabe
-- Bulk-Freigabe, zum Beispiel durch `flush`
+| Ereignis | Beschreibung |
+|---|---|
+| Service gestartet | Daemon wurde gestartet |
+| Service gestoppt | Daemon wurde gestoppt |
+| Automatische Sperre | Rate-Limit- oder Subdomain-Flood-Erkennung |
+| Watchlist-Sperre | DNS-Flood-Watchlist-Treffer (permanent) |
+| Manuelle Sperre | IP wurde manuell per `ban` gesperrt |
+| GeoIP-Sperre | Ländersperre ausgelöst (wenn `GEOIP_NOTIFY=true`) |
+| Blocklist-Sperre | Externe Blocklist (wenn `EXTERNAL_BLOCKLIST_NOTIFY=true`) |
+| Freigabe | IP wurde entsperrt (manuell, abgelaufen oder durch Whitelist) |
+| Bulk-Freigabe | `flush`, `geoip-flush` oder `blocklist-flush` |
 
 ## Grundkonfiguration
 
 ```bash
 NOTIFY_ENABLED=true
-NOTIFY_TYPE="ntfy"
+NOTIFY_TYPE="ntfy"     # ntfy, discord, slack, gotify oder generic
 ```
 
-Mögliche Typen:
+### Mögliche Typen
 
-```text
-ntfy
-discord
-slack
-gotify
-generic
-```
+| Typ | Protokoll | Beschreibung |
+|---|---|---|
+| `ntfy` | HTTP POST | Push-Benachrichtigungen über ntfy.sh oder selbst gehostete Instanz |
+| `discord` | Webhook | Discord-Kanal-Webhook |
+| `slack` | Webhook | Slack Incoming Webhook |
+| `gotify` | HTTP POST | Gotify-Server mit App-Token |
+| `generic` | HTTP POST (JSON) | Eigener Webhook-Endpunkt |
 
 Nach Änderungen:
 
@@ -36,11 +39,13 @@ Nach Änderungen:
 sudo systemctl restart adguard-shield
 ```
 
-Zum Prüfen kannst du den Service neu starten oder im Dry-Run eine Erkennung auslösen.
+---
 
 ## Ntfy
 
 Ntfy ist der einfachste Einstieg, weil kein komplexer Webhook-Body benötigt wird.
+
+### Konfiguration
 
 ```bash
 NOTIFY_ENABLED=true
@@ -51,7 +56,7 @@ NTFY_TOKEN=""
 NTFY_PRIORITY="4"
 ```
 
-Eigene Ntfy-Instanz:
+### Eigene Ntfy-Instanz
 
 ```bash
 NTFY_SERVER_URL="https://ntfy.example.com"
@@ -59,23 +64,27 @@ NTFY_TOPIC="dns-security"
 NTFY_TOKEN="tk_geheimer_token"
 ```
 
-Prioritäten:
+### Prioritäten
 
-| Wert | Bedeutung |
-|---:|---|
-| `1` | Minimum |
-| `2` | Niedrig |
-| `3` | Standard |
-| `4` | Hoch |
-| `5` | Maximum |
+| Wert | Bedeutung | Beschreibung |
+|---:|---|---|
+| `1` | Minimum | Keine Benachrichtigung auf dem Gerät |
+| `2` | Niedrig | Leise Benachrichtigung |
+| `3` | Standard | Normale Benachrichtigung |
+| `4` | Hoch | Benachrichtigung mit Ton |
+| `5` | Maximum | Dringende Benachrichtigung |
 
-Hinweise:
+### Hinweise
 
 - Bei `NOTIFY_TYPE="ntfy"` wird `NOTIFY_WEBHOOK_URL` nicht verwendet.
 - Bei privaten Topics oder eigener Instanz ist ein Token empfehlenswert.
-- Der Topic-Name sollte nicht öffentlich erratbar sein.
+- Der Topic-Name sollte nicht öffentlich erratbar sein, um Fremdzugriff zu verhindern.
+
+---
 
 ## Discord
+
+### Konfiguration
 
 ```bash
 NOTIFY_ENABLED=true
@@ -83,18 +92,21 @@ NOTIFY_TYPE="discord"
 NOTIFY_WEBHOOK_URL="https://discord.com/api/webhooks/xxx/yyy"
 ```
 
-Webhook erstellen:
+### Webhook erstellen
 
 1. Discord-Server öffnen.
-2. Servereinstellungen öffnen.
-3. Integrationen auswählen.
-4. Webhooks öffnen.
-5. Neuen Webhook erstellen.
-6. URL kopieren und in `NOTIFY_WEBHOOK_URL` eintragen.
+2. Servereinstellungen > Integrationen > Webhooks.
+3. Neuen Webhook erstellen.
+4. Gewünschten Kanal auswählen.
+5. URL kopieren und in `NOTIFY_WEBHOOK_URL` eintragen.
 
-Discord erhält den Inhalt als `content`.
+Discord erhält den Inhalt als `content`-Feld im JSON-Body.
+
+---
 
 ## Slack
+
+### Konfiguration
 
 ```bash
 NOTIFY_ENABLED=true
@@ -102,15 +114,19 @@ NOTIFY_TYPE="slack"
 NOTIFY_WEBHOOK_URL="https://hooks.slack.com/services/xxx/yyy/zzz"
 ```
 
-Slack erhält den Inhalt als `text`.
+### Webhook einrichten
 
-Einrichtung grob:
-
-1. Slack-App mit Incoming Webhooks einrichten.
+1. Slack-App mit Incoming Webhooks erstellen oder vorhandene App verwenden.
 2. Webhook für den gewünschten Channel aktivieren.
 3. Webhook-URL in die Konfiguration kopieren.
 
+Slack erhält den Inhalt als `text`-Feld im JSON-Body.
+
+---
+
 ## Gotify
+
+### Konfiguration
 
 ```bash
 NOTIFY_ENABLED=true
@@ -118,18 +134,21 @@ NOTIFY_TYPE="gotify"
 NOTIFY_WEBHOOK_URL="https://gotify.example.com/message?token=xxx"
 ```
 
-Gotify erhält `title`, `message` und `priority` als Formularwerte.
-
-Token erstellen:
+### Token erstellen
 
 1. Gotify-Weboberfläche öffnen.
-2. Apps auswählen.
-3. App erstellen.
-4. Token in die URL einsetzen.
+2. Apps > App erstellen.
+3. Token aus der App kopieren und in die URL einsetzen.
+
+Gotify erhält `title`, `message` und `priority` als Formularwerte.
+
+---
 
 ## Generic Webhook
 
-Für eigene Automatisierung:
+Für eigene Automatisierung oder Anbindung an andere Systeme.
+
+### Konfiguration
 
 ```bash
 NOTIFY_ENABLED=true
@@ -137,7 +156,9 @@ NOTIFY_TYPE="generic"
 NOTIFY_WEBHOOK_URL="https://example.com/adguard-shield-webhook"
 ```
 
-AdGuard Shield sendet einen `POST` mit JSON:
+### JSON-Payload
+
+AdGuard Shield sendet einen `POST` mit folgendem JSON-Body:
 
 ```json
 {
@@ -148,45 +169,36 @@ AdGuard Shield sendet einen `POST` mit JSON:
 }
 ```
 
-Mögliche `action`-Werte:
+### Mögliche `action`-Werte
 
 | Aktion | Bedeutung |
 |---|---|
-| `ban` | Sperre |
-| `unban` | Freigabe |
-| `manual-flush` | Bulk-Freigabe |
-| `geoip-flush` | Bulk-Freigabe von GeoIP-Sperren |
-| `external-blocklist-flush` | Bulk-Freigabe externer Blocklist-Sperren |
-| `service_start` | Service gestartet |
-| `service_stop` | Service gestoppt |
+| `ban` | Sperre wurde gesetzt |
+| `unban` | Sperre wurde aufgehoben |
+| `manual-flush` | Bulk-Freigabe aller Sperren |
+| `geoip-flush` | Bulk-Freigabe aller GeoIP-Sperren |
+| `external-blocklist-flush` | Bulk-Freigabe aller externen Blocklist-Sperren |
+| `service_start` | Service wurde gestartet |
+| `service_stop` | Service wurde gestoppt |
 
-## Externe Blocklist und Benachrichtigungen
+---
 
-Für Sperren aus externen Blocklisten gibt es einen zusätzlichen Schalter:
+## Separate Steuerung für Module
 
-```bash
-EXTERNAL_BLOCKLIST_NOTIFY=false
-```
-
-Warum separat?
-
-Eine große Blocklist kann beim ersten Sync hunderte oder tausende IPs sperren. Wenn dafür jede Sperre eine Nachricht erzeugt, wird dein Benachrichtigungskanal unbrauchbar.
-
-Empfehlung:
+### Externe Blocklist
 
 ```bash
 EXTERNAL_BLOCKLIST_NOTIFY=false
 ```
 
-Nur bei kleinen, kuratierten Listen:
+**Warum separat?** Eine große Blocklist kann beim ersten Sync hunderte oder tausende IPs sperren. Wenn jede Sperre eine Nachricht erzeugt, wird der Benachrichtigungskanal unbrauchbar.
 
-```bash
-EXTERNAL_BLOCKLIST_NOTIFY=true
-```
+| Listengröße | Empfehlung |
+|---|---|
+| Große Listen (>100 IPs) | `EXTERNAL_BLOCKLIST_NOTIFY=false` (Standard) |
+| Kleine, kuratierte Listen (<50 IPs) | `EXTERNAL_BLOCKLIST_NOTIFY=true` möglich |
 
-## GeoIP-Benachrichtigungen
-
-GeoIP hat ebenfalls einen eigenen Schalter:
+### GeoIP
 
 ```bash
 GEOIP_NOTIFY=true
@@ -198,6 +210,8 @@ Wenn GeoIP aktiv ist, aber keine Nachrichten für GeoIP-Sperren gesendet werden 
 GEOIP_NOTIFY=false
 ```
 
+---
+
 ## Bulk-Freigaben
 
 Diese Befehle können viele IPs auf einmal freigeben:
@@ -208,22 +222,28 @@ sudo /opt/adguard-shield/adguard-shield geoip-flush
 sudo /opt/adguard-shield/adguard-shield blocklist-flush
 ```
 
-AdGuard Shield sendet dafür nicht eine Nachricht pro IP, sondern eine zusammenfassende Meldung mit der Anzahl der freigegebenen Sperren.
+AdGuard Shield sendet dafür **nicht** eine Nachricht pro IP, sondern eine zusammenfassende Meldung mit der Anzahl der freigegebenen Sperren.
+
+---
 
 ## AbuseIPDB-Hinweis in Nachrichten
 
 Bei permanenten Monitor-Sperren kann AdGuard Shield zusätzlich an AbuseIPDB melden.
 
-Voraussetzungen:
+**Voraussetzungen:**
 
 ```bash
 ABUSEIPDB_ENABLED=true
 ABUSEIPDB_API_KEY="..."
 ```
 
-Wenn eine Meldung ausgelöst wurde, enthält die Ban-Nachricht einen entsprechenden Hinweis. Außerdem enthält jede Ban- und Unban-Nachricht einen Link zur AbuseIPDB-Check-Seite der IP.
+**Verhalten:**
 
-AbuseIPDB wird nicht für GeoIP- oder externe Blocklist-Sperren verwendet.
+- Wenn eine AbuseIPDB-Meldung ausgelöst wurde, enthält die Ban-Nachricht einen entsprechenden Hinweis.
+- Jede Ban- und Unban-Nachricht enthält einen Link zur AbuseIPDB-Check-Seite der IP.
+- AbuseIPDB wird nicht für GeoIP- oder externe Blocklist-Sperren verwendet.
+
+---
 
 ## Beispielinhalte
 
@@ -299,6 +319,8 @@ Freigegebene IPs: 28
 Aktion: Manual-Flush
 ```
 
+---
+
 ## Fehlersuche
 
 Wenn keine Benachrichtigung ankommt:
@@ -308,17 +330,24 @@ sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
 sudo journalctl -u adguard-shield --no-pager -n 100
 ```
 
-Prüfe:
+### Checkliste
 
-- `NOTIFY_ENABLED=true`
-- `NOTIFY_TYPE` korrekt geschrieben
-- Ziel-URL oder Ntfy-Topic gesetzt
-- Token gültig
-- Server kann den Webhook erreichen
-- Firewall des Servers blockiert ausgehende HTTPS-Verbindungen nicht
+| Prüfpunkt | Was zu prüfen ist |
+|---|---|
+| Aktiviert | `NOTIFY_ENABLED=true` gesetzt? |
+| Typ | `NOTIFY_TYPE` korrekt geschrieben? |
+| Ziel | Webhook-URL oder Ntfy-Topic gesetzt? |
+| Token | Token gültig und nicht abgelaufen? |
+| Netzwerk | Server kann ausgehende HTTPS-Verbindungen aufbauen? |
+| Firewall | Keine Firewall blockiert ausgehende Verbindungen? |
+| Modul-Schalter | `EXTERNAL_BLOCKLIST_NOTIFY` oder `GEOIP_NOTIFY` separat deaktiviert? |
 
-Bei `generic` kannst du testweise einen lokalen HTTP-Empfänger oder einen Request-Inspector verwenden.
+Bei `generic` kannst du testweise einen lokalen HTTP-Empfänger oder einen Request-Inspector verwenden, um den gesendeten Payload zu sehen.
+
+---
 
 ## Datenschutz
 
-Benachrichtigungen können IP-Adressen, Domainnamen und Hostnamen enthalten. Sende sie nur an Dienste, denen du vertraust. Für öffentliche oder geteilte Kanäle ist Ntfy mit privatem Topic oder eine eigene Ntfy/Gotify-Instanz oft die bessere Wahl.
+Benachrichtigungen können IP-Adressen, Domainnamen und Hostnamen enthalten. Sende sie nur an Dienste, denen du vertraust.
+
+Für öffentliche oder geteilte Kanäle ist eine eigene Ntfy- oder Gotify-Instanz mit privatem Topic oft die bessere Wahl als ein öffentlicher Kanal.

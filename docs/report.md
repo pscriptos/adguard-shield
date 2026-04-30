@@ -4,55 +4,57 @@ AdGuard Shield kann Statistik-Reports direkt aus der SQLite-Datenbank erzeugen u
 
 ## Was der Report enthält
 
-Der Report basiert auf:
+Der Report basiert auf der SQLite-Datenbank:
 
 ```text
 /var/lib/adguard-shield/adguard-shield.db
 ```
 
-Ausgewertet werden vor allem:
+### Ausgewertete Daten
 
-- `ban_history`
-- `active_bans`
+| Bereich | Inhalt |
+|---|---|
+| Zeitraum | Start- und Enddatum des Berichtszeitraums |
+| Sperren | Anzahl der Sperren im Zeitraum |
+| Freigaben | Anzahl der Freigaben im Zeitraum |
+| Aktive Sperren | Derzeit aktive Sperren zum Zeitpunkt der Report-Erstellung |
+| Top-Clients | Die am häufigsten gesperrten Client-IPs |
+| Sperrgründe | Aufschlüsselung nach Grund (Rate-Limit, Subdomain-Flood, GeoIP usw.) |
+| Sperrquellen | Aufschlüsselung nach Quelle (Monitor, GeoIP, Blocklist, manuell) |
+| Letzte Ereignisse | Die letzten 20 Einträge aus der Ban-History |
 
-Inhalte:
-
-- Zeitraum des Reports
-- Anzahl Sperren im Zeitraum
-- Anzahl Freigaben im Zeitraum
-- aktuell aktive Sperren
-- Top-Clients
-- Gründe der Sperren
-- Quellen aktiver Sperren
-- letzte Ereignisse aus der History
+---
 
 ## Konfiguration
 
-```bash
-REPORT_ENABLED=false
-REPORT_INTERVAL="weekly"
-REPORT_TIME="08:00"
-REPORT_EMAIL_TO="admin@example.com"
-REPORT_EMAIL_FROM="adguard-shield@example.com"
-REPORT_FORMAT="html"
-REPORT_MAIL_CMD="msmtp"
-REPORT_BUSIEST_DAY_RANGE=30
-```
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `REPORT_ENABLED` | `false` | Report-Funktion logisch aktivieren |
+| `REPORT_INTERVAL` | `weekly` | Versandintervall |
+| `REPORT_TIME` | `08:00` | Versandzeit im Format `HH:MM` |
+| `REPORT_EMAIL_TO` | `admin@example.com` | Empfängeradresse |
+| `REPORT_EMAIL_FROM` | `adguard-shield@example.com` | Absenderadresse |
+| `REPORT_FORMAT` | `html` | Report-Format (`html` oder `txt`) |
+| `REPORT_MAIL_CMD` | `msmtp` | Mailprogramm für den Versand |
+| `REPORT_BUSIEST_DAY_RANGE` | `30` | Kompatibilitätsparameter für den Zeitraum "Aktivster Tag" |
 
-Parameter:
+### Versandintervalle
 
-| Parameter | Bedeutung |
+| Intervall | Versandzeitpunkt |
 |---|---|
-| `REPORT_ENABLED` | dokumentiert, ob Reports gewünscht sind; der Cron-Job wird über `report-install` angelegt |
-| `REPORT_INTERVAL` | `daily`, `weekly`, `biweekly` oder `monthly` |
-| `REPORT_TIME` | Uhrzeit im Format `HH:MM` |
-| `REPORT_EMAIL_TO` | Empfängeradresse |
-| `REPORT_EMAIL_FROM` | Absenderadresse |
-| `REPORT_FORMAT` | `html` oder `txt` |
-| `REPORT_MAIL_CMD` | Mailprogramm, z.B. `msmtp` |
-| `REPORT_BUSIEST_DAY_RANGE` | Kompatibilitätsparameter für den Zeitraum "Aktivster Tag" |
+| `daily` | Täglich zur Uhrzeit aus `REPORT_TIME` |
+| `weekly` | Montags zur Uhrzeit aus `REPORT_TIME` |
+| `biweekly` | Am 1. und 15. des Monats zur Uhrzeit aus `REPORT_TIME` |
+| `monthly` | Am 1. des Monats zur Uhrzeit aus `REPORT_TIME` |
 
-Beispiel:
+### Formate
+
+| Format | Beschreibung | Empfehlung |
+|---|---|---|
+| `html` | HTML-formatierte E-Mail mit Tabellen und Formatierung | Standard-Mail-Clients |
+| `txt` | Reiner Text ohne Formatierung | Einfache Mail-Setups, Log-Ablage |
+
+### Beispielkonfiguration
 
 ```bash
 REPORT_ENABLED=true
@@ -64,30 +66,57 @@ REPORT_FORMAT="html"
 REPORT_MAIL_CMD="msmtp"
 ```
 
+---
+
 ## Befehle
 
+### Konfiguration und Cron-Status anzeigen
+
 ```bash
-# Konfiguration und Cron-Status anzeigen
 sudo /opt/adguard-shield/adguard-shield report-status
+```
 
-# HTML-Report in Datei schreiben
+### HTML-Report in Datei schreiben
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-generate html /tmp/adguard-shield-report.html
+```
 
-# Text-Report auf stdout ausgeben
+Die Datei kann im Browser geöffnet werden, um das Ergebnis zu prüfen.
+
+### Text-Report auf stdout ausgeben
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-generate txt
+```
 
-# Testmail senden
+### Testmail senden
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-test
+```
 
-# aktuellen Report erzeugen und versenden
+Sendet eine einfache Testmail. Erst wenn diese ankommt, lohnt sich die Fehlersuche am eigentlichen Report.
+
+### Aktuellen Report erzeugen und versenden
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-send
+```
 
-# Cron-Job installieren
+### Cron-Job installieren
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-install
+```
 
-# Cron-Job entfernen
+### Cron-Job entfernen
+
+```bash
 sudo /opt/adguard-shield/adguard-shield report-remove
 ```
+
+---
 
 ## Mailversand
 
@@ -97,26 +126,38 @@ AdGuard Shield übergibt die fertige Mail an ein lokales Mailprogramm. Der Stand
 REPORT_MAIL_CMD="msmtp"
 ```
 
-Minimaler Ablauf mit `msmtp`:
+### Einrichtung mit msmtp
 
 ```bash
+# msmtp installieren
 sudo apt install msmtp msmtp-mta
+
+# Testmail senden
 sudo /opt/adguard-shield/adguard-shield report-test
 ```
 
-`report-test` sendet eine einfache Testmail. Erst wenn diese funktioniert, lohnt sich die Fehlersuche am eigentlichen Report.
+### Eigene Mailprogramm-Argumente
 
 Wenn dein Mailprogramm zusätzliche Argumente braucht, können sie in `REPORT_MAIL_CMD` stehen. AdGuard Shield hängt intern `-t` an, damit Empfänger und Header aus der generierten Mail gelesen werden.
-
-Beispiel:
 
 ```bash
 REPORT_MAIL_CMD="msmtp --account=default"
 ```
 
+### Alternativen zu msmtp
+
+| Programm | `REPORT_MAIL_CMD` |
+|---|---|
+| msmtp | `msmtp` |
+| sendmail | `sendmail` |
+| ssmtp | `ssmtp` |
+| Benutzerdefiniert | Vollständiger Pfad zum Programm |
+
+---
+
 ## Automatischer Versand
 
-Cron installieren:
+### Cron-Job installieren
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield report-install
@@ -134,57 +175,67 @@ Der Cron-Eintrag ruft das installierte Binary mit der installierten Konfiguratio
 /opt/adguard-shield/adguard-shield -config /opt/adguard-shield/adguard-shield.conf report-send
 ```
 
-Zeitplan nach `REPORT_INTERVAL`:
+### Zeitplan nach Intervall
 
 | Intervall | Cron-Verhalten |
 |---|---|
-| `daily` | täglich zur Uhrzeit aus `REPORT_TIME` |
-| `weekly` | montags zur Uhrzeit aus `REPORT_TIME` |
-| `biweekly` | am 1. und 15. des Monats |
-| `monthly` | am 1. des Monats |
+| `daily` | Täglich zur Uhrzeit aus `REPORT_TIME` |
+| `weekly` | Montags zur Uhrzeit aus `REPORT_TIME` |
+| `biweekly` | Am 1. und 15. des Monats |
+| `monthly` | Am 1. des Monats |
 
-Cron entfernen:
+### Cron-Job entfernen
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield report-remove
 ```
 
+---
+
 ## Manuelle Prüfung
 
-Status:
+### Schritt 1: Status prüfen
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield report-status
 ```
 
-Report lokal erzeugen:
+### Schritt 2: Report lokal erzeugen
 
 ```bash
+# HTML-Report zum Ansehen im Browser
 sudo /opt/adguard-shield/adguard-shield report-generate html /tmp/adguard-shield-report.html
+
+# Text-Report in der Konsole
 sudo /opt/adguard-shield/adguard-shield report-generate txt
 ```
 
-Versand testen:
+### Schritt 3: Versand testen
 
 ```bash
+# Einfache Testmail
 sudo /opt/adguard-shield/adguard-shield report-test
+
+# Vollständigen Report senden
 sudo /opt/adguard-shield/adguard-shield report-send
 ```
 
-Logs:
+### Schritt 4: Logs prüfen
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
 sudo journalctl -u cron --no-pager -n 100
 ```
 
-Je nach Distribution heißt der Cron-Service auch `cron`, `crond` oder wird über das allgemeine Syslog protokolliert.
+Je nach Distribution heißt der Cron-Service `cron`, `crond` oder wird über das allgemeine Syslog protokolliert.
+
+---
 
 ## Häufige Probleme
 
 ### `REPORT_EMAIL_TO ist leer`
 
-Setze einen Empfänger:
+Setze einen Empfänger in der Konfiguration:
 
 ```bash
 REPORT_EMAIL_TO="admin@example.com"
@@ -192,52 +243,42 @@ REPORT_EMAIL_TO="admin@example.com"
 
 ### Mailprogramm nicht gefunden
 
-Prüfen:
+Prüfe, ob das Mailprogramm installiert ist:
 
 ```bash
 which msmtp
 ```
 
-Installieren:
+Installiere es bei Bedarf:
 
 ```bash
 sudo apt install msmtp msmtp-mta
 ```
 
-Oder `REPORT_MAIL_CMD` auf dein vorhandenes Mailprogramm setzen.
+Oder setze `REPORT_MAIL_CMD` auf dein vorhandenes Mailprogramm.
 
 ### Cron läuft, aber keine Mail kommt an
 
-Prüfen:
+Prüfe die Konfiguration und den Cron-Job:
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield report-send
 sudo cat /etc/cron.d/adguard-shield-report
 ```
 
-Achte darauf, dass:
+**Checkliste:**
 
-- `REPORT_EMAIL_TO` stimmt
-- `REPORT_MAIL_CMD` im Cron-PATH verfügbar ist
-- der lokale Mailer für root konfiguriert ist
-- Spam-Ordner geprüft wurde
-- ausgehende SMTP-Verbindungen erlaubt sind
+| Prüfpunkt | Beschreibung |
+|---|---|
+| Empfänger | `REPORT_EMAIL_TO` korrekt gesetzt? |
+| Mailprogramm | `REPORT_MAIL_CMD` im Cron-PATH verfügbar? |
+| Root-Konfiguration | Mailer für root konfiguriert? (msmtp benötigt `/root/.msmtprc` oder `/etc/msmtprc`) |
+| Spam | Spam-Ordner geprüft? |
+| SMTP | Ausgehende SMTP-Verbindungen erlaubt? (Port 587/465) |
 
-## HTML und TXT
+### Format beim Generieren überschreiben
 
-HTML ist für normale E-Mail-Clients angenehmer zu lesen:
-
-```bash
-REPORT_FORMAT="html"
-```
-
-TXT ist robuster für sehr einfache Mail-Setups oder Log-Ablage:
-
-```bash
-REPORT_FORMAT="txt"
-```
-
-Du kannst das Format beim manuellen Generieren überschreiben:
+Du kannst das Format unabhängig von der Konfiguration wählen:
 
 ```bash
 sudo /opt/adguard-shield/adguard-shield report-generate txt
