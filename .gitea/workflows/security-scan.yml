@@ -1,0 +1,36 @@
+# AdGuard Shield CI - Security Scan
+# Checks Go dependencies and reachable code for known vulnerabilities.
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  govulncheck:
+    name: Go Vulnerability Check
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.26.2-alpine
+
+    steps:
+      - name: Install dependencies
+        run: apk add --no-cache git nodejs
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Go module cache
+        uses: actions/cache@v4
+        with:
+          path: /go/pkg/mod
+          key: go-mod-${{ hashFiles('go.sum') }}
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...

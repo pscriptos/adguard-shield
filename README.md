@@ -36,22 +36,26 @@ Das schützt klassische DNS-Anfragen genauso wie DoH, DoT und DoQ, ohne deine be
 - Progressive Sperren für Wiederholungstäter, ähnlich wie bei fail2ban
 - Unterstützung für DNS, DoH, DoT, DoQ und DNSCrypt
 - IPv4 und IPv6
-- Eigene Firewall-Chain für sauberes Debugging und einfache Entfernung
+- Go-Daemon mit einem zentralen Querylog-Poller statt mehrerer Shell-Worker
+- Eigene Firewall-Chain mit `ipset`-Sets für schnelle Sperren bei vielen IPs
+- Firewall-Modi für klassische Installation, Docker Host Network und Docker mit veröffentlichten Ports
 - Externe Blocklisten und dynamische externe Whitelists
 - GeoIP-Länderfilter mit Blocklist- oder Allowlist-Modus
 - AbuseIPDB-Reporting für permanent gesperrte IPs
 - Benachrichtigungen über Ntfy, Discord, Slack, Gotify oder Generic Webhook
-- E-Mail-Reports als HTML oder Text
-- Watchdog mit automatischem Health Check und Recovery
+- E-Mail-Reports als HTML oder Text direkt aus dem Go-Binary
+- systemd-Service mit Restart-Policy, ohne Shell-Worker
 
 ## ✅ Voraussetzungen
 
 - Linux-Server mit AdGuard Home
 - Root-Zugriff per `sudo`
 - Erreichbare AdGuard Home Web-API, standardmäßig `http://127.0.0.1:3000`
-- `curl`, `jq`, `iptables`, `gawk` und `systemd`
+- `iptables`, `ip6tables`, `ipset` und `systemd`
 
-Die benötigten Pakete werden vom Installer automatisch installiert.
+Die benötigten Pakete werden vom Go-Installer auf Ubuntu/Debian automatisch installiert.
+
+Wichtig: Go wird auf dem Server nicht benötigt, wenn du ein fertiges Linux-Binary installierst. Zum Erzeugen dieses Binarys brauchst du Go aber auf dem Rechner, auf dem du baust, oder alternativ Docker/CI/Release-Artefakte.
 
 ## ⚡ Schnellstart
 
@@ -59,18 +63,36 @@ Die benötigten Pakete werden vom Installer automatisch installiert.
 git clone https://git.techniverse.net/scriptos/adguard-shield.git /tmp/adguard-shield
 cd /tmp/adguard-shield
 
-# Interaktives Installationsmenü
-sudo bash install.sh
+# Variante A: fertiges Release-Binary laden
+curl -fL -o adguard-shield-linux-amd64.tar.gz \
+  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.0.0/adguard-shield-linux-amd64.tar.gz
+tar -xzf adguard-shield-linux-amd64.tar.gz
+
+# Variante B: Linux-Binary lokal bauen, wenn Go installiert ist
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o adguard-shield ./cmd/adguard-shieldd
+
+# Variante C: ohne lokale Go-Installation per Docker bauen
+docker run --rm -v "$PWD":/src -w /src -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=0 golang:1.22 \
+  go build -o adguard-shield ./cmd/adguard-shieldd
+
+# Fertiges Binary auf dem Server installieren
+chmod +x ./adguard-shield
+sudo ./adguard-shield install
+# Der Installer fragt am Ende, ob AdGuard Shield direkt gestartet werden soll.
+
+# Bestehende Shell-Installation?
+# Der Go-Installer bricht ab und meldet die gefundenen Script-Artefakte.
+# Die alte Version zuerst deinstallieren und die adguard-shield.conf behalten.
 
 # Vor dem produktiven Start testen: loggt nur, sperrt nichts
-sudo /opt/adguard-shield/adguard-shield.sh dry-run
+sudo /opt/adguard-shield/adguard-shield dry-run
 
-# Service starten und prüfen
+# Service starten, falls du die Nachfrage verneint hast, und prüfen
 sudo systemctl start adguard-shield
 sudo systemctl status adguard-shield
 ```
 
-> Beim Installieren wird der systemd-Service für den Autostart registriert. Der Watchdog-Timer wird ebenfalls eingerichtet und prüft den Service regelmäßig.
+> Beim Installieren wird der systemd-Service für den Autostart registriert und am Ende nach dem direkten Start gefragt. Die Go-Version nutzt `Restart=on-failure`; einen separaten Watchdog-Timer wie in der alten Shell-Version gibt es nicht mehr.
 
 [![asciicast](https://asciinema.techniverse.net/a/77.svg)](https://asciinema.techniverse.net/a/77)
 
@@ -79,11 +101,10 @@ sudo systemctl status adguard-shield
 ### Installation & Updates
 
 ```bash
-sudo bash install.sh                 # Interaktives Menü
-sudo bash install.sh install         # Direkt installieren
-sudo bash install.sh update          # Update inkl. Konfigurations-Migration
-sudo bash install.sh status          # Installationsstatus prüfen
-sudo bash /opt/adguard-shield/uninstall.sh
+sudo ./adguard-shield install        # Go-Binary installieren
+sudo ./adguard-shield update         # Binary, Service und Config-Migration aktualisieren
+sudo ./adguard-shield install-status # Installationsstatus prüfen
+sudo /opt/adguard-shield/adguard-shield uninstall --keep-config
 ```
 
 ### Betrieb & Diagnose
@@ -93,23 +114,27 @@ sudo systemctl status adguard-shield
 sudo systemctl restart adguard-shield
 sudo journalctl -u adguard-shield -f
 
-sudo /opt/adguard-shield/adguard-shield.sh status
-sudo /opt/adguard-shield/adguard-shield.sh history
-sudo /opt/adguard-shield/adguard-shield.sh test
-sudo /opt/adguard-shield/adguard-shield.sh unban 192.0.2.10
-sudo /opt/adguard-shield/adguard-shield.sh flush
+sudo /opt/adguard-shield/adguard-shield status
+sudo /opt/adguard-shield/adguard-shield live
+sudo /opt/adguard-shield/adguard-shield history
+sudo /opt/adguard-shield/adguard-shield logs --level warn
+sudo /opt/adguard-shield/adguard-shield test
+sudo /opt/adguard-shield/adguard-shield unban 192.0.2.10
+sudo /opt/adguard-shield/adguard-shield flush
 ```
+
+`live` zeigt eine Terminal-Ansicht mit aktuellen Queries, Top-Client/Domain-Zählungen, Subdomain-Flood-Kandidaten, aktiven Sperren und Systemereignissen. Query-Inhalte werden dabei nicht dauerhaft ins Systemlog geschrieben; `logs` und `logs-follow` sind für Daemon-, Worker- und Fehlerereignisse gedacht.
 
 ### Optionale Module
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield.sh blocklist-status
-sudo /opt/adguard-shield/adguard-shield.sh whitelist-status
-sudo /opt/adguard-shield/adguard-shield.sh geoip-status
+sudo /opt/adguard-shield/adguard-shield blocklist-status
+sudo /opt/adguard-shield/adguard-shield whitelist-status
+sudo /opt/adguard-shield/adguard-shield geoip-status
 
-sudo /opt/adguard-shield/report-generator.sh status
-sudo /opt/adguard-shield/report-generator.sh send
-sudo /opt/adguard-shield/report-generator.sh install
+sudo /opt/adguard-shield/adguard-shield report-status
+sudo /opt/adguard-shield/adguard-shield report-generate html /tmp/adguard-shield-report.html
+sudo /opt/adguard-shield/adguard-shield report-send
 ```
 
 Die vollständige Befehlsreferenz steht in [docs/befehle.md](docs/befehle.md).
@@ -127,6 +152,7 @@ Wichtige Startpunkte:
 - `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASS` für die AdGuard-Home-API
 - `RATE_LIMIT_MAX_REQUESTS`, `RATE_LIMIT_WINDOW` und `CHECK_INTERVAL` für die Erkennung
 - `BAN_DURATION` und `PROGRESSIVE_BAN_*` für temporäre und progressive Sperren
+- `FIREWALL_MODE` für klassische Installationen, Docker Host Network oder Docker Bridge
 - `WHITELIST` für vertrauenswürdige Clients wie Router, Management-IPs oder lokale Resolver
 - `DNS_FLOOD_WATCHLIST_*` für sofortigen Permanent-Ban bei bekannten Flood-Domains
 - `NOTIFY_*`, `REPORT_*`, `GEOIP_*`, `EXTERNAL_BLOCKLIST_*` und `EXTERNAL_WHITELIST_*` für optionale Funktionen
@@ -142,6 +168,7 @@ Mehr Details findest du in [docs/konfiguration.md](docs/konfiguration.md).
 | Architektur & Funktionsweise | [docs/architektur.md](docs/architektur.md) |
 | Befehle & Nutzung | [docs/befehle.md](docs/befehle.md) |
 | Konfiguration | [docs/konfiguration.md](docs/konfiguration.md) |
+| Docker-Installationen | [docs/docker.md](docs/docker.md) |
 | Benachrichtigungen | [docs/benachrichtigungen.md](docs/benachrichtigungen.md) |
 | E-Mail Report | [docs/report.md](docs/report.md) |
 | Updates | [docs/update.md](docs/update.md) |

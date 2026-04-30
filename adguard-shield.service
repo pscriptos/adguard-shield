@@ -1,5 +1,5 @@
 [Unit]
-Description=AdGuard Shield - DNS Rate-Limit Monitor
+Description=AdGuard Shield - Go DNS Rate-Limit Monitor
 Documentation=https://git.techniverse.net/scriptos/adguard-shield
 After=network.target AdGuardHome.service
 Wants=AdGuardHome.service
@@ -8,8 +8,7 @@ StartLimitIntervalSec=300
 
 [Service]
 Type=simple
-ExecStart=/opt/adguard-shield/adguard-shield.sh start
-ExecStop=/opt/adguard-shield/adguard-shield.sh stop
+ExecStart=/opt/adguard-shield/adguard-shield -config /opt/adguard-shield/adguard-shield.conf run
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Neustart-Verhalten
@@ -18,7 +17,7 @@ RestartSec=30
 
 # Sicherheits-Hardening
 ProtectSystem=full
-ReadWritePaths=/var/log /var/lib/adguard-shield /var/lib/adguard-shield/external-blocklist /var/run
+ReadWritePaths=/var/log /var/lib/adguard-shield /var/run /opt/adguard-shield/geoip
 ProtectHome=true
 NoNewPrivileges=false
 PrivateTmp=true

@@ -1,0 +1,110 @@
+# AdGuard Shield CI - Release Binary
+# Triggers when a release is published and uploads a Linux amd64 binary asset.
+name: Release Binary
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BINARY_NAME: adguard-shield
+  PACKAGE_NAME: adguard-shield-linux-amd64
+
+jobs:
+  linux-binary:
+    name: Build & Upload Linux Binary
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.26.2-alpine
+
+    steps:
+      - name: Install build dependencies
+        run: apk add --no-cache git curl jq tar nodejs
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::No release tag found. Create a release or tag first."
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Go module cache
+        uses: actions/cache@v4
+        with:
+          path: /go/pkg/mod
+          key: go-mod-${{ hashFiles('go.sum') }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify before release build
+        run: |
+          go vet ./...
+          go test ./... -count=1 -timeout 120s
+
+      - name: Build Linux amd64 binary
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -trimpath \
+            -ldflags="-s -w -X adguard-shield/internal/appinfo.Version=${{ steps.version.outputs.tag }}" \
+            -o "dist/${BINARY_NAME}" \
+            ./cmd/adguard-shieldd
+          chmod +x "dist/${BINARY_NAME}"
+          tar -C dist -czf "dist/${PACKAGE_NAME}.tar.gz" "${BINARY_NAME}"
+          sha256sum "dist/${PACKAGE_NAME}.tar.gz" > "dist/${PACKAGE_NAME}.tar.gz.sha256"
+
+      - name: Upload artifacts to Gitea release
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          GITEA_REPOSITORY: ${{ github.repository }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          API="${GITEA_SERVER_URL%/}/api/v1"
+          REPO="${GITEA_REPOSITORY}"
+
+          RELEASE_JSON="$(curl -fsSL \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            "${API}/repos/${REPO}/releases/tags/${TAG}")"
+          RELEASE_ID="$(echo "${RELEASE_JSON}" | jq -r '.id')"
+          if [ -z "${RELEASE_ID}" ] || [ "${RELEASE_ID}" = "null" ]; then
+            echo "::error::Could not resolve Gitea release id for tag ${TAG}."
+            exit 1
+          fi
+
+          for file in "dist/${PACKAGE_NAME}.tar.gz" "dist/${PACKAGE_NAME}.tar.gz.sha256"; do
+            name="$(basename "${file}")"
+            existing_id="$(curl -fsSL \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets" \
+              | jq -r --arg name "${name}" '.[] | select(.name == $name) | .id' \
+              | head -n 1)"
+
+            if [ -n "${existing_id}" ]; then
+              curl -fsSL -X DELETE \
+                -H "Authorization: token ${GITEA_TOKEN}" \
+                "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets/${existing_id}"
+            fi
+
+            curl -fsSL -X POST \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              -F "attachment=@${file}" \
+              "${API}/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+              >/dev/null
+          done
