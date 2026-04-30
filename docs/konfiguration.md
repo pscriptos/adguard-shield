@@ -137,7 +137,7 @@ Wiederholungstäter werden wie bei fail2ban stufenweise länger gesperrt. Wird e
 | `LOG_FILE` | `/var/log/adguard-shield.log` | Pfad zur Log-Datei |
 | `LOG_LEVEL` | `INFO` | Log-Level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_MAX_SIZE_MB` | `50` | Max. Log-Größe bevor rotiert wird |
-| `BAN_HISTORY_FILE` | `/var/log/adguard-shield-bans.log` | Datei für die Ban-History (alle Sperren/Entsperrungen) |
+| `BAN_HISTORY_FILE` | `/var/log/adguard-shield-bans.log` | Legacy: Pfad zur alten Ban-History-Datei (wird bei der SQLite-Migration als Quelle verwendet). Neue Einträge werden direkt in die SQLite-Datenbank geschrieben. |
 | `BAN_HISTORY_RETENTION_DAYS` | `0` | Aufbewahrungsdauer der Ban-History in Tagen. `0` = unbegrenzt (niemals löschen). Alte Einträge werden beim nächsten Report automatisch entfernt. |
 
 ### Benachrichtigungen
@@ -175,7 +175,7 @@ Regelmäßige Statistik-Reports per E-Mail. Voraussetzung ist ein funktionierend
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
-| `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für State-Dateien |
+| `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für die SQLite-Datenbank (`adguard-shield.db`) und Caches |
 | `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei |
 | `DRY_RUN` | `false` | Testmodus — nur loggen, nicht sperren |
 

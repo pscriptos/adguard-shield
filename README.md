@@ -49,7 +49,7 @@ Das schützt klassische DNS-Anfragen genauso wie DoH, DoT und DoQ, ohne deine be
 - Linux-Server mit AdGuard Home
 - Root-Zugriff per `sudo`
 - Erreichbare AdGuard Home Web-API, standardmäßig `http://127.0.0.1:3000`
-- `curl`, `jq`, `iptables`, `gawk` und `systemd`
+- `curl`, `jq`, `iptables`, `gawk`, `sqlite3` und `systemd`
 
 Die benötigten Pakete werden vom Installer automatisch installiert.
 
@@ -81,7 +81,7 @@ sudo systemctl status adguard-shield
 ```bash
 sudo bash install.sh                 # Interaktives Menü
 sudo bash install.sh install         # Direkt installieren
-sudo bash install.sh update          # Update inkl. Konfigurations-Migration
+sudo bash install.sh update          # Update inkl. Konfig- & Datenbank-Migration
 sudo bash install.sh status          # Installationsstatus prüfen
 sudo bash /opt/adguard-shield/uninstall.sh
 ```

@@ -42,9 +42,10 @@ Beim Update passiert automatisch:
 2. Die bestehende Konfiguration wird als `adguard-shield.conf.old` gesichert
 3. Neue Konfigurationsparameter werden automatisch zur bestehenden Konfig hinzugefügt
 4. Bestehende Einstellungen bleiben **immer** erhalten
-5. Der systemd Service und Watchdog-Timer werden per `daemon-reload` neu geladen
-6. Der Watchdog-Timer wird automatisch aktiviert (falls noch nicht aktiv)
-7. Der Service wird automatisch neu gestartet (falls er lief)
+5. Bestehende Flat-File-Daten werden einmalig (mit einem Update kommend von einer v0.9.0 oder älter) in die SQLite-Datenbank migriert (mit Fortschrittsanzeige und Backup)
+6. Der systemd Service und Watchdog-Timer werden per `daemon-reload` neu geladen
+7. Der Watchdog-Timer wird automatisch aktiviert (falls noch nicht aktiv)
+8. Der Service wird automatisch neu gestartet (falls er lief)
 
 ### API-Verbindungstest nach Installation
 
@@ -66,6 +67,7 @@ Folgende Pakete werden bei der Installation automatisch installiert (via `apt`):
 - `iptables` — Firewall-Regeln für IP-Sperren
 - `gawk` — Textverarbeitung
 - `systemd` — Service-Management
+- `sqlite3` — Datenbank für State-Management, Ban-History und Offense-Tracking
 
 ## systemd Service
 

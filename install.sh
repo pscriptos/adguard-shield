@@ -6,7 +6,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.9.0"
+VERSION="v1.0.0"
 
 set -euo pipefail
 
@@ -65,6 +65,7 @@ print_help() {
     echo -e "               Aktualisiert alle Scripts, führt eine automatische"
     echo -e "               Konfigurations-Migration durch (neue Parameter werden"
     echo -e "               hinzugefügt, bestehende Einstellungen bleiben erhalten),"
+    echo -e "               migriert bestehende Daten nach SQLite (einmalig)"
     echo -e "               und startet den Service automatisch neu."
     echo ""
     echo -e "  ${GREEN}uninstall${NC}    Vollständige Deinstallation"
@@ -142,7 +143,7 @@ print_help() {
     echo "  - Linux Server (Debian/Ubuntu empfohlen)"
     echo "  - Root-Zugriff (sudo)"
     echo "  - AdGuard Home installiert und erreichbar"
-    echo "  - Pakete: curl, jq, iptables, gawk (werden bei Installation automatisch installiert)"
+    echo "  - Pakete: curl, jq, iptables, gawk, sqlite3 (werden bei Installation automatisch installiert)"
     echo "  - GeoIP (optional): geoip-bin + geoip-database oder MaxMind GeoLite2 DB"
     echo ""
     echo -e "${BOLD}Dokumentation:${NC}"
@@ -197,9 +198,10 @@ check_dependencies() {
         [ip6tables]="iptables"
         [gawk]="gawk"
         [systemctl]="systemd"
+        [sqlite3]="sqlite3"
     )
 
-    for cmd in curl jq iptables ip6tables gawk systemctl; do
+    for cmd in curl jq iptables ip6tables gawk systemctl sqlite3; do
         if command -v "$cmd" &>/dev/null; then
             echo -e "  ✅ $cmd"
         else
@@ -266,6 +268,7 @@ install_files() {
     cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/geoip-worker.sh" "$INSTALL_DIR/"
     cp "$SCRIPT_DIR/offense-cleanup-worker.sh" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/db.sh" "$INSTALL_DIR/"
 
     # Templates kopieren
     mkdir -p "$INSTALL_DIR/templates"
@@ -283,6 +286,7 @@ install_files() {
     chmod +x "$INSTALL_DIR/uninstall.sh"
     chmod +x "$INSTALL_DIR/geoip-worker.sh"
     chmod +x "$INSTALL_DIR/offense-cleanup-worker.sh"
+    chmod +x "$INSTALL_DIR/db.sh"
 
     echo -e "  ✅ Dateien installiert"
     echo ""
@@ -671,6 +675,92 @@ do_install() {
     print_summary
 }
 
+# ─── SQLite-Datenbank-Migration ──────────────────────────────────────────────
+# Migriert bestehende Flat-File-Daten (*.ban, *.offenses, History-Log) nach SQLite.
+# Läuft synchron im Vordergrund mit sichtbarer Fortschrittsanzeige.
+migrate_database() {
+    echo -e "${YELLOW}Prüfe Datenbank-Migration...${NC}"
+
+    # Konfiguration laden für STATE_DIR und BAN_HISTORY_FILE
+    local conf="$INSTALL_DIR/adguard-shield.conf"
+    if [[ ! -f "$conf" ]]; then
+        echo -e "  ${RED}Konfiguration nicht gefunden — Migration übersprungen${NC}"
+        echo ""
+        return 0
+    fi
+
+    # Nur die benötigten Variablen aus der Konfig laden
+    STATE_DIR=$(grep '^STATE_DIR=' "$conf" | cut -d= -f2 | tr -d '"')
+    STATE_DIR="${STATE_DIR:-/var/lib/adguard-shield}"
+    BAN_HISTORY_FILE=$(grep '^BAN_HISTORY_FILE=' "$conf" | cut -d= -f2 | tr -d '"')
+    BAN_HISTORY_FILE="${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}"
+    export STATE_DIR BAN_HISTORY_FILE
+
+    # db.sh aus dem Installationsverzeichnis laden
+    source "$INSTALL_DIR/db.sh"
+
+    # Datenbank initialisieren (Schema anlegen falls nötig)
+    db_init
+
+    # Prüfen ob Migration bereits durchgeführt wurde
+    if [[ -f "$_DB_MIGRATION_MARKER" ]]; then
+        echo -e "  ✅ Datenbank ist aktuell — Migration bereits abgeschlossen"
+        echo ""
+        return 0
+    fi
+
+    # Prüfen ob überhaupt Flat-Files vorhanden sind
+    local has_files=false
+    for f in "${STATE_DIR}"/*.ban "${STATE_DIR}"/ext_*.ban "${STATE_DIR}"/*.offenses; do
+        if [[ -f "$f" ]]; then
+            has_files=true
+            break
+        fi
+    done
+    if [[ "$has_files" == "false" && ! -f "$BAN_HISTORY_FILE" ]]; then
+        # Keine alten Daten vorhanden — Marker setzen und fertig
+        echo "migrated_at=$(date '+%Y-%m-%d %H:%M:%S')" > "$_DB_MIGRATION_MARKER"
+        echo "bans=0" >> "$_DB_MIGRATION_MARKER"
+        echo "offenses=0" >> "$_DB_MIGRATION_MARKER"
+        echo "history=0" >> "$_DB_MIGRATION_MARKER"
+        echo "whitelist=0" >> "$_DB_MIGRATION_MARKER"
+        echo -e "  ✅ Keine bestehenden Daten gefunden — Datenbank bereit"
+        echo ""
+        return 0
+    fi
+
+    echo -e "  ${CYAN}Migriere bestehende Daten nach SQLite...${NC}"
+    echo ""
+
+    local migrated
+    migrated=$(db_migrate_from_files)
+
+    if [[ "${migrated:-0}" -gt 0 ]]; then
+        # Details aus dem Marker lesen
+        local m_bans m_offenses m_history m_whitelist
+        m_bans=$(grep '^bans=' "$_DB_MIGRATION_MARKER" 2>/dev/null | cut -d= -f2)
+        m_offenses=$(grep '^offenses=' "$_DB_MIGRATION_MARKER" 2>/dev/null | cut -d= -f2)
+        m_history=$(grep '^history=' "$_DB_MIGRATION_MARKER" 2>/dev/null | cut -d= -f2)
+        m_whitelist=$(grep '^whitelist=' "$_DB_MIGRATION_MARKER" 2>/dev/null | cut -d= -f2)
+
+        echo -e "  ${GREEN}═══════════════════════════════════════════════════════════${NC}"
+        echo -e "  ${GREEN}  SQLite-Migration erfolgreich abgeschlossen!${NC}"
+        echo -e "  ${GREEN}═══════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo -e "  Migrierte Einträge gesamt: ${BOLD}${migrated}${NC}"
+        [[ "${m_bans:-0}" -gt 0 ]]      && echo -e "    • Aktive Bans:       ${m_bans}"
+        [[ "${m_offenses:-0}" -gt 0 ]]   && echo -e "    • Offense-Tracking:  ${m_offenses}"
+        [[ "${m_history:-0}" -gt 0 ]]    && echo -e "    • Ban-History:       ${m_history}"
+        [[ "${m_whitelist:-0}" -gt 0 ]]  && echo -e "    • Whitelist-Cache:   ${m_whitelist}"
+        echo ""
+        echo -e "  📦 Backup der alten Dateien: ${STATE_DIR}/.backup_pre_sqlite/"
+        echo -e "  📂 Neue Datenbank: ${STATE_DIR}/adguard-shield.db"
+    else
+        echo -e "  ✅ Migration abgeschlossen — keine Daten zum Migrieren"
+    fi
+    echo ""
+}
+
 # ─── Update ──────────────────────────────────────────────────────────────────
 do_update() {
     check_root
@@ -690,6 +780,9 @@ do_update() {
 
     # Konfigurations-Migration durchführen
     migrate_config
+
+    # SQLite-Datenbank-Migration durchführen
+    migrate_database
 
     # Service-Datei aktualisieren
     echo -e "${YELLOW}Aktualisiere systemd Service...${NC}"
@@ -816,6 +909,7 @@ do_uninstall() {
         rm -f "$INSTALL_DIR/geoip-worker.sh"
         rm -f "$INSTALL_DIR/report-generator.sh"
         rm -f "$INSTALL_DIR/adguard-shield-watchdog.sh"
+        rm -f "$INSTALL_DIR/db.sh"
         rm -f "$INSTALL_DIR/uninstall.sh"
         rm -rf "$INSTALL_DIR/templates"
         rm -rf "$INSTALL_DIR/geoip"

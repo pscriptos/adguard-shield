@@ -93,48 +93,36 @@ ADGUARD_SHIELD Chain
 - Kann komplett geflusht werden ohne andere Regeln zu beeinflussen
 - Einfaches Debugging per `iptables -L ADGUARD_SHIELD`
 
-## State-Management
+## State-Management (SQLite)
 
-Jede aktive Sperre wird als Datei gespeichert:
-
-```
-/var/lib/adguard-shield/192.168.1.50.ban
-```
-
-Inhalt:
-```
-CLIENT_IP=192.168.1.50
-DOMAIN=microsoft.com
-COUNT=45
-BAN_TIME=2026-03-03 14:30:00
-BAN_UNTIL_EPOCH=1741012200
-BAN_UNTIL=2026-03-03 15:30:00
-BAN_DURATION=3600
-OFFENSE_LEVEL=1
-IS_PERMANENT=false
-REASON=rate-limit
-```
-
-Zusätzlich wird für jede IP ein Offense-Tracker gespeichert:
+Alle Laufzeitdaten werden in einer zentralen SQLite-Datenbank gespeichert:
 
 ```
-/var/lib/adguard-shield/192.168.1.50.offenses
+/var/lib/adguard-shield/adguard-shield.db
 ```
 
-Inhalt:
-```
-CLIENT_IP=192.168.1.50
-OFFENSE_LEVEL=2
-LAST_OFFENSE_EPOCH=1741008600
-LAST_OFFENSE=2026-03-03 14:30:00
-FIRST_OFFENSE=2026-03-03 12:15:00
-```
+Die Datenbank enthält folgende Tabellen:
 
-Das ermöglicht:
-- Persistenz über Script-Neustarts hinweg
-- Statusabfragen jederzeit möglich
-- Automatisches Aufräumen per Cron-Job
-- Progressive Sperrzeiten über mehrere Ban-Zyklen hinweg
+| Tabelle | Beschreibung |
+|---------|--------------|
+| `active_bans` | Aktive Sperren (IP, Domain, Sperrdauer, Offense-Level, Grund, Quelle, GeoIP) |
+| `offense_tracking` | Offense-Zähler für progressive Sperren (Level, letztes/erstes Vergehen) |
+| `ban_history` | Vollständige Ban-History (alle Sperren und Entsperrungen) |
+| `whitelist_cache` | Cache der aufgelösten externen Whitelist-IPs |
+| `schema_version` | Datenbank-Schema-Version für zukünftige Migrationen |
+
+**Vorteile gegenüber Flat-Files:**
+- Schnellere Abfragen, besonders bei vielen aktiven Sperren
+- Atomare Transaktionen — kein Datenverlust bei Stromausfall
+- WAL-Modus für parallelen Lese-/Schreibzugriff
+- Indexierte Suche nach IP, Zeitstempel, Quelle und Aktion
+- Kompakte Speicherung statt tausender Einzeldateien
+
+Die zentrale Datenbankbibliothek (`db.sh`) wird von allen Scripts per `source db.sh` eingebunden und stellt typisierte Funktionen für alle Tabellen bereit (z.B. `db_ban_insert`, `db_offense_get_level`, `db_history_add`).
+
+### Migration von Flat-Files
+
+Beim Update auf die SQLite-Version werden bestehende Flat-File-Daten (`.ban`, `.offenses`, Ban-History-Log, Whitelist-Cache) automatisch in die Datenbank migriert. Die alten Dateien werden als Backup nach `/var/lib/adguard-shield/.backup_pre_sqlite/` verschoben. Die Migration läuft einmalig beim Update und zeigt den Fortschritt im Terminal an.
 
 ## Dateistruktur nach Installation
 
@@ -149,6 +137,7 @@ Das ermöglicht:
 ├── external-whitelist-worker.sh   # Externer Whitelist-Worker (DNS-Auflösung)
 ├── geoip-worker.sh                # GeoIP-Länderfilter-Worker
 ├── offense-cleanup-worker.sh      # Aufräumen abgelaufener Offense-Zähler (nice 19, idle I/O)
+├── db.sh                          # SQLite Datenbank-Bibliothek (wird von allen Scripts eingebunden)
 ├── unban-expired.sh               # Cron-basiertes Entsperren
 └── geoip/                         # Auto-Download MaxMind GeoLite2 DB (optional)
 
@@ -158,15 +147,16 @@ Das ermöglicht:
 └── adguard-shield-watchdog.timer  # systemd Timer (alle 5 Min.)
 
 /var/lib/adguard-shield/
-├── *.ban                          # State-Dateien aktiver Sperren
-├── *.offenses                     # Offense-Zähler (Progressive Sperren)
+├── adguard-shield.db              # SQLite-Datenbank (Bans, Offenses, History, Whitelist-Cache)
+├── .migration_v1_complete         # Marker: Flat-File-Migration abgeschlossen
+├── .backup_pre_sqlite/            # Backup der alten Flat-Files nach Migration
 ├── external-blocklist/            # Cache für externe Blocklisten
-├── external-whitelist/            # Cache für externe Whitelisten + aufgelöste IPs
+├── external-whitelist/            # Cache für externe Whitelisten
 └── geoip-cache/                   # Cache für GeoIP-Lookups (24h)
 
 /var/log/
 ├── adguard-shield.log             # Laufzeit-Log
-└── adguard-shield-bans.log        # Ban-History (alle Sperren/Entsperrungen)
+└── adguard-shield-bans.log        # Ban-History (Legacy, wird nach Migration nicht mehr geschrieben)
 ```
 
 ## Installer-Architektur
@@ -176,7 +166,7 @@ Der Installer (`install.sh`) bietet ein interaktives Menü und folgende Funktion
 | Befehl | Beschreibung |
 |--------|--------------|
 | `install` | Vollständige Neuinstallation (Abhängigkeiten, Dateien, Konfiguration, Service, Watchdog) |
-| `update` | Update mit automatischer Konfigurations-Migration, Watchdog-Aktivierung und Service-Neustart |
+| `update` | Update mit automatischer Konfigurations-Migration, Datenbank-Migration, Watchdog-Aktivierung und Service-Neustart |
 | `uninstall` | Deinstallation mit optionalem Behalten der Konfiguration |
 | `status` | Installationsstatus, Version und Service-Status anzeigen |
 | `--help` | Hilfe und Befehlsübersicht |
@@ -206,15 +196,20 @@ Der Installer (`install.sh`) bietet ein interaktives Menü und folgende Funktion
 
 ## Ban-History
 
-Jede Sperre und Entsperrung wird dauerhaft in der Ban-History protokolliert (`/var/log/adguard-shield-bans.log`). Das ermöglicht eine lückenlose Nachvollziehbarkeit, auch nachdem State-Dateien bereits gelöscht wurden.
+Jede Sperre und Entsperrung wird dauerhaft in der SQLite-Datenbank protokolliert (Tabelle `ban_history`). Das ermöglicht eine lückenlose Nachvollziehbarkeit mit indexierter Suche nach IP, Zeitstempel und Aktion.
 
-**Format:**
-```
-ZEITSTEMPEL         | AKTION | CLIENT-IP                               | DOMAIN                         | ANFRAGEN | SPERRDAUER | GRUND
-2026-03-03 14:30:12 | BAN    | 192.168.1.50                            | microsoft.com                  | 45       | 3600s      | rate-limit
-2026-03-03 15:30:12 | UNBAN  | 192.168.1.50                            | microsoft.com                  | -        | -          | expired
-2026-03-03 16:10:33 | UNBAN  | 10.0.0.25                               | telemetry.example.com          | -        | -          | manual
-```
+**Gespeicherte Felder pro Eintrag:**
+| Feld | Beschreibung |
+|------|--------------|
+| `timestamp_epoch` | Unix-Zeitstempel |
+| `timestamp_text` | Lesbarer Zeitstempel |
+| `action` | `BAN` oder `UNBAN` |
+| `client_ip` | Betroffene IP-Adresse |
+| `domain` | Angefragte Domain |
+| `count` | Anzahl der Anfragen |
+| `duration` | Sperrdauer |
+| `protocol` | Verwendetes DNS-Protokoll |
+| `reason` | Sperrgrund |
 
 **Mögliche Gründe (GRUND-Spalte):**
 | Grund | Bedeutung |

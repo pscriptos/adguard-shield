@@ -23,6 +23,9 @@ fi
 # shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
 
+# shellcheck source=db.sh
+source "${SCRIPT_DIR}/db.sh"
+
 # ─── Worker PID-File ──────────────────────────────────────────────────────────
 WORKER_PID_FILE="/var/run/adguard-blocklist-worker.pid"
 
@@ -48,21 +51,11 @@ log_ban_history() {
     local action="$1"
     local client_ip="$2"
     local reason="${3:-external-blocklist}"
-    local timestamp
-    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-
-    if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
-        echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#──────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
-    fi
 
     local duration="permanent"
     [[ "$EXTERNAL_BLOCKLIST_BAN_DURATION" -gt 0 ]] && duration="${EXTERNAL_BLOCKLIST_BAN_DURATION}s"
 
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "-" "-" "$duration" "-" "$reason" \
-        >> "$BAN_HISTORY_FILE"
+    db_history_add "$action" "$client_ip" "-" "-" "$reason" "$duration" "-"
 }
 
 # ─── Verzeichnisse erstellen ──────────────────────────────────────────────────
@@ -70,6 +63,7 @@ init_directories() {
     mkdir -p "$EXTERNAL_BLOCKLIST_CACHE_DIR"
     mkdir -p "$STATE_DIR"
     mkdir -p "$(dirname "$LOG_FILE")"
+    db_init
 }
 
 # ─── Whitelist Prüfung ───────────────────────────────────────────────────────
@@ -77,15 +71,13 @@ is_whitelisted() {
     local ip="$1"
     IFS=',' read -ra wl_entries <<< "$WHITELIST"
     for entry in "${wl_entries[@]}"; do
-        entry=$(echo "$entry" | xargs)  # trim
+        entry=$(echo "$entry" | xargs)
         if [[ "$ip" == "$entry" ]]; then
             return 0
         fi
     done
 
-    # Externe Whitelist prüfen (aufgelöste IPs aus dem Whitelist-Worker)
-    local ext_wl_file="${EXTERNAL_WHITELIST_CACHE_DIR:-/var/lib/adguard-shield/external-whitelist}/resolved_ips.txt"
-    if [[ -f "$ext_wl_file" ]] && grep -qxF "$ip" "$ext_wl_file" 2>/dev/null; then
+    if db_whitelist_contains "$ip"; then
         return 0
     fi
 
@@ -118,11 +110,10 @@ setup_iptables_chain() {
 # ─── IP sperren ──────────────────────────────────────────────────────────────
 ban_ip() {
     local ip="$1"
-    local state_file="${STATE_DIR}/ext_${ip//[:\/]/_}.ban"
 
     # Bereits gesperrt?
-    if [[ -f "$state_file" ]]; then
-        # iptables-Regel prüfen und ggf. nachziehen (z.B. nach Neustart verloren gegangen)
+    if db_ban_exists "$ip"; then
+        # iptables-Regel pruefen und ggf. nachziehen
         if [[ "$ip" == *:* ]]; then
             if ! ip6tables -C "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null; then
                 ip6tables -I "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
@@ -132,14 +123,7 @@ ban_ip() {
                 iptables -I "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
             fi
         fi
-        log "DEBUG" "IP $ip bereits über externe Blocklist gesperrt"
-        return 0
-    fi
-
-    # Nicht auch vom Hauptscript gesperrt? (State-Datei ohne ext_ Prefix)
-    local main_state_file="${STATE_DIR}/${ip//[:\/]/_}.ban"
-    if [[ -f "$main_state_file" ]]; then
-        log "DEBUG" "IP $ip bereits vom Rate-Limiter gesperrt - überspringe"
+        log "DEBUG" "IP $ip bereits gesperrt"
         return 0
     fi
 
@@ -151,36 +135,24 @@ ban_ip() {
 
     log "WARN" "SPERRE IP (externe Blocklist): $ip"
 
-    # iptables-Regel setzen
     if [[ "$ip" == *:* ]]; then
         ip6tables -I "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
     else
         iptables -I "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
     fi
 
-    # State speichern
     local ban_until_epoch="0"
-    local ban_until_display="permanent"
+    local is_permanent=1
     if [[ "$EXTERNAL_BLOCKLIST_BAN_DURATION" -gt 0 ]]; then
         ban_until_epoch=$(date -d "+${EXTERNAL_BLOCKLIST_BAN_DURATION} seconds" '+%s' 2>/dev/null \
             || date -v "+${EXTERNAL_BLOCKLIST_BAN_DURATION}S" '+%s')
-        ban_until_display=$(date -d "@$ban_until_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
-            || date -r "$ban_until_epoch" '+%Y-%m-%d %H:%M:%S')
+        is_permanent=0
     fi
 
-    cat > "$state_file" << EOF
-CLIENT_IP=$ip
-DOMAIN=-
-COUNT=-
-BAN_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-BAN_UNTIL_EPOCH=$ban_until_epoch
-BAN_UNTIL=$ban_until_display
-SOURCE=external-blocklist
-EOF
+    db_ban_insert "$ip" "-" "0" "$(date '+%Y-%m-%d %H:%M:%S')" "$ban_until_epoch" "${EXTERNAL_BLOCKLIST_BAN_DURATION:-0}" "0" "$is_permanent" "external-blocklist" "-" "external-blocklist"
 
     log_ban_history "BAN" "$ip" "external-blocklist"
 
-    # Benachrichtigung senden (nur wenn EXTERNAL_BLOCKLIST_NOTIFY=true)
     if [[ "$NOTIFY_ENABLED" == "true" && "${EXTERNAL_BLOCKLIST_NOTIFY:-false}" == "true" ]]; then
         send_notification "ban" "$ip"
     fi
@@ -190,9 +162,8 @@ EOF
 unban_ip() {
     local ip="$1"
     local reason="${2:-external-blocklist-removed}"
-    local state_file="${STATE_DIR}/ext_${ip//[:\/]/_}.ban"
 
-    [[ -f "$state_file" ]] || return 0
+    db_ban_exists "$ip" || return 0
 
     log "INFO" "ENTSPERRE IP (externe Blocklist entfernt): $ip"
 
@@ -202,7 +173,7 @@ unban_ip() {
         iptables -D "$IPTABLES_CHAIN" -s "$ip" -j DROP 2>/dev/null || true
     fi
 
-    rm -f "$state_file"
+    db_ban_delete "$ip"
     log_ban_history "UNBAN" "$ip" "$reason"
 
     if [[ "$NOTIFY_ENABLED" == "true" && "${EXTERNAL_BLOCKLIST_NOTIFY:-false}" == "true" ]]; then
@@ -542,31 +513,21 @@ parse_blocklist_ips() {
 
 # ─── Aktuelle externe Sperren ermitteln ──────────────────────────────────────
 get_currently_banned_external_ips() {
-    for state_file in "${STATE_DIR}"/ext_*.ban; do
-        [[ -f "$state_file" ]] || continue
-        grep '^CLIENT_IP=' "$state_file" | cut -d= -f2
-    done
+    db_ban_get_by_source "external-blocklist"
 }
 
 # ─── Abgelaufene externe Sperren prüfen ─────────────────────────────────────
 check_expired_external_bans() {
     [[ "$EXTERNAL_BLOCKLIST_BAN_DURATION" -gt 0 ]] || return
 
-    local now
-    now=$(date '+%s')
+    local expired_ips
+    expired_ips=$(db_ban_get_expired_by_source "external-blocklist")
+    [[ -z "$expired_ips" ]] && return
 
-    for state_file in "${STATE_DIR}"/ext_*.ban; do
-        [[ -f "$state_file" ]] || continue
-
-        local ban_until_epoch
-        ban_until_epoch=$(grep '^BAN_UNTIL_EPOCH=' "$state_file" | cut -d= -f2)
-        local client_ip
-        client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
-
-        if [[ -n "$ban_until_epoch" && "$ban_until_epoch" -gt 0 && "$now" -ge "$ban_until_epoch" ]]; then
-            unban_ip "$client_ip" "external-blocklist-expired"
-        fi
-    done
+    while IFS= read -r client_ip; do
+        [[ -z "$client_ip" ]] && continue
+        unban_ip "$client_ip" "external-blocklist-expired"
+    done <<< "$expired_ips"
 }
 
 # ─── Blocklisten synchronisieren ─────────────────────────────────────────────
@@ -615,9 +576,8 @@ sync_blocklists() {
             continue
         fi
 
-        local _state_file_before="${STATE_DIR}/ext_${ip//[:/]/_}.ban"
         local _was_new=false
-        [[ ! -f "$_state_file_before" ]] && _was_new=true
+        db_ban_exists "$ip" || _was_new=true
 
         ban_ip "$ip"
         [[ "$_was_new" == "true" ]] && new_bans=$((new_bans + 1))
@@ -729,12 +689,9 @@ show_status() {
     echo ""
 
     # Aktive externe Sperren
-    local ext_ban_count=0
-    for state_file in "${STATE_DIR}"/ext_*.ban; do
-        [[ -f "$state_file" ]] || continue
-        ext_ban_count=$((ext_ban_count + 1))
-    done
-    echo "  Aktive Sperren (externe Blocklist): $ext_ban_count"
+    local ext_ban_count
+    ext_ban_count=$(db_ban_count_by_source "external-blocklist")
+    echo "  Aktive Sperren (externe Blocklist): ${ext_ban_count:-0}"
 
     echo ""
     echo "  Prüfintervall: ${EXTERNAL_BLOCKLIST_INTERVAL}s"
@@ -817,11 +774,14 @@ case "${1:-start}" in
     flush)
         init_directories
         echo "Entferne alle externen Blocklist-Sperren..."
-        for state_file in "${STATE_DIR}"/ext_*.ban; do
-            [[ -f "$state_file" ]] || continue
-            _ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
-            unban_ip "$_ip" "manual-flush"
-        done
+        local flush_ips
+        flush_ips=$(db_ban_get_by_source "external-blocklist")
+        if [[ -n "$flush_ips" ]]; then
+            while IFS= read -r _ip; do
+                [[ -z "$_ip" ]] && continue
+                unban_ip "$_ip" "manual-flush"
+            done <<< "$flush_ips"
+        fi
         echo "Alle externen Blocklist-Sperren aufgehoben"
         ;;
     *)

@@ -24,6 +24,8 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 # shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
+# shellcheck source=db.sh
+source "${SCRIPT_DIR}/db.sh"
 
 # ─── Niedrigste Priorität setzen (CPU + I/O) ─────────────────────────────────
 # Stellt sicher, dass der Worker auch bei manuellem Start nie andere Dienste
@@ -77,6 +79,7 @@ format_duration() {
 init_directories() {
     mkdir -p "${STATE_DIR}"
     mkdir -p "$(dirname "$LOG_FILE")"
+    db_init
 }
 
 # ─── Abgelaufene Offense-Zähler aufräumen ────────────────────────────────────
@@ -84,39 +87,23 @@ cleanup_expired_offenses() {
     local reset_after="${PROGRESSIVE_BAN_RESET_AFTER:-86400}"
     local now
     now=$(date '+%s')
-    local cleaned=0
+    local cutoff=$((now - reset_after))
 
-    local batch_count=0
-    for offense_file in "${STATE_DIR}"/*.offenses; do
-        [[ -f "$offense_file" ]] || continue
+    local expired_rows
+    expired_rows=$(db_query "SELECT client_ip, offense_level, last_offense_epoch FROM offense_tracking WHERE last_offense_epoch <= $cutoff;")
 
-        local last_offense_epoch client_ip offense_level
-        last_offense_epoch=$(grep '^LAST_OFFENSE_EPOCH=' "$offense_file" | cut -d= -f2 || true)
-        client_ip=$(grep '^CLIENT_IP=' "$offense_file" | cut -d= -f2 || true)
-        offense_level=$(grep '^OFFENSE_LEVEL=' "$offense_file" | cut -d= -f2 || true)
-
-        # Kein Zeitstempel vorhanden → überspringen
-        if [[ -z "$last_offense_epoch" ]]; then
-            log "DEBUG" "Offense-Datei ohne Zeitstempel übersprungen: $offense_file"
-            continue
-        fi
-
-        local elapsed=$((now - last_offense_epoch))
-
-        if [[ $elapsed -gt $reset_after ]]; then
+    if [[ -n "$expired_rows" ]]; then
+        while IFS='|' read -r client_ip offense_level last_epoch; do
+            [[ -z "$client_ip" ]] && continue
+            local elapsed=$((now - last_epoch))
             log "INFO" "Offense-Zähler abgelaufen: $client_ip (Stufe $offense_level, letztes Vergehen vor $(format_duration $elapsed)) → entfernt"
-            rm -f "$offense_file"
-            cleaned=$((cleaned + 1))
-        fi
+        done <<< "$expired_rows"
+    fi
 
-        # Alle 10 Dateien kurz pausieren, um I/O-Bursts zu vermeiden
-        batch_count=$((batch_count + 1))
-        if (( batch_count % 10 == 0 )); then
-            sleep 0.1
-        fi
-    done
+    local cleaned
+    cleaned=$(db_offense_delete_expired "$reset_after")
 
-    if [[ $cleaned -gt 0 ]]; then
+    if [[ "$cleaned" -gt 0 ]]; then
         log "INFO" "Offense-Cleanup: $cleaned abgelaufene Zähler entfernt"
     else
         log "DEBUG" "Offense-Cleanup: keine abgelaufenen Zähler gefunden"
@@ -179,22 +166,11 @@ show_status() {
     echo "  Reset-Zeitraum: $(format_duration "${PROGRESSIVE_BAN_RESET_AFTER:-86400}")"
     echo "  Prüfintervall: $(format_duration "$OFFENSE_CLEANUP_INTERVAL")"
 
-    # Aktuelle Offense-Dateien zählen
-    local total=0
-    local expired=0
-    local now
-    now=$(date '+%s')
     local reset_after="${PROGRESSIVE_BAN_RESET_AFTER:-86400}"
-
-    for offense_file in "${STATE_DIR}"/*.offenses; do
-        [[ -f "$offense_file" ]] || continue
-        total=$((total + 1))
-        local last_epoch
-        last_epoch=$(grep '^LAST_OFFENSE_EPOCH=' "$offense_file" | cut -d= -f2 || true)
-        if [[ -n "$last_epoch" && $((now - last_epoch)) -gt $reset_after ]]; then
-            expired=$((expired + 1))
-        fi
-    done
+    local total
+    total=$(db_offense_count)
+    local expired
+    expired=$(db_offense_count_expired "$reset_after")
 
     echo ""
     echo "  Offense-Zähler gesamt: $total"

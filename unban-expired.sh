@@ -17,52 +17,29 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     exit 1
 fi
 source "$CONFIG_FILE"
+# shellcheck source=db.sh
+source "${SCRIPT_DIR}/db.sh"
 
-BAN_HISTORY_FILE="${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')] [UNBAN-TIMER]"
-NOW=$(date '+%s')
 
-# History-Eintrag schreiben
-log_ban_history() {
-    local action="$1"
-    local client_ip="$2"
-    local domain="${3:-}"
-    local count="${4:-}"
-    local reason="${5:-}"
-    local protocol="${6:-}"
-    local timestamp
-    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-
-    if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
-        echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
-    fi
-
-    [[ -z "$protocol" ]] && protocol="-"
-
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "-" "$protocol" "${reason:-expired}" \
-        >> "$BAN_HISTORY_FILE"
-}
+# Datenbank initialisieren
+mkdir -p "${STATE_DIR}"
+db_init
 
 unban_count=0
 
-for state_file in "${STATE_DIR}"/*.ban; do
-    [[ -f "$state_file" ]] || continue
+# Abgelaufene Sperren aus der Datenbank abfragen
+expired_ips=$(db_ban_get_expired)
 
-    ban_until_epoch=$(grep '^BAN_UNTIL_EPOCH=' "$state_file" | cut -d= -f2)
-    client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
-    domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2)
-    is_permanent=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2)
-    protocol=$(grep '^PROTOCOL=' "$state_file" | cut -d= -f2)
+if [[ -n "$expired_ips" ]]; then
+    while IFS= read -r client_ip; do
+        [[ -z "$client_ip" ]] && continue
 
-    # Permanente Sperren nicht automatisch aufheben
-    if [[ "$is_permanent" == "true" || "$ban_until_epoch" == "0" ]]; then
-        continue
-    fi
+        # Domain und Protokoll für History-Eintrag holen
+        local_ban_data=$(db_ban_get "$client_ip")
+        domain=$(echo "$local_ban_data" | cut -d'|' -f2)
+        protocol=$(echo "$local_ban_data" | cut -d'|' -f10)
 
-    if [[ -n "$ban_until_epoch" && "$NOW" -ge "$ban_until_epoch" ]]; then
         echo "$LOG_PREFIX Entsperre abgelaufene Sperre: $client_ip" >> "$LOG_FILE"
 
         # iptables Regel entfernen
@@ -73,12 +50,12 @@ for state_file in "${STATE_DIR}"/*.ban; do
         fi
 
         # Ban-History Eintrag
-        log_ban_history "UNBAN" "$client_ip" "$domain" "-" "expired-cron" "${protocol:-}"
+        db_history_add "UNBAN" "$client_ip" "${domain:--}" "-" "expired-cron" "-" "${protocol:-}"
 
-        rm -f "$state_file"
+        db_ban_delete "$client_ip"
         unban_count=$((unban_count + 1))
-    fi
-done
+    done <<< "$expired_ips"
+fi
 
 if [[ $unban_count -gt 0 ]]; then
     echo "$LOG_PREFIX $unban_count Sperren aufgehoben" >> "$LOG_FILE"

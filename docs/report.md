@@ -259,7 +259,7 @@ Die Test-Mail enthält eine Übersicht der aktuellen Konfiguration und bestätig
 
 ### Report enthält keine Daten
 
-Der Report basiert auf der Ban-History-Datei (`/var/log/adguard-shield-bans.log`). Wenn keine Sperren im Berichtszeitraum vorhanden sind, zeigt der Report „Keine Daten" an.
+Der Report basiert auf der Ban-History in der SQLite-Datenbank (`/var/lib/adguard-shield/adguard-shield.db`). Wenn keine Sperren im Berichtszeitraum vorhanden sind, zeigt der Report „Keine Daten" an.
 
 ### Cron-Job wird nicht ausgeführt
 

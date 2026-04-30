@@ -149,7 +149,7 @@ Wenn eine IP die maximale Stufe der progressiven Sperren erreicht hat, wird sie 
 
 ### Sperren überleben Reboot nicht
 
-Das ist normal — iptables-Regeln sind flüchtig. Der **Service** erstellt die Chain beim Start automatisch neu. Aktive Sperren aus dem State-Verzeichnis werden aber nicht automatisch wiederhergestellt.
+Das ist normal — iptables-Regeln sind flüchtig. Der **Service** erstellt die Chain beim Start automatisch neu. Aktive Sperren aus der SQLite-Datenbank werden aber nicht automatisch als iptables-Regeln wiederhergestellt.
 
 **Optionen:**
 - `iptables-persistent` installieren (`apt install iptables-persistent`)
@@ -240,6 +240,7 @@ sudo bash install.sh update
 - Konfiguration wird als `adguard-shield.conf.old` gesichert
 - Neue Konfigurationsparameter werden automatisch zur bestehenden Konfig ergänzt
 - Bestehende Einstellungen bleiben erhalten
+- Bestehende Flat-File-Daten werden einmalig in die SQLite-Datenbank migriert (mit Fortschrittsanzeige)
 - Service wird per `daemon-reload` neu geladen und automatisch neu gestartet
 
 ## Deinstallation
@@ -281,5 +282,6 @@ Folgende Pakete werden für den Betrieb benötigt und bei der Installation autom
 | `iptables` | Firewall-Regeln (IPv4 + IPv6) |
 | `gawk` | Textverarbeitung in Scripts |
 | `systemd` | Service-Management und Autostart |
+| `sqlite3` | Datenbank für State-Management, Ban-History und Offense-Tracking |
 
 Diese werden bei `sudo bash install.sh install` automatisch geprüft und bei Bedarf über den Paketmanager (`apt`, `dnf`, `yum`, `pacman`) nachinstalliert.

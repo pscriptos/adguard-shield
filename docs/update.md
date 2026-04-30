@@ -31,13 +31,14 @@ sudo bash install.sh update
 
 Das Update-Script macht automatisch folgendes:
 
-1. **Abhängigkeiten prüfen** — Fehlende Pakete werden nachinstalliert
+1. **Abhängigkeiten prüfen** — Fehlende Pakete (inkl. `sqlite3`) werden nachinstalliert
 2. **Scripts aktualisieren** — Alle `.sh`-Dateien werden nach `/opt/adguard-shield/` kopiert
 3. **Konfigurations-Migration** — Neue Parameter werden automatisch zur bestehenden Konfiguration hinzugefügt, bestehende Einstellungen bleiben **unverändert**
 4. **Backup erstellen** — Die alte Konfiguration wird als `adguard-shield.conf.old` gesichert
-5. **Service aktualisieren** — Die systemd Service-Datei und Watchdog-Dateien werden aktualisiert und `daemon-reload` ausgeführt
-6. **Watchdog aktivieren** — Der Watchdog-Timer wird automatisch aktiviert (falls noch nicht aktiv)
-7. **Service neustarten** — Der Service wird automatisch neu gestartet (falls er vorher lief)
+5. **Datenbank-Migration (in der v1.0.0)** — Bestehende Flat-File-Daten (`.ban`, `.offenses`, Ban-History-Log) werden einmalig in die SQLite-Datenbank migriert. Die alten Dateien werden als Backup gesichert. Der Fortschritt und das Ergebnis werden im Terminal angezeigt.
+6. **Service aktualisieren** — Die systemd Service-Datei und Watchdog-Dateien werden aktualisiert und `daemon-reload` ausgeführt
+7. **Watchdog aktivieren** — Der Watchdog-Timer wird automatisch aktiviert (falls noch nicht aktiv)
+8. **Service neustarten** — Der Service wird automatisch neu gestartet (falls er vorher lief)
 
 ### 3. Neue Parameter prüfen (optional)
 

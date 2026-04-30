@@ -25,9 +25,11 @@ fi
 # shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
 
+# shellcheck source=db.sh
+source "${SCRIPT_DIR}/db.sh"
+
 # ─── Standardwerte ────────────────────────────────────────────────────────────
 EXTERNAL_WHITELIST_CACHE_DIR="${EXTERNAL_WHITELIST_CACHE_DIR:-/var/lib/adguard-shield/external-whitelist}"
-EXTERNAL_WHITELIST_RESOLVED_FILE="${EXTERNAL_WHITELIST_CACHE_DIR}/resolved_ips.txt"
 
 # ─── Worker PID-File ──────────────────────────────────────────────────────────
 WORKER_PID_FILE="/var/run/adguard-whitelist-worker.pid"
@@ -53,6 +55,7 @@ log() {
 init_directories() {
     mkdir -p "$EXTERNAL_WHITELIST_CACHE_DIR"
     mkdir -p "$(dirname "$LOG_FILE")"
+    db_init
 }
 
 # ─── Eintrag-Validierung ─────────────────────────────────────────────────────
@@ -271,7 +274,7 @@ sync_whitelists() {
         index=$((index + 1))
     done
 
-    # Alle Einträge aus Cache-Dateien parsen und IPs auflösen
+    # Alle Eintraege aus Cache-Dateien parsen und IPs aufloesen
     local all_ips_file="${EXTERNAL_WHITELIST_CACHE_DIR}/.all_ips.tmp"
     > "$all_ips_file"
 
@@ -280,56 +283,42 @@ sync_whitelists() {
         parse_whitelist_entries "$cache_file" >> "$all_ips_file"
     done
 
-    # Duplikate entfernen und in die resolved-Datei schreiben
+    # Duplikate entfernen und in SQLite-Whitelist schreiben (atomar)
+    local unique_file="${EXTERNAL_WHITELIST_CACHE_DIR}/.all_ips_unique.tmp"
+    sort -u "$all_ips_file" > "$unique_file"
     local unique_count
-    sort -u "$all_ips_file" > "${EXTERNAL_WHITELIST_RESOLVED_FILE}.tmp"
-    mv "${EXTERNAL_WHITELIST_RESOLVED_FILE}.tmp" "$EXTERNAL_WHITELIST_RESOLVED_FILE"
-    unique_count=$(wc -l < "$EXTERNAL_WHITELIST_RESOLVED_FILE" | xargs)
+    unique_count=$(wc -l < "$unique_file" | xargs)
 
-    rm -f "$all_ips_file"
+    db_whitelist_sync "external" < "$unique_file"
+
+    rm -f "$all_ips_file" "$unique_file"
 
     log "DEBUG" "Externe Whitelist: $unique_count eindeutige IPs aufgelöst"
 
-    # Prüfe ob gesperrte IPs jetzt auf der Whitelist stehen und entsperrt werden müssen
+    # Pruefen ob gesperrte IPs jetzt auf der Whitelist stehen
     check_banned_whitelist_ips
 }
 
 # ─── Gesperrte IPs prüfen die jetzt gewhitelistet sind ──────────────────────
-# Wenn eine IP nach einer Whitelist-Aktualisierung nun auf der externen
-# Whitelist steht, wird sie automatisch entsperrt.
 check_banned_whitelist_ips() {
-    local state_dir="${STATE_DIR:-/var/lib/adguard-shield}"
-    [[ -d "$state_dir" ]] || return
-    [[ -f "$EXTERNAL_WHITELIST_RESOLVED_FILE" ]] || return
+    # Alle gesperrten IPs pruefen, ob sie jetzt auf der Whitelist stehen
+    local banned_ips
+    banned_ips=$(db_query "SELECT a.client_ip FROM active_bans a INNER JOIN whitelist_cache w ON a.client_ip = w.ip_address;")
+    [[ -z "$banned_ips" ]] && return
 
-    for state_file in "${state_dir}"/*.ban "${state_dir}"/ext_*.ban; do
-        [[ -f "$state_file" ]] || continue
-        local client_ip
-        client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2)
+    while IFS= read -r client_ip; do
         [[ -z "$client_ip" ]] && continue
+        log "INFO" "Gesperrte IP $client_ip ist jetzt auf externer Whitelist – entsperre automatisch"
 
-        if grep -qxF "$client_ip" "$EXTERNAL_WHITELIST_RESOLVED_FILE" 2>/dev/null; then
-            log "INFO" "Gesperrte IP $client_ip ist jetzt auf externer Whitelist – entsperre automatisch"
-
-            # iptables-Regel entfernen
-            if [[ "$client_ip" == *:* ]]; then
-                ip6tables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
-            else
-                iptables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
-            fi
-
-            rm -f "$state_file"
-
-            # Ban-History Eintrag
-            if [[ -f "${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}" ]]; then
-                local timestamp
-                timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-                printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
-                    "$timestamp" "UNBAN" "$client_ip" "-" "-" "-" "-" "external-whitelist" \
-                    >> "${BAN_HISTORY_FILE:-/var/log/adguard-shield-bans.log}"
-            fi
+        if [[ "$client_ip" == *:* ]]; then
+            ip6tables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
+        else
+            iptables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
         fi
-    done
+
+        db_ban_delete "$client_ip"
+        db_history_add "UNBAN" "$client_ip" "-" "-" "external-whitelist" "-" "-"
+    done <<< "$banned_ips"
 }
 
 # ─── PID-Management ──────────────────────────────────────────────────────────
@@ -409,27 +398,29 @@ show_status() {
 
     echo ""
 
-    # Aufgelöste IPs
-    if [[ -f "$EXTERNAL_WHITELIST_RESOLVED_FILE" ]]; then
-        local resolved_count
-        resolved_count=$(wc -l < "$EXTERNAL_WHITELIST_RESOLVED_FILE" | xargs)
-        local last_resolved
-        last_resolved=$(date -r "$EXTERNAL_WHITELIST_RESOLVED_FILE" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unbekannt")
-        echo "  Aufgelöste IPs: $resolved_count"
-        echo "  Letzte Auflösung: $last_resolved"
+    # Aufgelöste IPs aus Datenbank
+    local resolved_count
+    resolved_count=$(db_whitelist_count)
 
-        if [[ "$resolved_count" -gt 0 && "$resolved_count" -le 20 ]]; then
+    if [[ "${resolved_count:-0}" -gt 0 ]]; then
+        echo "  Aufgelöste IPs: $resolved_count"
+
+        if [[ "$resolved_count" -le 20 ]]; then
             echo ""
             echo "  Aktuelle IPs:"
+            local all_wl_ips
+            all_wl_ips=$(db_whitelist_get_all)
             while IFS= read -r ip; do
                 echo "    ✅ $ip"
-            done < "$EXTERNAL_WHITELIST_RESOLVED_FILE"
-        elif [[ "$resolved_count" -gt 20 ]]; then
+            done <<< "$all_wl_ips"
+        else
             echo ""
             echo "  Erste 20 IPs:"
-            head -20 "$EXTERNAL_WHITELIST_RESOLVED_FILE" | while IFS= read -r ip; do
+            local first_wl_ips
+            first_wl_ips=$(db_query "SELECT ip_address FROM whitelist_cache LIMIT 20;")
+            while IFS= read -r ip; do
                 echo "    ✅ $ip"
-            done
+            done <<< "$first_wl_ips"
             echo "    ... ($((resolved_count - 20)) weitere)"
         fi
     else
@@ -508,7 +499,7 @@ case "${1:-start}" in
     flush)
         init_directories
         echo "Entferne aufgelöste externe Whitelist-IPs..."
-        rm -f "$EXTERNAL_WHITELIST_RESOLVED_FILE"
+        db_whitelist_clear
         echo "Externe Whitelist-IPs entfernt"
         ;;
     *)

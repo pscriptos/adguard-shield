@@ -8,7 +8,7 @@
 # Lizenz:  MIT
 ###############################################################################
 
-VERSION="v0.9.0"
+VERSION="v1.0.0"
 
 set -euo pipefail
 
@@ -26,10 +26,14 @@ fi
 # shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
 
+# ─── Datenbank-Bibliothek laden ───────────────────────────────────────────────
+# shellcheck source=db.sh
+source "${SCRIPT_DIR}/db.sh"
+
 # ─── Abhängigkeiten prüfen ────────────────────────────────────────────────────
 check_dependencies() {
     local missing=()
-    for cmd in curl jq iptables ip6tables date; do
+    for cmd in curl jq iptables ip6tables date sqlite3; do
         if ! command -v "$cmd" &>/dev/null; then
             missing+=("$cmd")
         fi
@@ -79,15 +83,6 @@ log_ban_history() {
     local reason="${5:-}"
     local duration="${6:-}"
     local protocol="${7:-}"
-    local timestamp
-    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-
-    # Header schreiben falls Datei neu ist
-    if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
-        echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#──────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
-    fi
 
     if [[ -z "$duration" && "$action" == "BAN" ]]; then
         duration="${BAN_DURATION}s"
@@ -95,65 +90,20 @@ log_ban_history() {
     [[ -z "$duration" ]] && duration="-"
     [[ -z "$protocol" ]] && protocol="-"
 
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "${domain:--}" "${count:--}" "$duration" "$protocol" "${reason:-rate-limit}" \
-        >> "$BAN_HISTORY_FILE"
+    db_history_add "$action" "$client_ip" "${domain:--}" "${count:--}" "${reason:-rate-limit}" "$duration" "$protocol"
 }
 
 # ─── Progressive Ban (Recidive) ─────────────────────────────────────────────
-# Liest die aktuelle Offense-Stufe einer IP aus der Offense-Datei
 get_offense_level() {
     local client_ip="$1"
-    local offense_file="${STATE_DIR}/${client_ip//[:\/]/_}.offenses"
-
-    if [[ ! -f "$offense_file" ]]; then
-        echo "0"
-        return
-    fi
-
-    local level last_offense now reset_after
-    level=$(grep '^OFFENSE_LEVEL=' "$offense_file" | cut -d= -f2 || true)
-    last_offense=$(grep '^LAST_OFFENSE_EPOCH=' "$offense_file" | cut -d= -f2 || true)
-    now=$(date '+%s')
-    reset_after="${PROGRESSIVE_BAN_RESET_AFTER:-86400}"
-
-    # Prüfen ob der Zähler abgelaufen ist (Reset nach Zeitraum ohne Vergehen)
-    if [[ -n "$last_offense" && $((now - last_offense)) -gt "$reset_after" ]]; then
-        log "INFO" "Progressive Ban: Offense-Zähler für $client_ip zurückgesetzt (>${reset_after}s ohne Vergehen)"
-        rm -f "$offense_file"
-        echo "0"
-        return
-    fi
-
-    echo "${level:-0}"
+    local level
+    level=$(db_offense_get_level "$client_ip" "${PROGRESSIVE_BAN_RESET_AFTER:-86400}")
+    echo "$level"
 }
 
-# Erhöht die Offense-Stufe einer IP und gibt die neue Stufe zurück
 increment_offense_level() {
     local client_ip="$1"
-    local offense_file="${STATE_DIR}/${client_ip//[:\/]/_}.offenses"
-    local current_level
-    current_level=$(get_offense_level "$client_ip")
-    local new_level=$((current_level + 1))
-    local now
-    now=$(date '+%s')
-    local now_readable
-    now_readable=$(date '+%Y-%m-%d %H:%M:%S')
-
-    # Erstes Vergehen merken (bevor Datei überschrieben wird)
-    local first_offense
-    first_offense=$(grep '^FIRST_OFFENSE=' "$offense_file" 2>/dev/null | cut -d= -f2 || true)
-    [[ -z "$first_offense" ]] && first_offense="$now_readable"
-
-    cat > "$offense_file" << EOF
-CLIENT_IP=$client_ip
-OFFENSE_LEVEL=$new_level
-LAST_OFFENSE_EPOCH=$now
-LAST_OFFENSE=$now_readable
-FIRST_OFFENSE=$first_offense
-EOF
-
-    echo "$new_level"
+    db_offense_increment "$client_ip"
 }
 
 # Berechnet die Sperrdauer basierend auf der Offense-Stufe
@@ -207,11 +157,9 @@ format_duration() {
     fi
 }
 
-# Setzt den Offense-Zähler einer IP zurück
 reset_offense_level() {
     local client_ip="$1"
-    local offense_file="${STATE_DIR}/${client_ip//[:\/]/_}.offenses"
-    rm -f "$offense_file"
+    db_offense_delete "$client_ip"
 }
 
 # ─── Protokoll-Erkennung ─────────────────────────────────────────────────────
@@ -307,12 +255,23 @@ report_to_abuseipdb() {
     fi
 }
 
-# ─── Verzeichnisse erstellen ──────────────────────────────────────────────────
+# ─── Verzeichnisse und Datenbank erstellen ───────────────────────────────────
 init_directories() {
     mkdir -p "$STATE_DIR"
     mkdir -p "$(dirname "$LOG_FILE")"
     mkdir -p "$(dirname "$PID_FILE")"
-    mkdir -p "$(dirname "$BAN_HISTORY_FILE")"
+
+    db_init
+
+    # Migration von Flat-Files (einmalig beim ersten Start nach Update)
+    if [[ ! -f "$_DB_MIGRATION_MARKER" ]]; then
+        local migrated
+        migrated=$(db_migrate_from_files)
+        if [[ "${migrated:-0}" -gt 0 ]]; then
+            log "INFO" "SQLite-Migration abgeschlossen: $migrated Eintraege migriert"
+            log "INFO" "Backup der alten Dateien: ${STATE_DIR}/.backup_pre_sqlite/"
+        fi
+    fi
 }
 
 # ─── PID-Management ──────────────────────────────────────────────────────────
@@ -354,15 +313,14 @@ is_whitelisted() {
     local ip="$1"
     IFS=',' read -ra wl_entries <<< "$WHITELIST"
     for entry in "${wl_entries[@]}"; do
-        entry=$(echo "$entry" | xargs)  # trim
+        entry=$(echo "$entry" | xargs)
         if [[ "$ip" == "$entry" ]]; then
             return 0
         fi
     done
 
-    # Externe Whitelist prüfen (aufgelöste IPs aus dem Whitelist-Worker)
-    local ext_wl_file="${EXTERNAL_WHITELIST_CACHE_DIR:-/var/lib/adguard-shield/external-whitelist}/resolved_ips.txt"
-    if [[ -f "$ext_wl_file" ]] && grep -qxF "$ip" "$ext_wl_file" 2>/dev/null; then
+    # Externe Whitelist prüfen (SQLite)
+    if db_whitelist_contains "$ip"; then
         return 0
     fi
 
@@ -431,8 +389,7 @@ ban_client() {
     local protocol="${6:-DNS}"
 
     # Prüfen ob bereits gesperrt
-    local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
-    if [[ -f "$state_file" ]]; then
+    if db_ban_exists "$client_ip"; then
         log "DEBUG" "Client $client_ip ist bereits gesperrt"
         return 0
     fi
@@ -496,20 +453,10 @@ ban_client() {
         iptables -I "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
     fi
 
-    # State speichern
-    cat > "$state_file" << EOF
-CLIENT_IP=$client_ip
-DOMAIN=$domain
-COUNT=$count
-BAN_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-BAN_UNTIL_EPOCH=$ban_until
-BAN_UNTIL=$ban_until_display
-BAN_DURATION=${effective_duration}
-OFFENSE_LEVEL=$offense_level
-IS_PERMANENT=$is_permanent
-REASON=$reason
-PROTOCOL=$protocol
-EOF
+    # State in Datenbank speichern
+    local perm_int=0
+    [[ "$is_permanent" == "true" ]] && perm_int=1
+    db_ban_insert "$client_ip" "$domain" "$count" "$(date '+%Y-%m-%d %H:%M:%S')" "$ban_until" "$effective_duration" "$offense_level" "$perm_int" "$reason" "$protocol" "monitor"
 
     # Ban-History Eintrag
     local history_duration="${duration_display}"
@@ -531,16 +478,17 @@ EOF
 unban_client() {
     local client_ip="$1"
     local reason="${2:-expired}"
-    local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
 
-    # Domain und Protokoll aus State lesen bevor wir löschen
+    # Domain und Protokoll aus DB lesen bevor wir loeschen
+    local ban_data
+    ban_data=$(db_ban_get "$client_ip")
     local domain="-"
     local protocol="-"
-    if [[ -f "$state_file" ]]; then
-        domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2 || true)
-        protocol=$(grep '^PROTOCOL=' "$state_file" | cut -d= -f2 || true)
+    if [[ -n "$ban_data" ]]; then
+        IFS='|' read -r _ b_domain _ _ _ _ _ _ _ b_protocol _ _ _ <<< "$ban_data"
+        domain="${b_domain:--}"
+        protocol="${b_protocol:--}"
     fi
-    [[ -z "$protocol" ]] && protocol="-"
 
     log "INFO" "ENTSPERRE Client: $client_ip ($reason)"
 
@@ -550,9 +498,8 @@ unban_client() {
         iptables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
     fi
 
-    rm -f "$state_file"
+    db_ban_delete "$client_ip"
 
-    # Ban-History Eintrag
     log_ban_history "UNBAN" "$client_ip" "$domain" "-" "$reason" "-" "$protocol"
 
     if [[ "$NOTIFY_ENABLED" == "true" ]]; then
@@ -562,29 +509,14 @@ unban_client() {
 
 # ─── Abgelaufene Sperren aufheben ───────────────────────────────────────────
 check_expired_bans() {
-    local now
-    now=$(date '+%s')
+    local expired_ips
+    expired_ips=$(db_ban_get_expired)
+    [[ -z "$expired_ips" ]] && return
 
-    for state_file in "${STATE_DIR}"/*.ban; do
-        [[ -f "$state_file" ]] || continue
-
-        local ban_until_epoch
-        ban_until_epoch=$(grep '^BAN_UNTIL_EPOCH=' "$state_file" | cut -d= -f2 || true)
-        local client_ip
-        client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2 || true)
-        local is_permanent
-        is_permanent=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2 || true)
-
-        # Permanente Sperren nicht automatisch aufheben
-        if [[ "$is_permanent" == "true" || "$ban_until_epoch" == "0" ]]; then
-            log "DEBUG" "Client $client_ip ist permanent gesperrt – überspringe"
-            continue
-        fi
-
-        if [[ -n "$ban_until_epoch" && "$now" -ge "$ban_until_epoch" ]]; then
-            unban_client "$client_ip" "expired"
-        fi
-    done
+    while IFS= read -r client_ip; do
+        [[ -z "$client_ip" ]] && continue
+        unban_client "$client_ip" "expired"
+    done <<< "$expired_ips"
 }
 
 # ─── Benachrichtigungen ─────────────────────────────────────────────────────
@@ -995,8 +927,7 @@ analyze_subdomain_flood() {
         fi
 
         # Prüfen ob bereits gesperrt
-        local state_file="${STATE_DIR}/${client//[:\/]/_}.ban"
-        if [[ -f "$state_file" ]]; then
+        if db_ban_exists "$client"; then
             log "DEBUG" "Client $client ist bereits gesperrt (Subdomain-Flood übersprungen)"
             continue
         fi
@@ -1054,22 +985,15 @@ show_status() {
         echo ""
     fi
 
-    # Aktive Sperren
+    # Aktive Sperren aus Datenbank
     local ban_count=0
-    if [[ -d "$STATE_DIR" ]]; then
-        for state_file in "${STATE_DIR}"/*.ban; do
-            [[ -f "$state_file" ]] || continue
+    local all_bans
+    all_bans=$(db_ban_get_all)
+
+    if [[ -n "$all_bans" ]]; then
+        while IFS='|' read -r s_ip s_domain s_count s_ban_time s_ban_until_epoch s_dur s_level s_perm_int s_reason s_proto s_source s_geoip_country s_geoip_mode; do
+            [[ -z "$s_ip" ]] && continue
             ban_count=$((ban_count + 1))
-            local s_ip s_domain s_level s_perm s_dur s_until s_reason s_count s_proto
-            s_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2 || true)
-            s_domain=$(grep '^DOMAIN=' "$state_file" | cut -d= -f2 || true)
-            s_level=$(grep '^OFFENSE_LEVEL=' "$state_file" | cut -d= -f2 || true)
-            s_perm=$(grep '^IS_PERMANENT=' "$state_file" | cut -d= -f2 || true)
-            s_dur=$(grep '^BAN_DURATION=' "$state_file" | cut -d= -f2 || true)
-            s_until=$(grep '^BAN_UNTIL=' "$state_file" | cut -d= -f2 || true)
-            s_reason=$(grep '^REASON=' "$state_file" | cut -d= -f2 || true)
-            s_count=$(grep '^COUNT=' "$state_file" | cut -d= -f2 || true)
-            s_proto=$(grep '^PROTOCOL=' "$state_file" | cut -d= -f2 || true)
             s_reason="${s_reason:-rate-limit}"
             s_proto="${s_proto:-?}"
 
@@ -1078,7 +1002,7 @@ show_status() {
             [[ "$s_reason" == "dns-flood-watchlist" ]] && reason_tag=" (DNS-Flood-Watchlist)"
 
             local count_info=""
-            if [[ -n "$s_count" && "$s_count" != "-" ]]; then
+            if [[ -n "$s_count" && "$s_count" != "0" && "$s_count" != "-" ]]; then
                 if [[ "$s_reason" == "subdomain-flood" ]]; then
                     count_info=", ${s_count} Subdomains"
                 else
@@ -1088,16 +1012,23 @@ show_status() {
 
             local proto_tag=" via ${s_proto}"
 
-            if [[ "$s_perm" == "true" && "$s_reason" == "dns-flood-watchlist" ]]; then
+            local s_until_display
+            if [[ "$s_ban_until_epoch" == "0" || "$s_perm_int" == "1" ]]; then
+                s_until_display="PERMANENT"
+            else
+                s_until_display=$(date -d "@$s_ban_until_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$s_ban_until_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "?")
+            fi
+
+            if [[ "$s_perm_int" == "1" && "$s_reason" == "dns-flood-watchlist" ]]; then
                 echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT${count_info}${proto_tag}]${reason_tag}"
-            elif [[ "$s_perm" == "true" ]]; then
+            elif [[ "$s_perm_int" == "1" ]]; then
                 echo "  🚫 Gesperrt: $s_ip → $s_domain [PERMANENT, Stufe ${s_level:-?}${count_info}${proto_tag}]${reason_tag}"
             elif [[ -n "$s_level" && "$s_level" -gt 0 ]]; then
-                echo "  🚫 Gesperrt: $s_ip → $s_domain [Stufe ${s_level}, $(format_duration "${s_dur:-$BAN_DURATION}"), bis $s_until${count_info}${proto_tag}]${reason_tag}"
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [Stufe ${s_level}, $(format_duration "${s_dur:-$BAN_DURATION}"), bis $s_until_display${count_info}${proto_tag}]${reason_tag}"
             else
-                echo "  🚫 Gesperrt: $s_ip → $s_domain [bis $s_until${count_info}${proto_tag}]${reason_tag}"
+                echo "  🚫 Gesperrt: $s_ip → $s_domain [bis $s_until_display${count_info}${proto_tag}]${reason_tag}"
             fi
-        done
+        done <<< "$all_bans"
     fi
 
     echo ""
@@ -1108,24 +1039,25 @@ show_status() {
     fi
 
     # Offense-Informationen anzeigen (Wiederholungstäter)
-    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" && -d "$STATE_DIR" ]]; then
+    if [[ "${PROGRESSIVE_BAN_ENABLED:-false}" == "true" ]]; then
+        local offense_data
+        offense_data=$(db_offense_get_all)
         local offense_count=0
         local offense_output=""
-        for offense_file in "${STATE_DIR}"/*.offenses; do
-            [[ -f "$offense_file" ]] || continue
-            local o_ip o_level o_last
-            o_ip=$(grep '^CLIENT_IP=' "$offense_file" | cut -d= -f2 || true)
-            o_level=$(grep '^OFFENSE_LEVEL=' "$offense_file" | cut -d= -f2 || true)
-            o_last=$(grep '^LAST_OFFENSE=' "$offense_file" | cut -d= -f2 || true)
-            offense_count=$((offense_count + 1))
-            local next_dur
-            next_dur=$(calculate_ban_duration "$((o_level + 1))")
-            if [[ "$next_dur" -eq 0 ]]; then
-                offense_output+="     ⚠ $o_ip: Stufe $o_level (letztes Vergehen: $o_last) → nächste Sperre: PERMANENT\n"
-            else
-                offense_output+="     ⚠ $o_ip: Stufe $o_level (letztes Vergehen: $o_last) → nächste Sperre: $(format_duration "$next_dur")\n"
-            fi
-        done
+
+        if [[ -n "$offense_data" ]]; then
+            while IFS='|' read -r o_ip o_level o_last_epoch o_last o_first; do
+                [[ -z "$o_ip" ]] && continue
+                offense_count=$((offense_count + 1))
+                local next_dur
+                next_dur=$(calculate_ban_duration "$((o_level + 1))")
+                if [[ "$next_dur" -eq 0 ]]; then
+                    offense_output+="     ⚠ $o_ip: Stufe $o_level (letztes Vergehen: $o_last) → nächste Sperre: PERMANENT\n"
+                else
+                    offense_output+="     ⚠ $o_ip: Stufe $o_level (letztes Vergehen: $o_last) → nächste Sperre: $(format_duration "$next_dur")\n"
+                fi
+            done <<< "$offense_data"
+        fi
 
         if [[ $offense_count -gt 0 ]]; then
             echo ""
@@ -1156,29 +1088,34 @@ show_history() {
     echo "═══════════════════════════════════════════════════════════════"
     echo ""
 
-    if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
+    local total
+    total=$(db_history_count)
+
+    if [[ "${total:-0}" -eq 0 ]]; then
         echo "  Noch keine History vorhanden."
-        echo "  Datei: $BAN_HISTORY_FILE"
         echo ""
         return
     fi
 
-    # Header zeigen
-    head -3 "$BAN_HISTORY_FILE" | sed 's/^/  /'
+    echo "  # Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND"
+    echo "  #──────────────────────────────────────────────────────────────────────────────────────────────────"
     echo ""
 
-    # Letzte N Einträge (ohne Header-Zeilen)
-    grep -v '^#' "$BAN_HISTORY_FILE" | tail -n "$lines" | sed 's/^/  /'
+    local recent
+    recent=$(db_history_get_recent "$lines")
+    if [[ -n "$recent" ]]; then
+        while IFS='|' read -r ts action ip domain count duration protocol reason; do
+            printf "  %-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
+                "$ts" "$action" "$ip" "$domain" "$count" "$duration" "$protocol" "$reason"
+        done <<< "$recent"
+    fi
 
     echo ""
-    local total
-    total=$(grep -vc '^#' "$BAN_HISTORY_FILE" 2>/dev/null || echo "0")
-    local bans
-    bans=$(grep -c '| BAN ' "$BAN_HISTORY_FILE" 2>/dev/null || echo "0")
-    local unbans
-    unbans=$(grep -c '| UNBAN ' "$BAN_HISTORY_FILE" 2>/dev/null || echo "0")
+    local bans unbans
+    bans=$(db_history_count_by_action "BAN")
+    unbans=$(db_history_count_by_action "UNBAN")
     echo "  Gesamt: $total Einträge ($bans Sperren, $unbans Entsperrungen)"
-    echo "  Datei:  $BAN_HISTORY_FILE"
+    echo "  Datenbank: $DB_FILE"
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
 }
@@ -1187,12 +1124,14 @@ show_history() {
 flush_all_bans() {
     log "INFO" "Alle Sperren werden aufgehoben..."
 
-    for state_file in "${STATE_DIR}"/*.ban; do
-        [[ -f "$state_file" ]] || continue
-        local client_ip
-        client_ip=$(grep '^CLIENT_IP=' "$state_file" | cut -d= -f2 || true)
-        unban_client "$client_ip" "manual-flush"
-    done
+    local all_ips
+    all_ips=$(db_query "SELECT client_ip FROM active_bans;")
+    if [[ -n "$all_ips" ]]; then
+        while IFS= read -r client_ip; do
+            [[ -z "$client_ip" ]] && continue
+            unban_client "$client_ip" "manual-flush"
+        done <<< "$all_ips"
+    fi
 
     # Chain leeren
     iptables -F "$IPTABLES_CHAIN" 2>/dev/null || true
@@ -1203,15 +1142,8 @@ flush_all_bans() {
 
 # ─── Alle Offense-Zähler zurücksetzen ────────────────────────────────────────
 flush_all_offenses() {
-    local count=0
-    for offense_file in "${STATE_DIR}"/*.offenses; do
-        [[ -f "$offense_file" ]] || continue
-        local o_ip
-        o_ip=$(grep '^CLIENT_IP=' "$offense_file" | cut -d= -f2 || true)
-        log "INFO" "Offense-Zähler zurückgesetzt: $o_ip"
-        rm -f "$offense_file"
-        count=$((count + 1))
-    done
+    local count
+    count=$(db_offense_delete_all)
     log "INFO" "$count Offense-Zähler zurückgesetzt"
     echo "$count Offense-Zähler zurückgesetzt"
 }
@@ -1630,7 +1562,7 @@ Interne Befehle (nicht direkt verwenden — nur über systemd):
 
 Konfiguration: $CONFIG_FILE
 Log-Datei:     $LOG_FILE
-Ban-History:   $BAN_HISTORY_FILE
+Datenbank:     $DB_FILE
 State:         $STATE_DIR
 
 USAGE

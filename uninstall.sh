@@ -127,6 +127,7 @@ do_uninstall() {
         rm -f "$INSTALL_DIR/report-generator.sh"
         rm -f "$INSTALL_DIR/adguard-shield-watchdog.sh"
         rm -f "$INSTALL_DIR/geoip-worker.sh"
+        rm -f "$INSTALL_DIR/db.sh"
         rm -f "$INSTALL_DIR/uninstall.sh"
         rm -rf "$INSTALL_DIR/templates"
         rm -rf "$INSTALL_DIR/geoip"

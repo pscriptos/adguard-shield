@@ -22,6 +22,9 @@ fi
 # shellcheck source=adguard-shield.conf
 source "$CONFIG_FILE"
 
+# shellcheck source=db.sh
+source "${SCRIPT_DIR}/db.sh"
+
 # ─── Worker PID-File ──────────────────────────────────────────────────────────
 WORKER_PID_FILE="/var/run/adguard-geoip-worker.pid"
 
@@ -56,20 +59,8 @@ log_ban_history() {
     local client_ip="$2"
     local country="${3:-}"
     local reason="${4:-geoip}"
-    local timestamp
-    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
-    if [[ ! -f "$BAN_HISTORY_FILE" ]]; then
-        echo "# AdGuard Shield - Ban History" > "$BAN_HISTORY_FILE"
-        echo "# Format: ZEITSTEMPEL | AKTION | CLIENT-IP | DOMAIN | ANFRAGEN | SPERRDAUER | PROTOKOLL | GRUND" >> "$BAN_HISTORY_FILE"
-        echo "#──────────────────────────────────────────────────────────────────────────────────────────────────" >> "$BAN_HISTORY_FILE"
-    fi
-
-    local duration="permanent"
-
-    printf "%-19s | %-6s | %-39s | %-30s | %-8s | %-10s | %-10s | %s\n" \
-        "$timestamp" "$action" "$client_ip" "Land: ${country:-?}" "-" "$duration" "-" "$reason" \
-        >> "$BAN_HISTORY_FILE"
+    db_history_add "$action" "$client_ip" "Land: ${country:-?}" "-" "$reason" "permanent" "-"
 }
 
 # ─── Verzeichnisse erstellen ──────────────────────────────────────────────────
@@ -78,6 +69,7 @@ init_directories() {
     mkdir -p "$GEOIP_DB_DIR"
     mkdir -p "$STATE_DIR"
     mkdir -p "$(dirname "$LOG_FILE")"
+    db_init
 }
 
 # ─── Private IP-Adressen erkennen ────────────────────────────────────────────
@@ -107,15 +99,13 @@ is_whitelisted() {
     local ip="$1"
     IFS=',' read -ra wl_entries <<< "$WHITELIST"
     for entry in "${wl_entries[@]}"; do
-        entry=$(echo "$entry" | xargs)  # trim
+        entry=$(echo "$entry" | xargs)
         if [[ "$ip" == "$entry" ]]; then
             return 0
         fi
     done
 
-    # Externe Whitelist prüfen
-    local ext_wl_file="${EXTERNAL_WHITELIST_CACHE_DIR:-/var/lib/adguard-shield/external-whitelist}/resolved_ips.txt"
-    if [[ -f "$ext_wl_file" ]] && grep -qxF "$ip" "$ext_wl_file" 2>/dev/null; then
+    if db_whitelist_contains "$ip"; then
         return 0
     fi
 
@@ -324,8 +314,7 @@ ban_ip_geoip() {
     local mode="${GEOIP_MODE:-blocklist}"
 
     # Prüfen ob bereits gesperrt
-    local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
-    if [[ -f "$state_file" ]]; then
+    if db_ban_exists "$client_ip"; then
         log "DEBUG" "GeoIP: $client_ip ist bereits gesperrt"
         return 0
     fi
@@ -350,22 +339,8 @@ ban_ip_geoip() {
         iptables -I "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
     fi
 
-    # State-Datei erstellen
-    cat > "$state_file" << EOF
-CLIENT_IP=$client_ip
-DOMAIN=GeoIP:${country_code}
-COUNT=-
-BAN_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-BAN_UNTIL_EPOCH=0
-BAN_UNTIL=PERMANENT
-BAN_DURATION=0
-OFFENSE_LEVEL=0
-IS_PERMANENT=true
-REASON=geoip
-PROTOCOL=-
-GEOIP_COUNTRY=$country_code
-GEOIP_MODE=$mode
-EOF
+    # State in Datenbank speichern
+    db_ban_insert "$client_ip" "GeoIP:${country_code}" "0" "$(date '+%Y-%m-%d %H:%M:%S')" "0" "0" "0" "1" "geoip" "-" "geoip" "$country_code" "$mode"
 
     # Ban-History
     log_ban_history "BAN" "$client_ip" "$country_code" "$reason_text"
@@ -516,47 +491,37 @@ get_active_clients() {
 # - GeoIP deaktiviert wurde
 auto_unban_geoip() {
     local unban_count=0
+    local geoip_bans
+    geoip_bans=$(db_ban_get_by_reason "geoip")
+    [[ -z "$geoip_bans" ]] && return
 
-    for f in "${STATE_DIR}"/*.ban; do
-        [[ -f "$f" ]] || continue
-
-        local reason
-        reason=$(grep '^REASON=' "$f" | cut -d= -f2 || true)
-        [[ "$reason" != "geoip" ]] && continue
-
-        local client_ip country_code old_mode
-        client_ip=$(grep '^CLIENT_IP=' "$f" | cut -d= -f2 || true)
-        country_code=$(grep '^GEOIP_COUNTRY=' "$f" | cut -d= -f2 || true)
-        old_mode=$(grep '^GEOIP_MODE=' "$f" | cut -d= -f2 || true)
+    while IFS='|' read -r client_ip domain count ban_time ban_until_epoch ban_duration offense_level is_permanent reason protocol source geoip_country geoip_mode; do
+        [[ -z "$client_ip" ]] && continue
 
         local should_unban=false
 
-        # GeoIP deaktiviert → alle GeoIP-Sperren aufheben
         if [[ "${GEOIP_ENABLED:-false}" != "true" ]]; then
             should_unban=true
-        # Modus gewechselt → alle GeoIP-Sperren aufheben und neu prüfen
-        elif [[ -n "$old_mode" && "$old_mode" != "${GEOIP_MODE:-blocklist}" ]]; then
+        elif [[ -n "$geoip_mode" && "$geoip_mode" != "${GEOIP_MODE:-blocklist}" ]]; then
             should_unban=true
-        # Prüfen ob das Land nach aktueller Konfiguration noch gesperrt sein soll
-        elif [[ -n "$country_code" ]] && ! should_block_by_geoip "$country_code"; then
+        elif [[ -n "$geoip_country" ]] && ! should_block_by_geoip "$geoip_country"; then
             should_unban=true
         fi
 
         if [[ "$should_unban" == "true" ]]; then
-            log "INFO" "GeoIP Auto-Unban: $client_ip (Land: ${country_code:-?}, war: ${old_mode:-?})"
+            log "INFO" "GeoIP Auto-Unban: $client_ip (Land: ${geoip_country:-?}, war: ${geoip_mode:-?})"
 
-            # iptables Regel entfernen
             if [[ "$client_ip" == *:* ]]; then
                 ip6tables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
             else
                 iptables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
             fi
 
-            rm -f "$f"
-            log_ban_history "UNBAN" "$client_ip" "$country_code" "geoip-auto-unban"
+            db_ban_delete "$client_ip"
+            log_ban_history "UNBAN" "$client_ip" "$geoip_country" "geoip-auto-unban"
             unban_count=$((unban_count + 1))
         fi
-    done
+    done <<< "$geoip_bans"
 
     if [[ $unban_count -gt 0 ]]; then
         log "INFO" "GeoIP Auto-Unban: $unban_count Sperren aufgehoben (Länderliste/Modus geändert)"
@@ -618,8 +583,7 @@ sync_geoip() {
         fi
 
         # Bereits gesperrt?
-        local state_file="${STATE_DIR}/${client_ip//[:\/]/_}.ban"
-        if [[ -f "$state_file" ]]; then
+        if db_ban_exists "$client_ip"; then
             skipped=$((skipped + 1))
             continue
         fi
@@ -741,21 +705,20 @@ show_status() {
     echo ""
 
     # GeoIP-Sperren anzeigen
+    local geoip_bans_data
+    geoip_bans_data=$(db_ban_get_by_reason "geoip")
     local geoip_bans=0
-    if [[ -d "$STATE_DIR" ]]; then
-        for f in "${STATE_DIR}"/*.ban; do
-            [[ -f "$f" ]] || continue
-            local reason
-            reason=$(grep '^REASON=' "$f" | cut -d= -f2 || true)
-            if [[ "$reason" == "geoip" ]]; then
-                geoip_bans=$((geoip_bans + 1))
-                local s_ip s_country s_until
-                s_ip=$(grep '^CLIENT_IP=' "$f" | cut -d= -f2 || true)
-                s_country=$(grep '^GEOIP_COUNTRY=' "$f" | cut -d= -f2 || true)
-                s_until=$(grep '^BAN_UNTIL=' "$f" | cut -d= -f2 || true)
-                echo "  🌍 $s_ip → Land: ${s_country:-?} (bis: ${s_until:-?})"
+
+    if [[ -n "$geoip_bans_data" ]]; then
+        while IFS='|' read -r s_ip s_domain _ _ s_ban_until_epoch _ _ s_perm_int _ _ _ s_country _; do
+            [[ -z "$s_ip" ]] && continue
+            geoip_bans=$((geoip_bans + 1))
+            local s_until_display="PERMANENT"
+            if [[ "$s_ban_until_epoch" != "0" && "$s_perm_int" != "1" ]]; then
+                s_until_display=$(date -d "@$s_ban_until_epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "?")
             fi
-        done
+            echo "  🌍 $s_ip → Land: ${s_country:-?} (bis: $s_until_display)"
+        done <<< "$geoip_bans_data"
     fi
 
     if [[ $geoip_bans -eq 0 ]]; then
@@ -831,27 +794,24 @@ flush_cache() {
 # ─── GeoIP-Sperren aufheben ─────────────────────────────────────────────────
 flush_geoip_bans() {
     local count=0
-    if [[ -d "$STATE_DIR" ]]; then
-        for f in "${STATE_DIR}"/*.ban; do
-            [[ -f "$f" ]] || continue
-            local reason
-            reason=$(grep '^REASON=' "$f" | cut -d= -f2 || true)
-            if [[ "$reason" == "geoip" ]]; then
-                local client_ip
-                client_ip=$(grep '^CLIENT_IP=' "$f" | cut -d= -f2 || true)
+    local geoip_ips
+    geoip_ips=$(db_query "SELECT client_ip FROM active_bans WHERE reason='geoip';")
 
-                # iptables Regel entfernen
-                if [[ "$client_ip" == *:* ]]; then
-                    ip6tables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
-                else
-                    iptables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
-                fi
+    if [[ -n "$geoip_ips" ]]; then
+        while IFS= read -r client_ip; do
+            [[ -z "$client_ip" ]] && continue
 
-                rm -f "$f"
-                log_ban_history "UNBAN" "$client_ip" "" "geoip-flush"
-                count=$((count + 1))
+            # iptables Regel entfernen
+            if [[ "$client_ip" == *:* ]]; then
+                ip6tables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
+            else
+                iptables -D "$IPTABLES_CHAIN" -s "$client_ip" -j DROP 2>/dev/null || true
             fi
-        done
+
+            db_ban_delete "$client_ip"
+            log_ban_history "UNBAN" "$client_ip" "" "geoip-flush"
+            count=$((count + 1))
+        done <<< "$geoip_ips"
     fi
 
     echo "✅ $count GeoIP-Sperren aufgehoben"
