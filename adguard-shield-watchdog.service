@@ -1,7 +1,0 @@
-[Unit]
-Description=AdGuard Shield - Watchdog Health Check
-Documentation=https://git.techniverse.net/scriptos/adguard-shield
-
-[Service]
-Type=oneshot
-ExecStart=/opt/adguard-shield/adguard-shield-watchdog.sh

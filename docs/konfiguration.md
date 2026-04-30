@@ -1,349 +1,557 @@
 # Konfiguration
 
-Die Konfigurationsdatei liegt nach der Installation unter:
+Die zentrale Konfigurationsdatei liegt nach der Installation hier:
 
-```
+```text
 /opt/adguard-shield/adguard-shield.conf
 ```
 
-## Automatische Konfigurations-Migration
+Die Datei ist eine einfache Shell-ähnliche Key-Value-Datei. Kommentare beginnen mit `#`. Werte können ohne Anführungszeichen, mit doppelten Anführungszeichen oder mit einfachen Anführungszeichen geschrieben werden.
 
-Bei einem **Update** (`sudo bash install.sh update`) wird die Konfiguration automatisch migriert:
+Beispiel:
 
-1. Die aktuelle Konfiguration wird als **Backup** gespeichert: `adguard-shield.conf.old`
-2. Neue Parameter (die in der alten Konfig noch nicht existieren) werden **automatisch** zur bestehenden Konfiguration hinzugefügt
-3. Alle bestehenden Einstellungen bleiben **unverändert** erhalten
+```bash
+ADGUARD_URL="https://dns1.example.com"
+RATE_LIMIT_MAX_REQUESTS=30
+WHITELIST="127.0.0.1,::1,192.168.1.1"
+```
 
-Dadurch muss der Benutzer bei Updates die Konfiguration nicht manuell austauschen oder vergleichen.
+Nach Änderungen solltest du den Service neu starten:
 
-> **Hinweis:** Nach einem Update empfiehlt es sich, die eventuell neu hinzugefügten Parameter zu prüfen und bei Bedarf anzupassen.
+```bash
+sudo systemctl restart adguard-shield
+sudo /opt/adguard-shield/adguard-shield status
+```
 
-## Alle Parameter
+## Automatische Migration
 
-### AdGuard Home API
+Beim Installieren oder Aktualisieren wird eine vorhandene Konfiguration nicht überschrieben. Der Installer vergleicht vorhandene Schlüssel mit der aktuellen Standardkonfiguration.
+
+Wenn neue Parameter fehlen:
+
+1. Die alte Datei wird als `adguard-shield.conf.old` gesichert.
+2. Fehlende Schlüssel werden am Ende ergänzt.
+3. Vorhandene Werte bleiben erhalten.
+4. Dateirechte werden auf `0600` gesetzt.
+
+Das ist besonders wichtig beim Umstieg von der Shell-Version auf die Go-Version. Prüfe nach einem Update trotzdem die neu ergänzten Parameter.
+
+## Empfohlene Startprüfung
+
+Nach dem Bearbeiten der Konfiguration:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield test
+sudo /opt/adguard-shield/adguard-shield dry-run
+```
+
+`test` prüft die AdGuard-Home-API. `dry-run` zeigt, was AdGuard Shield sperren würde, ohne die Firewall zu verändern.
+
+## AdGuard Home API
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `ADGUARD_URL` | `http://127.0.0.1:3000` | AdGuard Home Web-UI URL |
-| `ADGUARD_USER` | `admin` | API Benutzername |
-| `ADGUARD_PASS` | `changeme` | API Passwort |
+|---|---|---|
+| `ADGUARD_URL` | `https://dns1.domain.com` | URL der AdGuard-Home-Weboberfläche/API |
+| `ADGUARD_USER` | `admin` | Benutzername für die API |
+| `ADGUARD_PASS` | `changeme` | Passwort für die API |
 
-### Rate-Limit
+Beispiel lokal:
+
+```bash
+ADGUARD_URL="http://127.0.0.1:3000"
+ADGUARD_USER="admin"
+ADGUARD_PASS="sehr-geheim"
+```
+
+Beispiel mit HTTPS:
+
+```bash
+ADGUARD_URL="https://dns.example.com"
+```
+
+AdGuard Shield ruft intern diesen Endpunkt ab:
+
+```text
+/control/querylog?limit=<API_QUERY_LIMIT>&response_status=all
+```
+
+Hinweis: Der HTTP-Client akzeptiert auch selbstsignierte TLS-Zertifikate. Das erleichtert lokale Setups, ersetzt aber keine saubere Absicherung der AdGuard-Home-Oberfläche.
+
+## Querylog und Polling
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `RATE_LIMIT_MAX_REQUESTS` | `30` | Max. Anfragen pro Domain/Client innerhalb des Zeitfensters |
+|---|---:|---|
+| `CHECK_INTERVAL` | `10` | Abstand zwischen Querylog-Abfragen in Sekunden |
+| `API_QUERY_LIMIT` | `500` | Anzahl der Querylog-Einträge pro API-Abfrage |
+
+Empfehlung:
+
+- `CHECK_INTERVAL=10` ist ein guter Standard.
+- Bei sehr hohem DNS-Aufkommen kann `API_QUERY_LIMIT` erhöht werden.
+- Wenn `API_QUERY_LIMIT` zu niedrig ist, können Spitzen im Querylog zwischen zwei Polls teilweise verpasst werden.
+- Sehr kurze Intervalle erzeugen mehr API-Last auf AdGuard Home.
+
+## Rate-Limit
+
+| Parameter | Standard | Beschreibung |
+|---|---:|---|
+| `RATE_LIMIT_MAX_REQUESTS` | `30` | maximale Anfragen pro Client und Domain im Zeitfenster |
 | `RATE_LIMIT_WINDOW` | `60` | Zeitfenster in Sekunden |
-| `CHECK_INTERVAL` | `10` | Wie oft die Logs geprüft werden (Sekunden) |
-| `API_QUERY_LIMIT` | `500` | Anzahl API-Einträge pro Abfrage (max 5000) |
 
-### Subdomain-Flood-Erkennung (Random Subdomain Attack)
+Beispiel:
 
-Erkennt Bot-Angriffe, bei denen massenhaft zufällige Subdomains einer Domain abgefragt werden (z.B. `abc123.microsoft.com`, `xyz456.microsoft.com`, ...). Dabei wird pro Client gezählt, wie viele **eindeutige** Subdomains einer Basisdomain (z.B. `microsoft.com`) im Zeitfenster aufgerufen werden.
+```bash
+RATE_LIMIT_MAX_REQUESTS=30
+RATE_LIMIT_WINDOW=60
+```
+
+Das bedeutet: Wenn ein Client dieselbe Domain mehr als 30-mal innerhalb von 60 Sekunden abfragt, wird er auffällig.
+
+Gute Startwerte:
+
+| Umgebung | Vorschlag |
+|---|---|
+| kleines Heimnetz | `30` in `60s` |
+| viele Clients | `60` bis `120` in `60s` |
+| sehr aktive Resolver/Forwarder | zuerst Whitelist prüfen, dann höher setzen |
+
+Wichtig: Wenn ein Router, Reverse Proxy oder lokaler DNS-Forwarder stellvertretend für viele Clients fragt, sollte dieser Client in die Whitelist. Sonst sieht AdGuard Shield nur eine sehr aktive IP.
+
+## Subdomain-Flood-Erkennung
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `SUBDOMAIN_FLOOD_ENABLED` | `true` | Subdomain-Flood-Erkennung aktivieren |
-| `SUBDOMAIN_FLOOD_MAX_UNIQUE` | `50` | Max. eindeutige Subdomains pro Basisdomain/Client im Zeitfenster |
+|---|---:|---|
+| `SUBDOMAIN_FLOOD_ENABLED` | `true` | aktiviert die Erkennung zufälliger Subdomains |
+| `SUBDOMAIN_FLOOD_MAX_UNIQUE` | `50` | maximale Anzahl eindeutiger Subdomains pro Client und Basisdomain |
 | `SUBDOMAIN_FLOOD_WINDOW` | `60` | Zeitfenster in Sekunden |
 
-#### Wie funktioniert die Erkennung?
+Diese Erkennung zielt auf Muster wie:
 
-1. Aus jeder DNS-Anfrage wird die **Basisdomain** extrahiert (z.B. `microsoft.com` aus `abc.microsoft.com`)
-2. Pro Client wird gezählt, wie viele **verschiedene** Subdomains einer Basisdomain im Zeitfenster abgefragt wurden
-3. Überschreitet die Anzahl eindeutiger Subdomains den Schwellwert, wird der Client gesperrt
-
-#### Beispiel
-
-Ein Bot fragt innerhalb von 60 Sekunden folgende Domains ab:
-
-```
-hbidcw.microsoft.com
-ftdzewf.microsoft.com
-xk9z3a.microsoft.com
-... (50+ verschiedene Subdomains)
+```text
+a1b2.example.com
+f8x9.example.com
+zz12.example.com
 ```
 
-→ Alle Anfragen haben die gleiche Basisdomain `microsoft.com`. Sobald mehr als 50 eindeutige Subdomains erkannt werden, wird der Client gesperrt.
+Dabei zählt AdGuard Shield nicht die Gesamtzahl der Anfragen, sondern die Anzahl unterschiedlicher Subdomains unter derselben Basisdomain.
 
-> **Hinweis:** Nur echte Subdomains werden gezählt. Anfragen direkt an `microsoft.com` (ohne Subdomain) lösen diese Erkennung nicht aus. Multi-Part-TLDs wie `.co.uk`, `.com.au` etc. werden korrekt behandelt.
+Beispiel:
 
-> **Tipp:** Der Schwellwert `SUBDOMAIN_FLOOD_MAX_UNIQUE` sollte hoch genug sein, um legitime Clients nicht zu stören (z.B. CDNs nutzen oft viele Subdomains). Ein Wert von 50–100 ist in den meisten Fällen sinnvoll.
+```bash
+SUBDOMAIN_FLOOD_ENABLED=true
+SUBDOMAIN_FLOOD_MAX_UNIQUE=50
+SUBDOMAIN_FLOOD_WINDOW=60
+```
 
-### DNS-Flood-Watchlist
+Wenn ein Client innerhalb von 60 Sekunden mehr als 50 unterschiedliche Subdomains von `example.com` abfragt, wird er gesperrt.
 
-Domains bei denen eine Rate-Limit-Überschreitung **sofort** zu einer **permanenten Sperre** und einer **AbuseIPDB-Meldung** führt — ohne progressive Eskalation. Ideal für bekannte Angriffsziele, die regelmäßig geflutet werden (z.B. `microsoft.com`, `google.com`).
+Hinweise:
+
+- Direkte Anfragen an `example.com` zählen hier nicht.
+- Multi-Part-TLDs wie `.co.uk` werden berücksichtigt.
+- CDNs und manche Apps nutzen viele Subdomains. Wenn legitime Clients betroffen sind, den Grenzwert erhöhen oder passende Clients whitelisten.
+
+## DNS-Flood-Watchlist
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `DNS_FLOOD_WATCHLIST_ENABLED` | `false` | DNS-Flood-Watchlist aktivieren |
-| `DNS_FLOOD_WATCHLIST` | *(leer)* | Überwachte Domains, kommagetrennt (z.B. `"microsoft.com,google.com"`) |
+|---|---|---|
+| `DNS_FLOOD_WATCHLIST_ENABLED` | `false` | aktiviert die Watchlist |
+| `DNS_FLOOD_WATCHLIST` | leer | kommagetrennte Domainliste |
 
-#### Wie funktioniert die Watchlist?
+Die Watchlist ist für Domains gedacht, bei denen eine Überschreitung sofort hart behandelt werden soll.
 
-1. Die reguläre Rate-Limit-Prüfung erkennt, dass ein Client mehr als `RATE_LIMIT_MAX_REQUESTS` Anfragen für eine Domain gestellt hat
-2. Zusätzlich wird geprüft, ob die angefragte Domain in der Watchlist steht (inkl. Subdomains: `foo.microsoft.com` matcht `microsoft.com`)
-3. Trifft beides zu → **sofortige permanente Sperre** + **AbuseIPDB-Meldung** (falls aktiviert)
-
-Die Watchlist greift sowohl bei normalen Rate-Limit-Verstößen als auch bei Subdomain-Flood-Erkennungen.
-
-#### Beispiel
+Beispiel:
 
 ```bash
 DNS_FLOOD_WATCHLIST_ENABLED=true
 DNS_FLOOD_WATCHLIST="microsoft.com,google.com,apple.com"
 ```
 
-→ Ein Client der `35x foo.microsoft.com` in 60s abfragt (bei `RATE_LIMIT_MAX_REQUESTS=30`) wird **sofort permanent** gesperrt und an AbuseIPDB gemeldet.
+Wenn ein Client dann `login.microsoft.com` über das Rate-Limit bringt, wird sofort permanent gesperrt, weil `login.microsoft.com` zur Watchlist-Domain `microsoft.com` gehört.
 
-> **Hinweis:** Damit die AbuseIPDB-Meldung funktioniert, muss `ABUSEIPDB_ENABLED=true` und ein gültiger `ABUSEIPDB_API_KEY` konfiguriert sein. Ohne AbuseIPDB-Konfiguration wird nur permanent gesperrt.
+Folgen:
 
-### Sperr-Einstellungen
+- Grund: `dns-flood-watchlist`
+- Sperrdauer: permanent
+- Progressive-Ban-Dauer wird übersprungen
+- AbuseIPDB-Reporting kann ausgelöst werden, wenn aktiviert
 
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `BAN_DURATION` | `3600` | Basis-Sperrdauer in Sekunden (3600 = 1 Stunde) |
-| `IPTABLES_CHAIN` | `ADGUARD_SHIELD` | Name der iptables Chain |
-| `BLOCKED_PORTS` | `53 443 853` | Ports die gesperrt werden (IPv4 + IPv6) |
-| `WHITELIST` | `127.0.0.1,::1` | IPs die nie gesperrt werden (kommagetrennt) |
-
-### Progressive Sperren (Recidive)
-
-Wiederholungstäter werden wie bei fail2ban stufenweise länger gesperrt. Wird eine IP nach dem Ablauf ihrer Sperre erneut auffällig, steigt die Sperrdauer exponentiell.
+## Sperrdauer und Firewall
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `PROGRESSIVE_BAN_ENABLED` | `true` | Progressive Sperren aktivieren |
-| `PROGRESSIVE_BAN_MULTIPLIER` | `2` | Multiplikator pro Stufe (2 = Verdopplung) |
-| `PROGRESSIVE_BAN_MAX_LEVEL` | `5` | Ab dieser Stufe wird permanent gesperrt (0 = nie) |
-| `PROGRESSIVE_BAN_RESET_AFTER` | `86400` | Zähler-Reset nach X Sekunden ohne Vergehen (86400 = 24h) |
+|---|---|---|
+| `BAN_DURATION` | `3600` | Basisdauer temporärer Monitor-Sperren in Sekunden |
+| `IPTABLES_CHAIN` | `ADGUARD_SHIELD` | Name der eigenen Firewall-Chain |
+| `BLOCKED_PORTS` | `53 443 853` | Ports, die für gesperrte Clients blockiert werden |
+| `FIREWALL_BACKEND` | `ipset` | Firewall-Backend der Go-Version |
+| `FIREWALL_MODE` | `host` | Verkehrsweg der AdGuard-Home-Installation |
+| `DRY_RUN` | `false` | Konfigurationsweiter Testmodus ohne echte Sperren |
 
-#### Beispiel bei Standardwerten
+Standardports:
 
-| Vergehen | Stufe | Sperrdauer | Berechnung |
-|----------|-------|------------|------------|
-| 1. Mal   | 1     | 1 Stunde   | 3600 × 1   |
-| 2. Mal   | 2     | 2 Stunden  | 3600 × 2   |
-| 3. Mal   | 3     | 4 Stunden  | 3600 × 4   |
-| 4. Mal   | 4     | 8 Stunden  | 3600 × 8   |
-| 5. Mal   | 5     | **PERMANENT** | Max-Stufe erreicht |
+| Port | Zweck |
+|---:|---|
+| `53` | klassisches DNS über UDP/TCP |
+| `443` | DNS-over-HTTPS, sofern AdGuard Home darüber erreichbar ist |
+| `853` | DNS-over-TLS und DNS-over-QUIC |
 
-> **Hinweis:** Abgelaufene Offense-Zähler werden automatisch vom **Offense-Cleanup-Worker** aufgeräumt, der stündlich prüft, ob das letzte Vergehen einer IP länger als `PROGRESSIVE_BAN_RESET_AFTER` zurückliegt. Der Worker startet automatisch zusammen mit dem Hauptservice, wenn progressive Sperren aktiviert sind. Er läuft mit niedrigster CPU- und I/O-Priorität (`nice 19`, `ionice idle`), sodass andere Dienste nicht beeinträchtigt werden. Manuelles Zurücksetzen ist jederzeit mit `reset-offenses` möglich. Permanente Sperren werden **nicht** automatisch aufgehoben – sie müssen manuell mit `unban` oder `flush` entfernt werden.
-
-### Logging
-
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `LOG_FILE` | `/var/log/adguard-shield.log` | Pfad zur Log-Datei |
-| `LOG_LEVEL` | `INFO` | Log-Level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
-| `LOG_MAX_SIZE_MB` | `50` | Max. Log-Größe bevor rotiert wird |
-| `BAN_HISTORY_FILE` | `/var/log/adguard-shield-bans.log` | Legacy: Pfad zur alten Ban-History-Datei (wird bei der SQLite-Migration als Quelle verwendet). Neue Einträge werden direkt in die SQLite-Datenbank geschrieben. |
-| `BAN_HISTORY_RETENTION_DAYS` | `0` | Aufbewahrungsdauer der Ban-History in Tagen. `0` = unbegrenzt (niemals löschen). Alte Einträge werden beim nächsten Report automatisch entfernt. |
-
-### Benachrichtigungen
-
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `NOTIFY_ENABLED` | `false` | Benachrichtigungen aktivieren |
-| `NOTIFY_TYPE` | `ntfy` | Typ: `ntfy`, `discord`, `slack`, `gotify`, `generic` |
-| `NOTIFY_WEBHOOK_URL` | *(leer)* | Webhook-URL (nur für discord, slack, gotify, generic) |
-| `NTFY_SERVER_URL` | `https://ntfy.sh` | Ntfy Server-URL |
-| `NTFY_TOPIC` | *(leer)* | Ntfy Topic-Name |
-| `NTFY_TOKEN` | *(leer)* | Optionaler Ntfy Access-Token |
-| `NTFY_PRIORITY` | `4` | Ntfy Priorität (1–5) |
-
-### E-Mail Report
-
-Regelmäßige Statistik-Reports per E-Mail. Voraussetzung ist ein funktionierender Mail-Transport (z.B. msmtp).
-
-> **Anleitung für msmtp:** [Linux: Einfach E-Mails versenden mit msmtp](https://www.cleveradmin.de/blog/2024/12/linux-einfach-emails-versenden-mit-msmtp/)
-
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `REPORT_ENABLED` | `false` | Report-Funktion aktivieren |
-| `REPORT_INTERVAL` | `weekly` | Intervall: `daily`, `weekly`, `biweekly`, `monthly` |
-| `REPORT_TIME` | `08:00` | Versanduhrzeit (HH:MM, 24h) |
-| `REPORT_EMAIL_TO` | *(leer)* | E-Mail-Empfänger |
-| `REPORT_EMAIL_FROM` | `adguard-shield@hostname` | E-Mail-Absender |
-| `REPORT_FORMAT` | `html` | Format: `html` oder `txt` |
-| `REPORT_MAIL_CMD` | `msmtp` | Mail-Befehl (`msmtp`, `sendmail`, `mail`) |
-| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum in Tagen für „Aktivster Tag“. `30` = letzte 30 Tage. `0` = nur Berichtszeitraum (altes Verhalten) |
-
-> Siehe [E-Mail Report Dokumentation](report.md) für Details zu Inhalten, Templates und Befehlen.
-
-### Erweitert
-
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für die SQLite-Datenbank (`adguard-shield.db`) und Caches |
-| `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei |
-| `DRY_RUN` | `false` | Testmodus — nur loggen, nicht sperren |
-
-### Externe Whitelist
-
-Ermöglicht das Einbinden externer Whitelist-Dateien mit Domains und IP-Adressen. Der Worker löst Domains regelmäßig per DNS auf — ideal für DynDNS-Einträge mit wechselnden IP-Adressen. Aufgelöste IPs werden automatisch zur Whitelist hinzugefügt und bei jeder Prüfung aktualisiert.
-
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `EXTERNAL_WHITELIST_ENABLED` | `false` | Aktiviert den externen Whitelist-Worker |
-| `EXTERNAL_WHITELIST_URLS` | *(leer)* | URL(s) zu Whitelist-Textdateien (kommagetrennt). Unterstützt IPv4, IPv6, CIDR und Hostnamen |
-| `EXTERNAL_WHITELIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.). Bei DynDNS-Einträgen ggf. kürzer wählen |
-| `EXTERNAL_WHITELIST_CACHE_DIR` | `/var/lib/adguard-shield/external-whitelist` | Lokaler Cache für heruntergeladene Listen und aufgelöste IPs |
-
-#### Externe Whitelist einrichten
-
-1. Erstelle eine Textdatei auf einem Webserver. Pro Zeile ein Eintrag — Domain, IPv4, IPv6 oder CIDR:
+Die Firewall wird über `ipset` und `iptables`/`ip6tables` gesteuert. Für IPv4 und IPv6 gibt es getrennte Sets:
 
 ```text
-# Domains (werden regelmäßig per DNS aufgelöst — ideal für DynDNS)
-mein-router.dyndns.org
-homeserver.example.com
-
-# Feste IPs
-192.168.1.100
-10.0.0.0/24
-2001:db8::1
-
-# Kommentare und Inline-Kommentare werden unterstützt
-192.168.1.200 # Backup-Server
+adguard_shield_v4
+adguard_shield_v6
 ```
 
-2. Aktiviere die Whitelist in der Konfiguration:
+`FIREWALL_MODE` legt fest, in welche Host-Chain AdGuard Shield die Schutzregeln einhängt:
+
+| Modus | Einsatz |
+|---|---|
+| `host` | klassische AdGuard-Home-Installation direkt auf dem Host |
+| `docker-host` | AdGuard Home läuft in Docker mit `network_mode: host`; Alias von `host` |
+| `docker-bridge` | AdGuard Home läuft in Docker mit veröffentlichten Ports, z.B. `53:53` |
+| `hybrid` | schützt Host-Ports und Docker-Forwarding gleichzeitig |
+
+Bei `host`/`docker-host` wird die eigene Chain aus `INPUT` angesprungen. Bei `docker-bridge` wird sie aus `DOCKER-USER` angesprungen, weil Docker veröffentlichte Ports über NAT und `FORWARD` verarbeitet. Details stehen in [Docker-Installationen](docker.md).
+
+## Whitelist
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `WHITELIST` | `127.0.0.1,::1` | IPs, die nie gesperrt werden |
+
+Beispiel:
+
+```bash
+WHITELIST="127.0.0.1,::1,192.168.1.1,192.168.1.10,fd00::1"
+```
+
+Empfohlen sind:
+
+- Localhost: `127.0.0.1`, `::1`
+- Router/Gateway
+- Admin- oder Management-IPs
+- Monitoring-Systeme
+- interne Resolver oder Forwarder
+- eigene VPN-Endpunkte, falls sie viele Anfragen bündeln
+
+Wichtig: Die Whitelist wird vor jeder Sperre geprüft. Das gilt für automatische, manuelle, GeoIP- und externe Blocklist-Sperren.
+
+## Progressive Sperren
+
+| Parameter | Standard | Beschreibung |
+|---|---:|---|
+| `PROGRESSIVE_BAN_ENABLED` | `true` | Wiederholungstäter stufenweise länger sperren |
+| `PROGRESSIVE_BAN_MULTIPLIER` | `2` | Multiplikator pro Stufe |
+| `PROGRESSIVE_BAN_MAX_LEVEL` | `5` | ab dieser Stufe permanent sperren, `0` bedeutet nie permanent durch Stufe |
+| `PROGRESSIVE_BAN_RESET_AFTER` | `86400` | Offense-Zähler nach so vielen Sekunden ohne neues Vergehen zurücksetzen |
+
+Beispiel mit Standardwerten:
+
+| Vergehen | Stufe | Dauer |
+|---:|---:|---|
+| 1 | 1 | 1 Stunde |
+| 2 | 2 | 2 Stunden |
+| 3 | 3 | 4 Stunden |
+| 4 | 4 | 8 Stunden |
+| 5 | 5 | permanent |
+
+Progressive Sperren gelten für Monitor-Sperren wie `rate-limit` und `subdomain-flood`. Watchlist-Treffer sind sofort permanent. GeoIP und externe Blocklisten haben eigene Regeln.
+
+Wartung:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield offense-status
+sudo /opt/adguard-shield/adguard-shield offense-cleanup
+sudo /opt/adguard-shield/adguard-shield reset-offenses 192.168.1.100
+```
+
+## Logging
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `LOG_FILE` | `/var/log/adguard-shield.log` | Datei für Daemon-Ereignisse |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` oder `ERROR` |
+
+`LOG_FILE` enthält Start/Stop, Worker-Läufe, Sperren, Freigaben, Warnungen und Fehler. Query-Inhalte werden nicht dauerhaft ins Log geschrieben.
+
+CLI:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
+sudo /opt/adguard-shield/adguard-shield logs-follow debug
+sudo /opt/adguard-shield/adguard-shield live
+```
+
+Für produktiven Betrieb ist `INFO` sinnvoll. Für Fehlersuche kurzzeitig `DEBUG` verwenden.
+
+## State und Runtime
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für SQLite-Datenbank und Caches |
+| `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei für direkten Vordergrundlauf |
+
+SQLite-Datei:
+
+```text
+${STATE_DIR}/adguard-shield.db
+```
+
+Weitere Dateien in `STATE_DIR`:
+
+- Caches für externe Listen
+- gespeicherte Firewall-Regeln bei `firewall-save`
+- SQLite-WAL-Dateien
+
+## Benachrichtigungen
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `NOTIFY_ENABLED` | `false` | Benachrichtigungen aktivieren |
+| `NOTIFY_TYPE` | `ntfy` | `ntfy`, `discord`, `slack`, `gotify` oder `generic` |
+| `NOTIFY_WEBHOOK_URL` | leer | Webhook-URL für Discord, Slack, Gotify oder Generic |
+| `NTFY_SERVER_URL` | `https://ntfy.sh` | Ntfy-Server |
+| `NTFY_TOPIC` | leer | Ntfy-Topic |
+| `NTFY_TOKEN` | leer | optionaler Access-Token |
+| `NTFY_PRIORITY` | `4` | Ntfy-Priorität von 1 bis 5 |
+
+Ntfy-Beispiel:
+
+```bash
+NOTIFY_ENABLED=true
+NOTIFY_TYPE="ntfy"
+NTFY_SERVER_URL="https://ntfy.sh"
+NTFY_TOPIC="mein-adguard-shield"
+NTFY_PRIORITY="4"
+```
+
+Discord-Beispiel:
+
+```bash
+NOTIFY_ENABLED=true
+NOTIFY_TYPE="discord"
+NOTIFY_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+```
+
+Details stehen in [Benachrichtigungen](benachrichtigungen.md).
+
+## E-Mail-Reports
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `REPORT_ENABLED` | `false` | Report-Funktion logisch aktivieren |
+| `REPORT_INTERVAL` | `weekly` | `daily`, `weekly`, `biweekly` oder `monthly` |
+| `REPORT_TIME` | `08:00` | Versandzeit im Format `HH:MM` |
+| `REPORT_EMAIL_TO` | `admin@example.com` | Empfänger |
+| `REPORT_EMAIL_FROM` | `adguard-shield@example.com` | Absender |
+| `REPORT_FORMAT` | `html` | `html` oder `txt` |
+| `REPORT_MAIL_CMD` | `msmtp` | Mailprogramm |
+| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum in Tagen für "Aktivster Tag"; aktuell als Kompatibilitätsparameter vorhanden |
+
+Beispiel:
+
+```bash
+REPORT_ENABLED=true
+REPORT_INTERVAL="weekly"
+REPORT_TIME="08:00"
+REPORT_EMAIL_TO="admin@example.com"
+REPORT_EMAIL_FROM="adguard-shield@example.com"
+REPORT_FORMAT="html"
+REPORT_MAIL_CMD="msmtp"
+```
+
+Cron installieren:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield report-install
+```
+
+Details stehen in [E-Mail Report](report.md).
+
+## Externe Whitelist
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `EXTERNAL_WHITELIST_ENABLED` | `false` | externe Whitelist aktivieren |
+| `EXTERNAL_WHITELIST_URLS` | leer | kommagetrennte URLs |
+| `EXTERNAL_WHITELIST_INTERVAL` | `300` | Synchronisationsintervall in Sekunden |
+| `EXTERNAL_WHITELIST_CACHE_DIR` | `/var/lib/adguard-shield/external-whitelist` | Cache-Verzeichnis |
+
+Beispiel:
 
 ```bash
 EXTERNAL_WHITELIST_ENABLED=true
-EXTERNAL_WHITELIST_URLS="https://example.com/whitelist.txt"
+EXTERNAL_WHITELIST_URLS="https://example.com/trusted.txt"
 EXTERNAL_WHITELIST_INTERVAL=300
 ```
 
-3. Mehrere Listen können kommagetrennt angegeben werden:
+Listenformat:
 
-```bash
-EXTERNAL_WHITELIST_URLS="https://example.com/trusted.txt,https://other.com/whitelist.txt"
+```text
+# Hostnamen werden regelmäßig aufgelöst
+mein-router.dyndns.org
+vpn.example.com
+
+# IPs und Netze
+192.168.1.10
+10.0.0.0/24
+2001:db8::1
 ```
 
-4. Service neustarten:
+Mehrere Listen:
 
 ```bash
-sudo systemctl restart adguard-shield
+EXTERNAL_WHITELIST_URLS="https://example.com/a.txt,https://example.net/b.txt"
 ```
 
-> **Hinweis:** Da Domains bei jedem Prüfintervall neu aufgelöst werden, eignet sich diese Funktion besonders für DynDNS-Einträge. Ändert sich die IP eines DynDNS-Hostnamens, wird die neue IP beim nächsten Sync automatisch erkannt und in die Whitelist aufgenommen.
+Verhalten:
 
-> **Wichtig:** Wird eine bereits gesperrte IP durch eine Whitelist-Aktualisierung gewhitelistet, wird sie **automatisch entsperrt**.
+- Hostnamen werden per DNS aufgelöst.
+- Aufgelöste IPs landen in SQLite.
+- Bereits aktive Sperren werden aufgehoben, wenn die IP später in der Whitelist auftaucht.
+- Kommentare und Inline-Kommentare werden unterstützt.
 
-### Externe Blocklist
+Manuell synchronisieren:
 
-Ermöglicht das Einbinden externer Blocklisten, die IPv4-Adressen, IPv6-Adressen und Hostnamen enthalten können. Der Worker läuft als Hintergrundprozess, prüft periodisch auf Änderungen und löst Hostnamen automatisch über den lokalen DNS-Resolver auf.
+```bash
+sudo /opt/adguard-shield/adguard-shield whitelist-sync
+```
 
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
-| `EXTERNAL_BLOCKLIST_ENABLED` | `false` | Aktiviert den externen Blocklist-Worker |
-| `EXTERNAL_BLOCKLIST_URLS` | *(leer)* | URL(s) zu Blocklist-Textdateien (kommagetrennt). Unterstützt IPv4, IPv6, CIDR und Hostnamen |
-| `EXTERNAL_BLOCKLIST_INTERVAL` | `300` | Prüfintervall in Sekunden (300 = 5 Min.) |
-| `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden (0 = permanent bis IP aus Liste entfernt) |
-| `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs automatisch entsperren wenn aus Liste entfernt |
-| `EXTERNAL_BLOCKLIST_NOTIFY` | `false` | Webhook-Benachrichtigungen bei Blocklist-Sperren senden. Bei großen Listen unbedingt auf `false` lassen — beim ersten Sync kommen sonst hunderte Nachrichten auf einmal. |
-| `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-shield/external-blocklist` | Lokaler Cache für heruntergeladene Listen |
-### AbuseIPDB Reporting
-
-Meldet permanent gesperrte IPs automatisch an [AbuseIPDB](https://www.abuseipdb.com/). Damit wird die IP in einer öffentlichen Datenbank als missbräuchlich markiert und andere Administratoren können davon profitieren.
-
-> **Wichtig:** Es werden **nur permanent gesperrte IPs** gemeldet — also erst wenn die maximale Progressive-Ban-Stufe erreicht ist. Einzelne temporäre Sperren lösen keinen AbuseIPDB-Report aus.
+## Externe Blocklist
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|---------------|
+|---|---|---|
+| `EXTERNAL_BLOCKLIST_ENABLED` | `false` | externe Blocklist aktivieren |
+| `EXTERNAL_BLOCKLIST_URLS` | leer | kommagetrennte URLs |
+| `EXTERNAL_BLOCKLIST_INTERVAL` | `300` | Synchronisationsintervall in Sekunden |
+| `EXTERNAL_BLOCKLIST_BAN_DURATION` | `0` | Sperrdauer in Sekunden, `0` = permanent |
+| `EXTERNAL_BLOCKLIST_AUTO_UNBAN` | `true` | IPs freigeben, wenn sie nicht mehr in der Liste stehen |
+| `EXTERNAL_BLOCKLIST_NOTIFY` | `false` | Benachrichtigungen für Blocklist-Sperren senden |
+| `EXTERNAL_BLOCKLIST_CACHE_DIR` | `/var/lib/adguard-shield/external-blocklist` | Cache-Verzeichnis |
+
+Beispiel:
+
+```bash
+EXTERNAL_BLOCKLIST_ENABLED=true
+EXTERNAL_BLOCKLIST_URLS="https://example.com/blocklist.txt"
+EXTERNAL_BLOCKLIST_INTERVAL=300
+EXTERNAL_BLOCKLIST_BAN_DURATION=0
+EXTERNAL_BLOCKLIST_AUTO_UNBAN=true
+EXTERNAL_BLOCKLIST_NOTIFY=false
+```
+
+Listenformat:
+
+```text
+# IPv4
+203.0.113.50
+198.51.100.0/24
+
+# IPv6
+2001:db8::dead:beef
+2001:db8::/32
+
+# Hostnamen
+bad-actor.example.com
+
+# Hosts-Datei-Format wird erkannt
+0.0.0.0 malware.example.net
+127.0.0.1 tracker.example.org
+```
+
+Unterstützt:
+
+| Format | Beispiel |
+|---|---|
+| IPv4 | `203.0.113.50` |
+| IPv4-CIDR | `198.51.100.0/24` |
+| IPv6 | `2001:db8::1` |
+| IPv6-CIDR | `2001:db8::/32` |
+| Hostname | `bad.example.com` |
+| Hosts-Format | `0.0.0.0 bad.example.com` |
+| Kommentar | `# Text` |
+| Inline-Kommentar | `203.0.113.50 # Grund` |
+
+Nicht sinnvoll und wird übersprungen:
+
+- URLs wie `https://...`
+- IP:Port wie `203.0.113.50:8443`
+- Hostnamen ohne Punkt oder mit ungültigen Zeichen
+- nicht auflösbare Hostnamen
+- Blocking-Antworten wie `0.0.0.0` oder `::`
+
+Hinweise:
+
+- Große Listen können viele Sperren erzeugen. `EXTERNAL_BLOCKLIST_NOTIFY=false` ist deshalb der sichere Standard.
+- Wenn ein Hostname mehrere IPs liefert, werden alle aufgelösten IPs verarbeitet.
+- IPs aus der Whitelist werden nicht gesperrt.
+- Bei `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` werden entfernte Einträge wieder freigegeben.
+
+Manuell synchronisieren:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield blocklist-sync
+```
+
+Dateiformat-Empfehlungen:
+
+- UTF-8 ohne BOM
+- Unix-Zeilenenden `LF`
+- IP-Listen und Hostname-Listen möglichst getrennt pflegen
+
+## AbuseIPDB
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
 | `ABUSEIPDB_ENABLED` | `false` | AbuseIPDB-Reporting aktivieren |
-| `ABUSEIPDB_API_KEY` | *(leer)* | API-Key von [abuseipdb.com/account/api](https://www.abuseipdb.com/account/api) |
-| `ABUSEIPDB_CATEGORIES` | `4` | Report-Kategorien (4 = DDoS Attack). Siehe [Kategorien](https://www.abuseipdb.com/categories) |
+| `ABUSEIPDB_API_KEY` | leer | API-Key |
+| `ABUSEIPDB_CATEGORIES` | `4` | Kategorien, kommagetrennt möglich |
 
-#### AbuseIPDB einrichten
-
-1. Erstelle einen kostenlosen Account auf [abuseipdb.com](https://www.abuseipdb.com/)
-2. Erstelle einen API-Key unter [Account → API](https://www.abuseipdb.com/account/api)
-3. Aktiviere das Reporting in der Konfiguration:
+Beispiel:
 
 ```bash
 ABUSEIPDB_ENABLED=true
-ABUSEIPDB_API_KEY="dein-api-key-hier"
+ABUSEIPDB_API_KEY="dein-api-key"
 ABUSEIPDB_CATEGORIES="4"
 ```
 
-4. Service neustarten:
+Gemeldet werden nur permanente Monitor-Sperren:
 
-```bash
-sudo systemctl restart adguard-shield
-```
+- Watchlist-Treffer
+- Progressive-Ban-Sperren auf Maximalstufe
 
-#### Was wird gemeldet?
+Nicht gemeldet werden:
 
-Der Report an AbuseIPDB enthält (auf Englisch):
+- temporäre Sperren
+- GeoIP-Sperren
+- externe Blocklist-Sperren
+- manuelle Sperren
 
-- **Bei Rate-Limit / DNS-Flood-Watchlist:** `DNS flooding on our DNS server: 100x microsoft.com in 60s. Banned by Adguard Shield 🔗 https://tnvs.de/as`
-- **Bei Subdomain-Flood:** `DNS flooding on our DNS server: 85x *.microsoft.com in 60s (random subdomain attack). Banned by Adguard Shield 🔗 https://tnvs.de/as`
-
-Die Kategorie `4` (DDoS Attack) wird standardmäßig verwendet. Weitere Kategorien können kommagetrennt angegeben werden (z.B. `"4,15"`).
-
-### GeoIP-basierte Länderfilter
-
-Ermöglicht das Sperren oder Erlauben von DNS-Anfragen basierend auf dem Herkunftsland der Client-IP. Unterstützt zwei Modi:
-
-- **Blocklist-Modus:** Nur die gelisteten Länder werden gesperrt (alle anderen erlaubt)
-- **Allowlist-Modus:** Nur die gelisteten Länder werden erlaubt (alle anderen gesperrt)
+## GeoIP-Länderfilter
 
 | Parameter | Standard | Beschreibung |
-|-----------|----------|--------------|
+|---|---|---|
 | `GEOIP_ENABLED` | `false` | GeoIP-Filter aktivieren |
-| `GEOIP_MODE` | `blocklist` | Modus: `blocklist` oder `allowlist` |
-| `GEOIP_COUNTRIES` | *(leer)* | ISO 3166-1 Alpha-2 Ländercodes (kommagetrennt), z.B. `CN,RU,KP,IR` |
-| `GEOIP_CHECK_INTERVAL` | `0` | Prüfintervall in Sekunden (`0` = nutzt `CHECK_INTERVAL`) |
-| `GEOIP_NOTIFY` | `true` | Benachrichtigungen bei GeoIP-Sperren senden |
-| `GEOIP_SKIP_PRIVATE` | `true` | Private/lokale IPs von der GeoIP-Prüfung ausnehmen |
-| `GEOIP_LICENSE_KEY` | *(leer)* | MaxMind License-Key für automatischen DB-Download (kostenlos) |
-| `GEOIP_MMDB_PATH` | *(leer)* | Manueller Pfad zur MaxMind GeoLite2 Datenbank (überschreibt Auto-Download) |
+| `GEOIP_MODE` | `blocklist` | `blocklist` oder `allowlist` |
+| `GEOIP_COUNTRIES` | leer | ISO-3166-1-Alpha-2-Ländercodes |
+| `GEOIP_CHECK_INTERVAL` | `0` | Legacy-Parameter; die Go-Version nutzt den zentralen Query-Poller |
+| `GEOIP_NOTIFY` | `true` | Benachrichtigungen bei GeoIP-Sperren |
+| `GEOIP_SKIP_PRIVATE` | `true` | private/lokale IPs überspringen |
+| `GEOIP_LICENSE_KEY` | leer | MaxMind-License-Key für Auto-Download |
+| `GEOIP_MMDB_PATH` | leer | manueller Pfad zur MaxMind-MMDB |
+| `GEOIP_CACHE_TTL` | `86400` | Cache-Zeit in Sekunden |
 
-#### Voraussetzungen
-
-Es muss mindestens eines der folgenden GeoIP-Tools installiert sein:
-
-1. **Automatischer MaxMind-Download** (empfohlen):
-   ```bash
-   # Kostenlosen Account erstellen: https://www.maxmind.com/en/geolite2/signup
-   # License-Key generieren und in adguard-shield.conf eintragen:
-   GEOIP_LICENSE_KEY="dein_license_key_hier"
-   ```
-   Die GeoLite2-Country-Datenbank wird automatisch heruntergeladen und alle 24 Stunden aktualisiert.
-   Es wird zusätzlich `mmdbinspect` oder `mmdblookup` benötigt:
-   ```bash
-   sudo apt install mmdb-bin    # für mmdblookup
-   ```
-
-2. **geoiplookup** (einfachster Einstieg, weniger genau):
-   ```bash
-   sudo apt install geoip-bin geoip-database
-   ```
-
-3. **Manueller MaxMind-Pfad** (eigene Datenbank):
-   ```bash
-   # mmdbinspect oder mmdblookup installieren
-   # Datenbank manuell herunterladen: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
-   GEOIP_MMDB_PATH="/usr/share/GeoIP/GeoLite2-Country.mmdb"
-   ```
-
-> **Priorität:** `GEOIP_MMDB_PATH` (manuell) → Auto-Download-DB → `geoiplookup` (Legacy-Fallback)
-
-#### Beispiel: Bestimmte Länder sperren (Blocklist)
+Blocklist-Modus:
 
 ```bash
 GEOIP_ENABLED=true
 GEOIP_MODE="blocklist"
 GEOIP_COUNTRIES="CN,RU,KP,IR"
-GEOIP_LICENSE_KEY="dein_maxmind_license_key"   # optional, für Auto-Download
 ```
 
-→ Alle Anfragen aus China, Russland, Nordkorea und Iran werden permanent gesperrt.
+Damit werden öffentliche Clients aus diesen Ländern gesperrt.
 
-#### Beispiel: Nur bestimmte Länder erlauben (Allowlist)
+Allowlist-Modus:
 
 ```bash
 GEOIP_ENABLED=true
@@ -351,164 +559,128 @@ GEOIP_MODE="allowlist"
 GEOIP_COUNTRIES="DE,AT,CH"
 ```
 
-→ Nur Anfragen aus Deutschland, Österreich und der Schweiz werden erlaubt. Alle anderen Länder werden gesperrt.
+Damit werden nur diese Länder erlaubt. Andere öffentliche Länder werden gesperrt.
 
-> **Hinweis:** Private IP-Adressen (10.x.x.x, 192.168.x.x, etc.) und Whitelist-IPs werden niemals durch GeoIP gesperrt. GeoIP-Sperren sind **immer permanent**.
-
-> **Auto-Unban:** Wird ein Land aus `GEOIP_COUNTRIES` entfernt oder der Modus (`GEOIP_MODE`) geändert, werden die nicht mehr zutreffenden Sperren beim nächsten Sync **automatisch aufgehoben**. Dasselbe gilt, wenn GeoIP komplett deaktiviert wird (`GEOIP_ENABLED=false`).
-
-> **Tipp:** GeoIP-Lookups werden für 24 Stunden gecacht. Mit `geoip-flush-cache` kann der Cache manuell geleert werden.
-
-> **Auto-Download:** Ist `GEOIP_LICENSE_KEY` gesetzt, wird die GeoLite2-Country-Datenbank automatisch nach `<INSTALL_DIR>/geoip/` heruntergeladen und alle 24 Stunden aktualisiert. Bei einem Update wird der Download im Hintergrund durchgeführt — der Worker läuft während des Downloads normal weiter. Ein manuell gesetzter `GEOIP_MMDB_PATH` hat immer Vorrang vor der automatisch heruntergeladenen Datenbank.
-
-#### GeoIP-Befehle
-
-| Befehl | Beschreibung |
-|--------|--------------|
-| `adguard-shield.sh geoip-status` | Zeigt GeoIP-Status, aktive Sperren und verfügbare Tools |
-| `adguard-shield.sh geoip-sync` | Einmalige GeoIP-Prüfung aller aktiven Clients |
-| `adguard-shield.sh geoip-flush` | Alle GeoIP-Sperren aufheben |
-| `adguard-shield.sh geoip-lookup <IP>` | GeoIP-Lookup einer einzelnen IP-Adresse |
-
-#### Externe Blocklist einrichten
-
-1. Erstelle eine Textdatei auf einem Webserver. Pro Zeile ein Eintrag — IPv4, IPv6, CIDR oder Hostname:
-
-```text
-# Kommentare werden ignoriert
-# Inline-Kommentare ebenfalls: 1.2.3.4 # dieser Kommentar wird entfernt
-
-# IPv4
-192.168.100.50
-10.0.0.0/8
-
-# IPv6
-2001:db8::dead:beef
-2001:db8::/32
-
-# Hostnamen (werden über den lokalen DNS-Resolver aufgelöst)
-# Liefert ein Hostname mehrere IPs, werden alle gesperrt
-bad-actor.example.com
-malware.example.net
-
-# Hosts-Datei-Format wird ebenfalls erkannt (Routing-IP wird ignoriert, Hostname aufgelöst)
-0.0.0.0 bad-actor.example.com
-127.0.0.1 malware.example.net
-```
-
-> **Hinweis zur Hostname-Auflösung:** Da AdGuard Shield idealerweise auf demselben Host wie der DNS-Resolver läuft, verwendet der Worker automatisch den lokalen Resolver. Hostnamen die bereits von AdGuard geblockt werden (Antwort `0.0.0.0`) werden übersprungen und nicht importiert.
-
-#### Dateiformat der Blocklist
-
-Beim Erstellen eigener Blocklisten müssen zwei Dinge beachtet werden:
-
-- **Zeichenkodierung:** Datei in **UTF-8 ohne BOM** speichern. Dateien mit BOM (z.B. Standard-Einstellung in Notepad++) führen dazu, dass der erste Eintrag als ungültig erkannt wird.
-- **Zeilenenden:** Datei mit **Unix-Zeilenenden (LF)** speichern, nicht Windows (CRLF). CRLF-Zeilenenden führen dazu, dass alle Einträge als ungültig abgelehnt werden.
-
-In **Notepad++:** Kodierung → „UTF-8 (ohne BOM)" und Bearbeiten → Zeilenende-Konvertierung → Unix (LF).  
-In **VS Code:** Unten rechts auf `CRLF` klicken → `LF` auswählen; Zeichenkodierung ebenfalls unten rechts prüfen.
-
-> **Empfehlung:** IP-Adressen und Hostnamen in **getrennten Listen** pflegen. Bei Hostname-Listen löst der Worker jeden Eintrag per DNS auf — das ist langsamer als direkte IP-Listen und liefert je nach DNS-Antwort mehrere IPs pro Eintrag. Getrennte Listen sind außerdem übersichtlicher und einfacher zu pflegen.
-
-#### Synchronisierungsverhalten
-
-Der Worker synchronisiert die Blocklisten:
-
-- **Beim Service-Start:** Der erste Sync läuft **sofort** beim Start — ohne Wartezeit. Danach beginnt erst das periodische Intervall (`EXTERNAL_BLOCKLIST_INTERVAL`).
-- **Automatisch im Hintergrund:** Alle `EXTERNAL_BLOCKLIST_INTERVAL` Sekunden (Standard: 300s = 5 Min.) wird geprüft, ob sich die Liste geändert hat. Unveränderte Listen (HTTP 304 oder gleicher Inhalt) werden nicht erneut verarbeitet.
-- **Manuell:** `sudo adguard-shield.sh blocklist-sync` erzwingt sofort einen Sync, unabhängig vom laufenden Worker.
-
-> **Nach einem Neustart** (Server oder Service) werden fehlende iptables-Regeln beim nächsten Sync automatisch nachgezogen.
-
-2. Aktiviere die Blocklist in der Konfiguration:
+Private IPs:
 
 ```bash
-EXTERNAL_BLOCKLIST_ENABLED=true
-EXTERNAL_BLOCKLIST_URLS="https://example.com/blocklist.txt"
-EXTERNAL_BLOCKLIST_INTERVAL=300
+GEOIP_SKIP_PRIVATE=true
 ```
 
-3. Mehrere Listen können kommagetrennt angegeben werden:
+Damit werden unter anderem private Netze, Loopback, Link-Local und CGNAT übersprungen.
+
+### GeoIP-Datenquellen
+
+Priorität:
+
+1. `GEOIP_MMDB_PATH`, wenn gesetzt
+2. automatisch geladene MaxMind-Datenbank, wenn `GEOIP_LICENSE_KEY` gesetzt ist
+3. Legacy-Fallback über `geoiplookup` oder `geoiplookup6`
+
+Automatischer MaxMind-Download:
 
 ```bash
-EXTERNAL_BLOCKLIST_URLS="https://example.com/list1.txt,https://other.com/list2.txt"
+GEOIP_LICENSE_KEY="dein_maxmind_license_key"
 ```
 
-4. Service neustarten:
+Die Datenbank wird unter `/opt/adguard-shield/geoip/` gespeichert und nach 24 Stunden erneuert.
+
+Manueller Pfad:
 
 ```bash
-sudo systemctl restart adguard-shield
+GEOIP_MMDB_PATH="/usr/share/GeoIP/GeoLite2-Country.mmdb"
 ```
 
-#### Unterstützte Eintragsformate
+Nützliche Befehle:
 
-| Format | Beispiel | Verhalten |
-|--------|----------|----------|
-| IPv4 | `1.2.3.4` | direkt gesperrt |
-| IPv4-CIDR | `10.0.0.0/8` | direkt gesperrt |
-| IPv6 | `2001:db8::1` | direkt gesperrt |
-| IPv6-CIDR | `2001:db8::/32` | direkt gesperrt |
-| Hostname | `bad.example.com` | per lokalem DNS aufgelöst, alle IPs (IPv4 + IPv6) gesperrt |
-| Hosts-Format | `0.0.0.0 bad.example.com` | Hostname extrahiert und aufgelöst |
-| Kommentar | `# Text` | übersprungen |
-| Inline-Kommentar | `1.2.3.4 # Text` | Kommentar entfernt, IP gesperrt |
-
-Folgende Einträge werden mit einer Warnung im Log übersprungen:
-
-- URLs (`https://...`, `http://...`)
-- IP:Port-Kombinationen (`1.2.3.4:8080`)
-- Hostnamen mit ungültigen Zeichen oder ohne Punkt
-- Einträge mit nicht auflösbarem Hostnamen
-- `0.0.0.0` und `::` (AdGuard-Blocking-Antwort)
-## Gesperrte Ports im Detail
-
-Bei einem Rate-Limit-Verstoß werden **alle** DNS-Protokoll-Ports für den Client gesperrt (IPv4 via `iptables` und IPv6 via `ip6tables`):
-
-| Port | Protokoll | Beschreibung |
-|------|-----------|-------------|
-| 53   | UDP/TCP   | Standard DNS |
-| 443  | TCP       | DNS-over-HTTPS (DoH) |
-| 853  | TCP       | DNS-over-TLS (`tls://dns1.techniverse.net:853`) |
-| 853  | UDP       | DNS-over-QUIC (`quic://dns1.techniverse.net:853`) |
-
-## Protokoll-Erkennung
-
-AdGuard Shield erkennt **automatisch**, welches DNS-Protokoll ein Client verwendet. Diese Information wird aus dem Feld `client_proto` der AdGuard Home Query Log API extrahiert und an folgenden Stellen angezeigt:
-
-- **Log-Datei**: Jede Anfrage wird mit dem verwendeten Protokoll geloggt
-- **Ban-History**: Die Protokoll-Spalte zeigt, über welches Protokoll die Anfragen kamen
-- **Status-Anzeige**: Aktive Sperren zeigen das verwendete Protokoll an
-- **Benachrichtigungen**: Push-Nachrichten enthalten das Protokoll
-
-### Unterstützte Protokolle
-
-| API-Wert | Anzeige | Beschreibung |
-|----------|---------|-------------|
-| *(leer)* | `DNS` | Klassisches DNS über UDP/TCP (Port 53) |
-| `doh` | `DoH` | DNS-over-HTTPS (Port 443) |
-| `dot` | `DoT` | DNS-over-TLS (Port 853) |
-| `doq` | `DoQ` | DNS-over-QUIC (Port 853/UDP) |
-| `dnscrypt` | `DNSCrypt` | DNSCrypt-Protokoll |
-
-Verwendet ein Client mehrere Protokolle gleichzeitig (z.B. DoH und DNS), werden alle erkannten Protokolle kommagetrennt angezeigt (z.B. `DNS,DoH`).
-
-> **Wichtig:** Alle Protokolle werden gleichermaßen überwacht und gegen das Rate-Limit geprüft. Ein DoH-Flood wird genauso erkannt und gesperrt wie ein klassischer DNS-Flood – die Erkennung basiert auf den AdGuard Home Logdaten, nicht auf Netzwerk-Traffic.
-
-## Whitelist richtig pflegen
-
-Die Whitelist sollte mindestens enthalten:
-
-- `127.0.0.1` und `::1` (Localhost)
-- Die IP deines Routers / Gateways
-- Deine eigenen Management-IPs
-- Andere vertrauenswürdige DNS-Clients
-
-Beispiel:
-
-```
-WHITELIST="127.0.0.1,::1,192.168.1.1,192.168.1.10,fd00::1"
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-status
+sudo /opt/adguard-shield/adguard-shield geoip-lookup 8.8.8.8
+sudo /opt/adguard-shield/adguard-shield geoip-sync
+sudo /opt/adguard-shield/adguard-shield geoip-flush-cache
 ```
 
-### Externe Whitelist für dynamische IPs
+## Protokollerkennung
 
-Für Clients mit wechselnden IP-Adressen (z.B. DynDNS) kann eine **externe Whitelist** genutzt werden. Der Whitelist-Worker löst Domains regelmäßig per DNS auf und fügt die aktuellen IPs automatisch zur Whitelist hinzu. Siehe [Externe Whitelist](#externe-whitelist) für die Konfiguration.
+AdGuard Shield liest das Feld `client_proto` aus der AdGuard-Home-API.
+
+| API-Wert | Anzeige | Bedeutung |
+|---|---|---|
+| leer oder `dns` | `DNS` | klassisches DNS |
+| `doh` | `DoH` | DNS-over-HTTPS |
+| `dot` | `DoT` | DNS-over-TLS |
+| `doq` | `DoQ` | DNS-over-QUIC |
+| `dnscrypt` | `DNSCrypt` | DNSCrypt |
+
+Die Sperre blockiert die konfigurierten Ports unabhängig davon, welches Protokoll den Verstoß ausgelöst hat.
+
+## Beispielkonfiguration für ein Heimnetz
+
+```bash
+ADGUARD_URL="http://127.0.0.1:3000"
+ADGUARD_USER="admin"
+ADGUARD_PASS="geheim"
+
+RATE_LIMIT_MAX_REQUESTS=30
+RATE_LIMIT_WINDOW=60
+CHECK_INTERVAL=10
+API_QUERY_LIMIT=500
+
+SUBDOMAIN_FLOOD_ENABLED=true
+SUBDOMAIN_FLOOD_MAX_UNIQUE=50
+SUBDOMAIN_FLOOD_WINDOW=60
+
+BAN_DURATION=3600
+PROGRESSIVE_BAN_ENABLED=true
+PROGRESSIVE_BAN_MAX_LEVEL=5
+
+WHITELIST="127.0.0.1,::1,192.168.1.1,192.168.1.10"
+
+NOTIFY_ENABLED=true
+NOTIFY_TYPE="ntfy"
+NTFY_TOPIC="adguard-shield-home"
+
+REPORT_ENABLED=false
+GEOIP_ENABLED=false
+EXTERNAL_BLOCKLIST_ENABLED=false
+EXTERNAL_WHITELIST_ENABLED=false
+```
+
+## Beispielkonfiguration für einen öffentlichen Resolver
+
+```bash
+ADGUARD_URL="https://dns.example.com"
+ADGUARD_USER="admin"
+ADGUARD_PASS="geheim"
+
+RATE_LIMIT_MAX_REQUESTS=60
+RATE_LIMIT_WINDOW=60
+CHECK_INTERVAL=5
+API_QUERY_LIMIT=2000
+
+SUBDOMAIN_FLOOD_ENABLED=true
+SUBDOMAIN_FLOOD_MAX_UNIQUE=75
+SUBDOMAIN_FLOOD_WINDOW=60
+
+DNS_FLOOD_WATCHLIST_ENABLED=true
+DNS_FLOOD_WATCHLIST="microsoft.com,google.com,apple.com"
+
+BAN_DURATION=3600
+PROGRESSIVE_BAN_ENABLED=true
+PROGRESSIVE_BAN_MULTIPLIER=2
+PROGRESSIVE_BAN_MAX_LEVEL=5
+
+ABUSEIPDB_ENABLED=true
+ABUSEIPDB_API_KEY="..."
+
+NOTIFY_ENABLED=true
+NOTIFY_TYPE="ntfy"
+NTFY_TOPIC="adguard-shield-prod"
+```
+
+Vor produktiver Aktivierung:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield test
+sudo /opt/adguard-shield/adguard-shield dry-run
+```

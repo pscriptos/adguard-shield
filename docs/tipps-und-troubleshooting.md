@@ -1,287 +1,424 @@
 # Tipps & Troubleshooting
 
-## Best Practices
+Dieses Dokument hilft beim Eingrenzen typischer Probleme im Betrieb. Die Reihenfolge ist bewusst praktisch: erst prüfen, ob der Dienst läuft, dann API, Firewall, Sperren, Listen und optionale Module.
 
-- **Erst immer im Dry-Run testen**, bevor der scharfe Modus aktiviert wird
-  ```bash
-  sudo /opt/adguard-shield/adguard-shield.sh dry-run
-  ```
-- **Whitelist großzügig pflegen**: Eigene IPs, Router, wichtige Server nicht vergessen
-- **Sperrdauer anpassen**: Für DDoS-artige Muster ggf. länger sperren
-- **Logs regelmäßig prüfen**: Falsche Positive erkennen und Whitelist anpassen
-- **Ban-History nutzen**: `history`-Befehl zeigt alle vergangenen Sperren — hilfreich um Muster zu erkennen
-- **Log-Level auf DEBUG** setzen wenn etwas nicht funktioniert
+## Erste Diagnose
 
-## Häufige Probleme
-
-### API-Verbindung schlägt fehl
+Diese Befehle liefern meistens schon genug Hinweise:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield.sh test
+sudo systemctl status adguard-shield
+sudo journalctl -u adguard-shield --no-pager -n 100
+sudo /opt/adguard-shield/adguard-shield test
+sudo /opt/adguard-shield/adguard-shield status
+sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
 ```
 
-**Mögliche Ursachen:**
-- Falsche URL in `ADGUARD_URL` (Port prüfen!)
-- Falsche Zugangsdaten (`ADGUARD_USER` / `ADGUARD_PASS`)
-- AdGuard Home läuft nicht
-- Firewall blockiert lokale Verbindung
-- DNS-Auflösung des Hostnames fehlgeschlagen
-- SSL/TLS-Zertifikatfehler (bei HTTPS)
+Wenn du aktuelle Queries sehen willst:
 
-#### Schritt-für-Schritt Diagnose
-
-**1. Base-URL Erreichbarkeit prüfen (ohne Auth):**
 ```bash
-# Vollständige Diagnose mit HTTP-Headern und Verbindungsdetails
-curl -ikv https://dns1.domain.com 2>&1
-
-# Nur HTTP-Statuscode prüfen (schnell)
-curl -s -o /dev/null -w "%{http_code}\n" -k https://dns1.domain.com
+sudo /opt/adguard-shield/adguard-shield live
 ```
 
-> `-i` zeigt HTTP-Response-Header, `-k` ignoriert SSL-Fehler, `-v` zeigt Verbindungsdetails (DNS, TLS-Handshake, etc.)
+## Service startet nicht
 
-**2. DNS-Auflösung testen:**
+Prüfen:
+
 ```bash
-# Hostname auflösen
-dig +short dns1.domain.com
-
-# Oder mit nslookup
-nslookup dns1.domain.com
+sudo systemctl status adguard-shield
+sudo journalctl -u adguard-shield --no-pager -n 100
 ```
 
-**3. Port-Erreichbarkeit testen:**
-```bash
-# TCP-Verbindung zum Port prüfen (z.B. Port 3000)
-nc -zv 127.0.0.1 3000
+Typische Ursachen:
 
-# Oder mit curl
-curl -v telnet://127.0.0.1:3000
-```
+- Konfigurationsdatei fehlt oder hat falsche Rechte
+- Binary fehlt oder ist nicht ausführbar
+- `iptables`, `ip6tables` oder `ipset` fehlen
+- AdGuard-Home-API ist nicht erreichbar
+- alte Shell-Artefakte verursachen Konflikte
+- systemd-Unit wurde manuell geändert, aber `daemon-reload` fehlt
 
-**4. API-Endpunkt mit Authentifizierung testen:**
-```bash
-# Query-Log abfragen (mit Auth + Response-Header)
-curl -i -u admin:passwort https://dns1.domain.com/control/querylog?limit=1
-
-# Nur HTTP-Status zurückgeben
-curl -s -o /dev/null -w "%{http_code}\n" -u admin:passwort https://dns1.domain.com/control/querylog?limit=1
-```
-
-**5. AdGuard Home Status-API prüfen:**
-```bash
-# Allgemeinen Status abfragen (benötigt keine Auth)
-curl -ik https://dns1.domain.com/control/status
-```
-
-#### Typische Fehlercodes
-
-| HTTP-Code | Bedeutung | Lösung |
-|-----------|-----------|--------|
-| `000` | Keine Verbindung | Host nicht erreichbar, DNS-Fehler oder Firewall |
-| `200` | Erfolg | Alles in Ordnung ✅ |
-| `301/302` | Weiterleitung | URL prüfen — evtl. fehlt `https://` oder Port |
-| `401` | Nicht autorisiert | `ADGUARD_USER` / `ADGUARD_PASS` prüfen |
-| `403` | Zugriff verweigert | Zugangsdaten oder IP-Beschränkung in AdGuard Home |
-| `404` | Nicht gefunden | URL falsch oder AdGuard Home Version zu alt |
-| `502/503` | Service nicht verfügbar | AdGuard Home läuft nicht oder wird gerade neu gestartet |
-
-#### curl Exit-Codes
-
-| Exit-Code | Bedeutung |
-|-----------|-----------|
-| `6` | DNS-Auflösung fehlgeschlagen — Hostname prüfen |
-| `7` | Verbindung abgelehnt — Läuft AdGuard Home? Port korrekt? |
-| `28` | Timeout — Host nicht erreichbar oder Firewall blockiert |
-| `35` | SSL/TLS-Handshake fehlgeschlagen |
-| `51` | SSL-Zertifikat: Hostname stimmt nicht überein |
-| `60` | SSL-Zertifikat: nicht vertrauenswürdig (selbstsigniert?) |
-
-> **Tipp:** Bei selbstsignierten Zertifikaten `-k` an curl anhängen, um SSL-Fehler zu ignorieren. AdGuard Shield verwendet intern automatisch `-k` bei der API-Kommunikation.
-
-**Lösung:** URL und Zugangsdaten in der Konfiguration anpassen:
-```bash
-sudo nano /opt/adguard-shield/adguard-shield.conf
-sudo systemctl restart adguard-shield
-```
-
-### iptables-Fehler: "Permission denied"
-
-Das Script muss als **root** laufen, da iptables Root-Rechte benötigt.
+Nützliche Prüfungen:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield.sh start
-```
-
-### Client wird fälschlich gesperrt
-
-1. Client sofort entsperren:
-   ```bash
-   sudo /opt/adguard-shield/adguard-shield.sh unban 192.168.1.100
-   ```
-2. In der Ban-History prüfen, warum gesperrt wurde:
-   ```bash
-   sudo /opt/adguard-shield/adguard-shield.sh history | grep 192.168.1.100
-   ```
-3. Offense-Zähler für die IP zurücksetzen (damit die progressive Sperre wieder bei Stufe 1 beginnt):
-   ```bash
-   sudo /opt/adguard-shield/adguard-shield.sh reset-offenses 192.168.1.100
-   ```
-4. IP zur Whitelist hinzufügen in `adguard-shield.conf`
-5. Service neustarten:
-   ```bash
-   sudo systemctl restart adguard-shield
-   ```
-
-### Client wurde permanent gesperrt (Progressive Sperren)
-
-Wenn eine IP die maximale Stufe der progressiven Sperren erreicht hat, wird sie permanent gesperrt und nicht automatisch aufgehoben.
-
-1. IP entsperren:
-   ```bash
-   sudo /opt/adguard-shield/adguard-shield.sh unban 192.168.1.100
-   ```
-2. Offense-Zähler zurücksetzen:
-   ```bash
-   sudo /opt/adguard-shield/adguard-shield.sh reset-offenses 192.168.1.100
-   ```
-3. Prüfen ob die IP auf die Whitelist gehört, oder die Progressive-Ban-Einstellungen anpassen (`PROGRESSIVE_BAN_MAX_LEVEL` erhöhen oder auf `0` setzen für keine permanenten Sperren)
-
-### Sperren überleben Reboot nicht
-
-Das ist normal — iptables-Regeln sind flüchtig. Der **Service** erstellt die Chain beim Start automatisch neu. Aktive Sperren aus der SQLite-Datenbank werden aber nicht automatisch als iptables-Regeln wiederhergestellt.
-
-**Optionen:**
-- `iptables-persistent` installieren (`apt install iptables-persistent`)
-- Oder den State beim Boot wiederherstellen lassen (Feature-Idee)
-
-### Zu viele false positives
-
-- `RATE_LIMIT_MAX_REQUESTS` erhöhen (z.B. 50 oder 100)
-- `RATE_LIMIT_WINDOW` vergrößern (z.B. 120 Sekunden)
-- Windows-Clients fragen manche Domains von Natur aus sehr oft an — Whitelist nutzen
-
-### Subdomain-Flood-Erkennung sperrt legitime Clients
-
-Manche Dienste (z.B. CDNs, Cloud-Dienste, Microsoft 365) nutzen von Natur aus viele verschiedene Subdomains. Falls ein legitimer Client fälschlicherweise durch die Subdomain-Flood-Erkennung gesperrt wird:
-
-1. Client sofort entsperren:
-   ```bash
-   sudo /opt/adguard-shield/adguard-shield.sh unban <IP>
-   ```
-2. Schwellwert erhöhen — z.B. von 50 auf 100 oder 150:
-   ```bash
-   SUBDOMAIN_FLOOD_MAX_UNIQUE=100
-   ```
-3. Zeitfenster vergrößern — z.B. auf 120 Sekunden:
-   ```bash
-   SUBDOMAIN_FLOOD_WINDOW=120
-   ```
-4. Oder die IP zur Whitelist hinzufügen
-5. Im Zweifelsfall die Erkennung temporär deaktivieren:
-   ```bash
-   SUBDOMAIN_FLOOD_ENABLED=false
-   ```
-
-> **Tipp:** Im Dry-Run-Modus (`sudo /opt/adguard-shield/adguard-shield.sh dry-run`) kann man beobachten, welche Clients die Subdomain-Flood-Erkennung auslösen würden, ohne sie wirklich zu sperren.
-
-### Monitor startet nicht (PID-File)
-
-```bash
-# Altes PID-File entfernen
-sudo rm -f /var/run/adguard-shield.pid
-sudo systemctl start adguard-shield
-```
-
-### Service ist ausgefallen und startet nicht mehr
-
-Wenn systemd das Restart-Limit erreicht hat (z.B. `"Start request repeated too quickly"`), hilft der **Watchdog** — er prüft alle 5 Minuten ob der Service läuft und startet ihn automatisch neu.
-
-**Watchdog-Status prüfen:**
-```bash
-# Timer-Status anzeigen
-sudo systemctl status adguard-shield-watchdog.timer
-
-# Letzte Watchdog-Ausführungen anzeigen
-sudo systemctl list-timers adguard-shield-watchdog.timer
-
-# Watchdog-Logs prüfen
-sudo journalctl -u adguard-shield-watchdog.service --no-pager -n 20
-```
-
-**Manuelles Recovery (sofort):**
-```bash
-# systemd-Fehlerzähler zurücksetzen und Service starten
-sudo systemctl reset-failed adguard-shield.service
-sudo systemctl start adguard-shield.service
-```
-
-**Watchdog nachträglich aktivieren:**
-```bash
-sudo systemctl enable adguard-shield-watchdog.timer
-sudo systemctl start adguard-shield-watchdog.timer
-```
-
-> **Hinweis:** Der Watchdog sendet automatisch eine Benachrichtigung (falls `NOTIFY_ENABLED=true`), wenn er den Service wiederbeleben muss oder die Recovery fehlschlägt.
-
-## Update durchführen
-
-```bash
-# Repository aktualisieren
-cd /tmp/adguard-shield
-git pull
-
-# Update ausführen (Konfig wird automatisch migriert, Service neu gestartet)
-sudo bash install.sh update
-```
-
-**Was passiert beim Update:**
-- Alle Scripts werden aktualisiert
-- Konfiguration wird als `adguard-shield.conf.old` gesichert
-- Neue Konfigurationsparameter werden automatisch zur bestehenden Konfig ergänzt
-- Bestehende Einstellungen bleiben erhalten
-- Bestehende Flat-File-Daten werden einmalig in die SQLite-Datenbank migriert (mit Fortschrittsanzeige)
-- Service wird per `daemon-reload` neu geladen und automatisch neu gestartet
-
-## Deinstallation
-
-Ab Version 0.6 gibt es einen eigenständigen Uninstaller im Installationsverzeichnis. Die Deinstallation kann daher jederzeit durchgeführt werden, **ohne die originalen Installationsdateien (install.sh) behalten zu müssen**:
-
-```bash
-# Empfohlen: direkt aus dem Installationsverzeichnis ausführen
-sudo bash /opt/adguard-shield/uninstall.sh
-
-# Alternativ: über den Installer (sofern noch vorhanden)
-sudo bash install.sh uninstall
-```
-
-Beide Wege sind gleichwertig — `install.sh uninstall` delegiert intern an `/opt/adguard-shield/uninstall.sh`.
-
-Oder manuell:
-```bash
-sudo systemctl stop adguard-shield
-sudo systemctl disable adguard-shield
-sudo systemctl stop adguard-shield-watchdog.timer
-sudo systemctl disable adguard-shield-watchdog.timer
-sudo /opt/adguard-shield/iptables-helper.sh remove
-sudo rm -rf /opt/adguard-shield
-sudo rm -f /etc/systemd/system/adguard-shield.service
-sudo rm -f /etc/systemd/system/adguard-shield-watchdog.service
-sudo rm -f /etc/systemd/system/adguard-shield-watchdog.timer
+ls -l /opt/adguard-shield/adguard-shield
+ls -l /opt/adguard-shield/adguard-shield.conf
+which iptables ip6tables ipset systemctl
 sudo systemctl daemon-reload
 ```
 
-## Voraussetzungen
+## Verbindung zu AdGuard Home schlägt fehl
 
-Folgende Pakete werden für den Betrieb benötigt und bei der Installation automatisch installiert:
+Test:
 
-| Paket | Zweck |
-|-------|-------|
-| `curl` | API-Kommunikation mit AdGuard Home |
-| `jq` | JSON-Verarbeitung der API-Antworten |
-| `iptables` | Firewall-Regeln (IPv4 + IPv6) |
-| `gawk` | Textverarbeitung in Scripts |
-| `systemd` | Service-Management und Autostart |
-| `sqlite3` | Datenbank für State-Management, Ban-History und Offense-Tracking |
+```bash
+sudo /opt/adguard-shield/adguard-shield test
+```
 
-Diese werden bei `sudo bash install.sh install` automatisch geprüft und bei Bedarf über den Paketmanager (`apt`, `dnf`, `yum`, `pacman`) nachinstalliert.
+Prüfe in `/opt/adguard-shield/adguard-shield.conf`:
+
+```bash
+ADGUARD_URL="http://127.0.0.1:3000"
+ADGUARD_USER="admin"
+ADGUARD_PASS="..."
+```
+
+Häufige Fehler:
+
+| Symptom | Mögliche Ursache |
+|---|---|
+| HTTP 401/403 | Benutzername oder Passwort falsch |
+| HTTP 404 | falsche URL oder AdGuard Home nicht hinter dieser URL |
+| Timeout | Firewall, DNS, falsche IP, Dienst nicht erreichbar |
+| connection refused | AdGuard Home läuft nicht oder anderer Port |
+| keine Querylog-Einträge | Querylog in AdGuard Home deaktiviert oder leer |
+
+Direkt testen:
+
+```bash
+curl -k -u "admin:passwort" "http://127.0.0.1:3000/control/querylog?limit=1&response_status=all"
+```
+
+Passe URL und Zugangsdaten entsprechend an.
+
+## Keine Sperren trotz vieler Anfragen
+
+Prüfen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield live --once
+sudo /opt/adguard-shield/adguard-shield history 50
+sudo /opt/adguard-shield/adguard-shield logs --level debug --limit 100
+```
+
+Mögliche Ursachen:
+
+- `RATE_LIMIT_MAX_REQUESTS` ist zu hoch
+- `RATE_LIMIT_WINDOW` ist zu kurz
+- `API_QUERY_LIMIT` ist zu niedrig und verpasst Spitzen
+- Client steht in `WHITELIST`
+- externe Whitelist enthält die IP
+- AdGuard Home sieht nicht die echte Client-IP, sondern nur einen Proxy/Forwarder
+- Querylog enthält die Anfragen nicht
+- `DRY_RUN=true` ist gesetzt
+
+Wichtig bei Proxies und Forwardern: Wenn AdGuard Home nur eine einzige interne IP sieht, zählt AdGuard Shield auch nur diese IP. In solchen Setups muss die Architektur geprüft oder der Forwarder gewhitelistet werden.
+
+## Zu viele Sperren
+
+Erst Übersicht:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield status
+sudo /opt/adguard-shield/adguard-shield history 100
+```
+
+Dann Ursachen einordnen:
+
+| Ursache | Gegenmaßnahme |
+|---|---|
+| legitimer Client fragt häufig dieselbe Domain | Client whitelisten oder Limit erhöhen |
+| Router/Resolver bündelt viele Clients | Router/Resolver whitelisten |
+| CDN/App erzeugt viele Subdomains | `SUBDOMAIN_FLOOD_MAX_UNIQUE` erhöhen |
+| externe Blocklist ist sehr groß | `blocklist-status` prüfen und Benachrichtigungen deaktiviert lassen |
+| GeoIP Allowlist zu eng | Länder prüfen oder `GEOIP_MODE` ändern |
+
+Falsch gesperrte IP freigeben:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+sudo /opt/adguard-shield/adguard-shield reset-offenses 192.168.1.100
+```
+
+Dauerhaft ausnehmen:
+
+```bash
+WHITELIST="127.0.0.1,::1,192.168.1.1,192.168.1.100"
+```
+
+Danach:
+
+```bash
+sudo systemctl restart adguard-shield
+```
+
+## Firewall prüfen
+
+Status:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield firewall-status
+```
+
+Direkt prüfen:
+
+```bash
+sudo ipset list adguard_shield_v4
+sudo ipset list adguard_shield_v6
+sudo iptables -n -L ADGUARD_SHIELD --line-numbers -v
+sudo ip6tables -n -L ADGUARD_SHIELD --line-numbers -v
+```
+
+Firewall neu aufbauen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield firewall-remove
+sudo /opt/adguard-shield/adguard-shield firewall-create
+sudo systemctl restart adguard-shield
+```
+
+Nach dem Neustart werden aktive Sperren aus SQLite wieder in die ipsets geschrieben.
+
+## Sperren bleiben nach Ablauf aktiv
+
+Prüfen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield status
+sudo /opt/adguard-shield/adguard-shield history 100
+```
+
+Temporäre Sperren werden beim Start und während des Pollings auf Ablauf geprüft. Wenn eine Sperre permanent ist, wird sie nicht automatisch freigegeben.
+
+Permanent sind typischerweise:
+
+- DNS-Flood-Watchlist-Treffer
+- Progressive-Ban-Maximalstufe
+- manuelle `ban`-Sperren
+- GeoIP-Sperren
+- externe Blocklist mit `EXTERNAL_BLOCKLIST_BAN_DURATION=0`
+
+Manuell freigeben:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+```
+
+## Dry-Run verwenden
+
+Dry-Run ist ideal für neue Regeln:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield dry-run
+```
+
+Währenddessen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield history 50
+```
+
+Im Dry-Run werden mögliche Sperren als `DRY` protokolliert. Es entstehen keine aktiven Sperren und keine Firewall-Änderungen.
+
+## Externe Whitelist
+
+Status:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield whitelist-status
+```
+
+Manuell synchronisieren:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield whitelist-sync
+```
+
+Typische Probleme:
+
+- URL nicht erreichbar
+- Datei enthält Windows-Zeilenenden oder BOM
+- Hostname ist nicht auflösbar
+- Einträge enthalten Ports oder URLs statt IP/Hostname
+- DNS-Auflösung liefert `0.0.0.0`, weil AdGuard den Host blockiert
+
+Format prüfen:
+
+```text
+192.168.1.100
+10.0.0.0/24
+trusted.example.com
+# Kommentare sind erlaubt
+```
+
+## Externe Blocklist
+
+Status:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield blocklist-status
+```
+
+Manuell synchronisieren:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield blocklist-sync
+```
+
+Alle externen Blocklist-Sperren freigeben:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield blocklist-flush
+```
+
+Wenn zu viele IPs gesperrt werden:
+
+1. `EXTERNAL_BLOCKLIST_URLS` prüfen.
+2. Liste manuell ansehen.
+3. Whitelist für eigene IPs ergänzen.
+4. `EXTERNAL_BLOCKLIST_NOTIFY=false` lassen.
+5. Bei Bedarf `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` setzen.
+
+## GeoIP
+
+Status:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-status
+```
+
+Einzelne IP prüfen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-lookup 8.8.8.8
+```
+
+Cache leeren:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-flush-cache
+```
+
+Alle GeoIP-Sperren freigeben:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield geoip-flush
+```
+
+Typische Ursachen:
+
+| Problem | Lösung |
+|---|---|
+| keine Länder erkannt | MaxMind-Key, MMDB-Pfad oder `geoiplookup` prüfen |
+| private IPs werden nicht geprüft | `GEOIP_SKIP_PRIVATE=true` ist aktiv, das ist Standard |
+| zu viele Länder gesperrt | `GEOIP_MODE` und `GEOIP_COUNTRIES` prüfen |
+| Allowlist sperrt fast alles | im Allowlist-Modus sind nur genannte Länder erlaubt |
+
+## Reports
+
+Status:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield report-status
+```
+
+Test:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield report-test
+sudo /opt/adguard-shield/adguard-shield report-generate txt
+```
+
+Wenn keine Mail ankommt:
+
+- `REPORT_EMAIL_TO` gesetzt?
+- `REPORT_MAIL_CMD` vorhanden?
+- Mailer für root konfiguriert?
+- Cron installiert?
+- Spam-Ordner geprüft?
+
+Cron prüfen:
+
+```bash
+sudo cat /etc/cron.d/adguard-shield-report
+sudo /opt/adguard-shield/adguard-shield report-send
+```
+
+## Benachrichtigungen
+
+Prüfen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
+```
+
+Häufige Ursachen:
+
+- `NOTIFY_ENABLED=false`
+- falscher `NOTIFY_TYPE`
+- Webhook-URL leer
+- Ntfy-Topic leer
+- Token ungültig
+- ausgehende HTTPS-Verbindung blockiert
+- externe Blocklist meldet nichts, weil `EXTERNAL_BLOCKLIST_NOTIFY=false`
+- GeoIP meldet nichts, weil `GEOIP_NOTIFY=false`
+
+## SQLite direkt auswerten
+
+Für tiefergehende Analysen:
+
+```bash
+sudo sqlite3 /var/lib/adguard-shield/adguard-shield.db \
+  "select source, reason, count(*) from active_bans group by source, reason order by count(*) desc;"
+```
+
+Letzte History:
+
+```bash
+sudo sqlite3 /var/lib/adguard-shield/adguard-shield.db \
+  "select timestamp_text, action, client_ip, domain, reason from ban_history order by id desc limit 20;"
+```
+
+Offense-Zähler:
+
+```bash
+sudo sqlite3 /var/lib/adguard-shield/adguard-shield.db \
+  "select client_ip, offense_level, last_offense from offense_tracking order by offense_level desc;"
+```
+
+## Alte Shell-Artefakte entfernen
+
+Wenn der Installer alte Dateien meldet, zuerst sauber migrieren. Typische alte Dateien:
+
+```text
+adguard-shield.sh
+iptables-helper.sh
+external-blocklist-worker.sh
+external-whitelist-worker.sh
+geoip-worker.sh
+offense-cleanup-worker.sh
+report-generator.sh
+unban-expired.sh
+adguard-shield-watchdog.sh
+```
+
+Die Go-Version ersetzt diese Funktionen durch das eine Binary. Alte Worker sollten nicht parallel laufen.
+
+## Service hart zurücksetzen
+
+Wenn der Zustand unklar ist:
+
+```bash
+sudo systemctl stop adguard-shield
+sudo /opt/adguard-shield/adguard-shield firewall-remove
+sudo systemctl start adguard-shield
+sudo /opt/adguard-shield/adguard-shield status
+```
+
+Das entfernt die Firewall-Struktur und lässt den Daemon sie beim Start wieder aus SQLite aufbauen.
+
+## Deinstallation
+
+Konfiguration behalten:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield uninstall --keep-config
+```
+
+Alles entfernen:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield uninstall
+```
+
+Ohne `--keep-config` werden Installationsverzeichnis, State-Verzeichnis und Logdatei entfernt.

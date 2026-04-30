@@ -1,18 +1,46 @@
-# Webhook-Benachrichtigungen
+# Benachrichtigungen
 
-Das Tool kann beim Starten und Stoppen des Services sowie bei Sperren und Entsperrungen Benachrichtigungen an verschiedene Dienste senden.
+AdGuard Shield kann Ereignisse an Ntfy, Discord, Slack, Gotify oder einen eigenen Webhook senden. Benachrichtigungen sind optional und werden über `adguard-shield.conf` gesteuert.
 
-## Aktivierung
+Typische Ereignisse:
 
-In der Konfiguration (`adguard-shield.conf`):
+- Service gestartet
+- Service gestoppt
+- automatische Sperre
+- manuelle Sperre
+- GeoIP-Sperre
+- externe Blocklist-Sperre, falls separat aktiviert
+- Freigabe
+- Bulk-Freigabe, zum Beispiel durch `flush`
+
+## Grundkonfiguration
 
 ```bash
 NOTIFY_ENABLED=true
-NOTIFY_TYPE="<typ>"
-NOTIFY_WEBHOOK_URL="<url>"
+NOTIFY_TYPE="ntfy"
 ```
 
+Mögliche Typen:
+
+```text
+ntfy
+discord
+slack
+gotify
+generic
+```
+
+Nach Änderungen:
+
+```bash
+sudo systemctl restart adguard-shield
+```
+
+Zum Prüfen kannst du den Service neu starten oder im Dry-Run eine Erkennung auslösen.
+
 ## Ntfy
+
+Ntfy ist der einfachste Einstieg, weil kein komplexer Webhook-Body benötigt wird.
 
 ```bash
 NOTIFY_ENABLED=true
@@ -23,28 +51,29 @@ NTFY_TOKEN=""
 NTFY_PRIORITY="4"
 ```
 
-> **Hinweis:** Bei Ntfy wird `NOTIFY_WEBHOOK_URL` nicht benötigt – Server-URL und Topic werden separat konfiguriert.
+Eigene Ntfy-Instanz:
 
-**Eigene Ntfy-Instanz:**
 ```bash
-NTFY_SERVER_URL="https://ntfy.mein-server.de"
+NTFY_SERVER_URL="https://ntfy.example.com"
 NTFY_TOPIC="dns-security"
-NTFY_TOKEN="tk_mein_geheimer_token"
+NTFY_TOKEN="tk_geheimer_token"
 ```
 
-**Prioritäten:**
-| Wert | Bedeutung |
-|------|-----------|
-| 1    | Minimum   |
-| 2    | Niedrig   |
-| 3    | Standard  |
-| 4    | Hoch      |
-| 5    | Maximum   |
+Prioritäten:
 
-**Token erstellen (Self-hosted):**
-1. Ntfy Web-UI → Benutzer/Tokens
-2. Token kopieren und in `NTFY_TOKEN` eintragen
-3. Bei ntfy.sh: Account erstellen → Access Token generieren
+| Wert | Bedeutung |
+|---:|---|
+| `1` | Minimum |
+| `2` | Niedrig |
+| `3` | Standard |
+| `4` | Hoch |
+| `5` | Maximum |
+
+Hinweise:
+
+- Bei `NOTIFY_TYPE="ntfy"` wird `NOTIFY_WEBHOOK_URL` nicht verwendet.
+- Bei privaten Topics oder eigener Instanz ist ein Token empfehlenswert.
+- Der Topic-Name sollte nicht öffentlich erratbar sein.
 
 ## Discord
 
@@ -54,21 +83,16 @@ NOTIFY_TYPE="discord"
 NOTIFY_WEBHOOK_URL="https://discord.com/api/webhooks/xxx/yyy"
 ```
 
-**Webhook erstellen:**
-1. Discord Server → Servereinstellungen → Integrationen → Webhooks
-2. Neuer Webhook → URL kopieren
+Webhook erstellen:
 
-## Gotify
+1. Discord-Server öffnen.
+2. Servereinstellungen öffnen.
+3. Integrationen auswählen.
+4. Webhooks öffnen.
+5. Neuen Webhook erstellen.
+6. URL kopieren und in `NOTIFY_WEBHOOK_URL` eintragen.
 
-```bash
-NOTIFY_ENABLED=true
-NOTIFY_TYPE="gotify"
-NOTIFY_WEBHOOK_URL="https://gotify.example.com/message?token=xxx"
-```
-
-**Token erstellen:**
-1. Gotify Web-UI → Apps → App erstellen
-2. Token kopieren und in die URL einfügen
+Discord erhält den Inhalt als `content`.
 
 ## Slack
 
@@ -78,144 +102,223 @@ NOTIFY_TYPE="slack"
 NOTIFY_WEBHOOK_URL="https://hooks.slack.com/services/xxx/yyy/zzz"
 ```
 
-**Webhook erstellen:**
-1. Slack App → Incoming Webhooks aktivieren
-2. Webhook-URL kopieren
+Slack erhält den Inhalt als `text`.
 
-## Generic (eigener Endpoint)
+Einrichtung grob:
+
+1. Slack-App mit Incoming Webhooks einrichten.
+2. Webhook für den gewünschten Channel aktivieren.
+3. Webhook-URL in die Konfiguration kopieren.
+
+## Gotify
+
+```bash
+NOTIFY_ENABLED=true
+NOTIFY_TYPE="gotify"
+NOTIFY_WEBHOOK_URL="https://gotify.example.com/message?token=xxx"
+```
+
+Gotify erhält `title`, `message` und `priority` als Formularwerte.
+
+Token erstellen:
+
+1. Gotify-Weboberfläche öffnen.
+2. Apps auswählen.
+3. App erstellen.
+4. Token in die URL einsetzen.
+
+## Generic Webhook
+
+Für eigene Automatisierung:
 
 ```bash
 NOTIFY_ENABLED=true
 NOTIFY_TYPE="generic"
-NOTIFY_WEBHOOK_URL="https://your-server.com/webhook"
+NOTIFY_WEBHOOK_URL="https://example.com/adguard-shield-webhook"
 ```
 
-Sendet einen POST mit JSON-Body:
+AdGuard Shield sendet einen `POST` mit JSON:
 
 ```json
 {
-  "message": "🚫 AdGuard Shield Ban auf dns1\n---\nIP: 192.168.1.50\nHostname: client.local\nGrund: 45x microsoft.com in 60s via DNS, Rate-Limit\nDauer: 1h 0m\n\nWhois: https://www.whois.com/whois/192.168.1.50\nAbuseIPDB: https://www.abuseipdb.com/check/192.168.1.50",
-  "action": "ban",
+  "title": "AdGuard Shield",
+  "message": "AdGuard Shield Ban auf dns1\n---\nIP: 192.168.1.50\nHostname: client.local\nGrund: 45x example.com in 60s via DNS, Rate-Limit\nDauer: 1h 0m [Stufe 1/5]\n\nAbuseIPDB: https://www.abuseipdb.com/check/192.168.1.50",
   "client": "192.168.1.50",
-  "domain": "microsoft.com"
+  "action": "ban"
 }
 ```
 
-## Benachrichtigungen und externe Blocklisten
+Mögliche `action`-Werte:
 
-Bei Sperren aus der **externen Blocklist** werden Benachrichtigungen separat über `EXTERNAL_BLOCKLIST_NOTIFY` gesteuert — unabhängig von `NOTIFY_ENABLED`.
+| Aktion | Bedeutung |
+|---|---|
+| `ban` | Sperre |
+| `unban` | Freigabe |
+| `manual-flush` | Bulk-Freigabe |
+| `geoip-flush` | Bulk-Freigabe von GeoIP-Sperren |
+| `external-blocklist-flush` | Bulk-Freigabe externer Blocklist-Sperren |
+| `service_start` | Service gestartet |
+| `service_stop` | Service gestoppt |
 
-| Parameter | Standard | Beschreibung |
-|-----------|----------|--------------| 
-| `EXTERNAL_BLOCKLIST_NOTIFY` | `false` | Benachrichtigungen bei Blocklist-Sperren aktivieren |
+## Externe Blocklist und Benachrichtigungen
 
-> **Wichtig:** Bei großen Listen `EXTERNAL_BLOCKLIST_NOTIFY=false` belassen. Beim ersten Sync (oder nach einem `blocklist-flush`) werden alle IPs der Liste auf einmal gesperrt — mit `true` würde das zu einer Nachrichten-Flut im Notification-Channel führen. Nur auf `true` setzen, wenn die Liste sehr klein ist.
+Für Sperren aus externen Blocklisten gibt es einen zusätzlichen Schalter:
 
-## Beispiel-Nachrichten
+```bash
+EXTERNAL_BLOCKLIST_NOTIFY=false
+```
+
+Warum separat?
+
+Eine große Blocklist kann beim ersten Sync hunderte oder tausende IPs sperren. Wenn dafür jede Sperre eine Nachricht erzeugt, wird dein Benachrichtigungskanal unbrauchbar.
+
+Empfehlung:
+
+```bash
+EXTERNAL_BLOCKLIST_NOTIFY=false
+```
+
+Nur bei kleinen, kuratierten Listen:
+
+```bash
+EXTERNAL_BLOCKLIST_NOTIFY=true
+```
+
+## GeoIP-Benachrichtigungen
+
+GeoIP hat ebenfalls einen eigenen Schalter:
+
+```bash
+GEOIP_NOTIFY=true
+```
+
+Wenn GeoIP aktiv ist, aber keine Nachrichten für GeoIP-Sperren gesendet werden sollen:
+
+```bash
+GEOIP_NOTIFY=false
+```
+
+## Bulk-Freigaben
+
+Diese Befehle können viele IPs auf einmal freigeben:
+
+```bash
+sudo /opt/adguard-shield/adguard-shield flush
+sudo /opt/adguard-shield/adguard-shield geoip-flush
+sudo /opt/adguard-shield/adguard-shield blocklist-flush
+```
+
+AdGuard Shield sendet dafür nicht eine Nachricht pro IP, sondern eine zusammenfassende Meldung mit der Anzahl der freigegebenen Sperren.
+
+## AbuseIPDB-Hinweis in Nachrichten
+
+Bei permanenten Monitor-Sperren kann AdGuard Shield zusätzlich an AbuseIPDB melden.
+
+Voraussetzungen:
+
+```bash
+ABUSEIPDB_ENABLED=true
+ABUSEIPDB_API_KEY="..."
+```
+
+Wenn eine Meldung ausgelöst wurde, enthält die Ban-Nachricht einen entsprechenden Hinweis. Außerdem enthält jede Ban- und Unban-Nachricht einen Link zur AbuseIPDB-Check-Seite der IP.
+
+AbuseIPDB wird nicht für GeoIP- oder externe Blocklist-Sperren verwendet.
+
+## Beispielinhalte
 
 ### Service gestartet
-**Überschrift:** ✅ AdGuard Shield
 
-> 🟢 AdGuard Shield v0.9.0 wurde auf dns1 gestartet.
+```text
+AdGuard Shield v1.0.0 wurde auf dns1 gestartet.
+```
 
 ### Service gestoppt
-**Überschrift:** 🚨 🛡️ AdGuard Shield
 
-> 🔴 AdGuard Shield v0.9.0 wurde auf dns1 gestoppt.
+```text
+AdGuard Shield v1.0.0 wurde auf dns1 gestoppt.
+```
 
-### Watchdog — Service wiederhergestellt
-**Überschrift:** 🔄 AdGuard Shield Watchdog
+### Rate-Limit-Sperre
 
-> 🔄 AdGuard Shield Watchdog auf dns1
-> ---
-> Der Service war ausgefallen und wurde automatisch neu gestartet.
-> Versuch: 1
+```text
+AdGuard Shield Ban auf dns1
+---
+IP: 192.0.2.50
+Hostname: client.example.com
+Grund: 45x example.com in 60s via DNS, Rate-Limit
+Dauer: 1h 0m [Stufe 1/5]
 
-### Watchdog — Recovery fehlgeschlagen
-**Überschrift:** 🚨 AdGuard Shield Watchdog
+AbuseIPDB: https://www.abuseipdb.com/check/192.0.2.50
+```
 
-> 🚨 AdGuard Shield Watchdog auf dns1
-> ---
-> Der Service konnte NICHT automatisch neu gestartet werden!
-> Manuelles Eingreifen erforderlich.
-> Fehlversuche: 1
-> Letzter Fehler: (systemd Statusausgabe)
+### Watchlist-Sperre
 
-### Sperre (Ban)
-**Überschrift:** 🚨 🛡️ AdGuard Shield
+```text
+AdGuard Shield Ban auf dns1
+IP wurde an AbuseIPDB gemeldet
+---
+IP: 192.0.2.51
+Hostname: unknown
+Grund: 75x microsoft.com in 60s via DoH, DNS-Flood-Watchlist
+Dauer: PERMANENT
 
-> 🚫 AdGuard Shield Ban auf dns1
-> ---
-> IP: 95.71.42.116
-> Hostname: example-host.provider.net
-> Grund: 153x radioportal.techniverse.net in 60s via DNS, Rate-Limit
-> Dauer: 1h 0m [Stufe 1/5]
->
-> Whois: https://www.whois.com/whois/95.71.42.116
-> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+AbuseIPDB: https://www.abuseipdb.com/check/192.0.2.51
+```
 
-Bei permanenter Sperre mit aktiviertem AbuseIPDB-Reporting erscheint zusätzlich:
+### GeoIP-Sperre
 
-> 🚫 AdGuard Shield Ban auf dns1
-> ⚠️ IP wurde an AbuseIPDB gemeldet
-> ---
-> IP: 95.71.42.116
-> Hostname: example-host.provider.net
-> Grund: 153x radioportal.techniverse.net in 60s via DNS, Rate-Limit
-> Dauer: PERMANENT [Stufe 5/5]
->
-> Whois: https://www.whois.com/whois/95.71.42.116
-> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+```text
+AdGuard Shield GeoIP-Sperre auf dns1
+---
+IP: 203.0.113.10
+Land: BR
+Modus: Blocklist
+Dauer: PERMANENT
 
-Bei DNS-Flood-Watchlist-Treffer (sofort permanent, ohne Stufe):
+AbuseIPDB: https://www.abuseipdb.com/check/203.0.113.10
+```
 
-> 🚫 AdGuard Shield Ban auf dns1
-> ⚠️ IP wurde an AbuseIPDB gemeldet
-> ---
-> IP: 95.71.42.116
-> Hostname: example-host.provider.net
-> Grund: 45x microsoft.com in 60s via DNS, DNS-Flood-Watchlist
-> Dauer: PERMANENT
->
-> Whois: https://www.whois.com/whois/95.71.42.116
-> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+### Freigabe
 
-### Entsperrung (Unban)
-**Überschrift:** ✅ AdGuard Shield
+```text
+AdGuard Shield Freigabe auf dns1
+---
+IP: 192.0.2.50
+Hostname: client.example.com
 
-> ✅ AdGuard Shield Freigabe auf dns1
-> ---
-> IP: 95.71.42.116
-> Hostname: example-host.provider.net
->
-> AbuseIPDB: https://www.abuseipdb.com/check/95.71.42.116
+AbuseIPDB: https://www.abuseipdb.com/check/192.0.2.50
+```
 
-### Externe Blocklist – Sperre
-**Überschrift:** 🚨 🛡️ AdGuard Shield
+### Bulk-Freigabe
 
-> 🚫 AdGuard Shield Ban auf dns1 (Externe Blocklist)
-> ---
-> IP: 203.0.113.50
-> Hostname: bad-actor.example.com
->
-> Whois: https://www.whois.com/whois/203.0.113.50
-> AbuseIPDB: https://www.abuseipdb.com/check/203.0.113.50
+```text
+AdGuard Shield Bulk-Freigabe auf dns1
+---
+Freigegebene IPs: 28
+Aktion: Manual-Flush
+```
 
-### Externe Blocklist – Entsperrung
-**Überschrift:** ✅ AdGuard Shield
+## Fehlersuche
 
-> ✅ AdGuard Shield Freigabe auf dns1 (Externe Blocklist)
-> ---
-> IP: 203.0.113.50
-> Hostname: bad-actor.example.com
->
-> AbuseIPDB: https://www.abuseipdb.com/check/203.0.113.50
+Wenn keine Benachrichtigung ankommt:
 
-### Hinweise
+```bash
+sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
+sudo journalctl -u adguard-shield --no-pager -n 100
+```
 
-- Der **Hostname** der IP wird automatisch per Reverse-DNS aufgelöst (`dig`, `host` oder `getent`). Ist kein PTR-Record vorhanden, wird `(unbekannt)` angezeigt.
-- Der **Servername** (`dns1` in den Beispielen) wird dynamisch über `$(hostname)` ermittelt und zeigt, auf welchem Server das Ereignis stattfand.
-- Die **Überschrift** unterscheidet sich je nach Aktion:
-  - 🚨 🛡️ bei Sperren und Service-Stopp
-  - ✅ bei Freigaben und Service-Start
-- Bei **permanenten Sperren** mit aktiviertem AbuseIPDB-Reporting wird ein Hinweis eingeblendet, dass die IP an AbuseIPDB gemeldet wurde.
+Prüfe:
+
+- `NOTIFY_ENABLED=true`
+- `NOTIFY_TYPE` korrekt geschrieben
+- Ziel-URL oder Ntfy-Topic gesetzt
+- Token gültig
+- Server kann den Webhook erreichen
+- Firewall des Servers blockiert ausgehende HTTPS-Verbindungen nicht
+
+Bei `generic` kannst du testweise einen lokalen HTTP-Empfänger oder einen Request-Inspector verwenden.
+
+## Datenschutz
+
+Benachrichtigungen können IP-Adressen, Domainnamen und Hostnamen enthalten. Sende sie nur an Dienste, denen du vertraust. Für öffentliche oder geteilte Kanäle ist Ntfy mit privatem Topic oder eine eigene Ntfy/Gotify-Instanz oft die bessere Wahl.
