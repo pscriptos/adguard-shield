@@ -17,11 +17,26 @@ Der Report basiert auf der SQLite-Datenbank:
 | Zeitraum | Start- und Enddatum des Berichtszeitraums |
 | Sperren | Anzahl der Sperren im Zeitraum |
 | Freigaben | Anzahl der Freigaben im Zeitraum |
+| Zeitraum-Schnellübersicht | Heute, gestern, letzte 7/14/30 Tage |
 | Aktive Sperren | Derzeit aktive Sperren zum Zeitpunkt der Report-Erstellung |
+| Permanente Sperren | Anzahl permanenter Sperren im Zeitraum |
+| AbuseIPDB | Anzahl erfolgreicher AbuseIPDB-Meldungen im Zeitraum |
+| Angriffsarten | Rate-Limit, Subdomain-Flood und externe Blocklist |
 | Top-Clients | Die am häufigsten gesperrten Client-IPs |
-| Sperrgründe | Aufschlüsselung nach Grund (Rate-Limit, Subdomain-Flood, GeoIP usw.) |
-| Sperrquellen | Aufschlüsselung nach Quelle (Monitor, GeoIP, Blocklist, manuell) |
-| Letzte Ereignisse | Die letzten 20 Einträge aus der Ban-History |
+| Top-Domains | Die am häufigsten betroffenen Domains |
+| Protokolle | Verteilung nach DNS, DoH, DoT, DoQ usw. |
+| Letzte Sperren | Die letzten 10 Sperren im Berichtszeitraum |
+
+### Templates
+
+Die Standard-Templates liegen im Code unter:
+
+```text
+internal/report/templates/report.html
+internal/report/templates/report.txt
+```
+
+Sie werden ins Binary eingebettet und bei `install` sowie `update` nach `/opt/adguard-shield/templates` geschrieben. Zur Laufzeit verwendet AdGuard Shield zuerst externe Templates aus `ADGUARD_SHIELD_TEMPLATE_DIR`, danach `templates` neben der Konfiguration bzw. neben dem Binary und fällt erst zuletzt auf die eingebetteten Standard-Templates zurück.
 
 ---
 
@@ -36,7 +51,7 @@ Der Report basiert auf der SQLite-Datenbank:
 | `REPORT_EMAIL_FROM` | `adguard-shield@example.com` | Absenderadresse |
 | `REPORT_FORMAT` | `html` | Report-Format (`html` oder `txt`) |
 | `REPORT_MAIL_CMD` | `msmtp` | Mailprogramm für den Versand |
-| `REPORT_BUSIEST_DAY_RANGE` | `30` | Kompatibilitätsparameter für den Zeitraum "Aktivster Tag" |
+| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum für "Aktivster Tag"; `0` nutzt den Berichtszeitraum |
 
 ### Versandintervalle
 
@@ -44,7 +59,7 @@ Der Report basiert auf der SQLite-Datenbank:
 |---|---|
 | `daily` | Täglich zur Uhrzeit aus `REPORT_TIME` |
 | `weekly` | Montags zur Uhrzeit aus `REPORT_TIME` |
-| `biweekly` | Am 1. und 15. des Monats zur Uhrzeit aus `REPORT_TIME` |
+| `biweekly` | Montags in ungeraden ISO-Kalenderwochen zur Uhrzeit aus `REPORT_TIME` |
 | `monthly` | Am 1. des Monats zur Uhrzeit aus `REPORT_TIME` |
 
 ### Formate
@@ -181,7 +196,7 @@ Der Cron-Eintrag ruft das installierte Binary mit der installierten Konfiguratio
 |---|---|
 | `daily` | Täglich zur Uhrzeit aus `REPORT_TIME` |
 | `weekly` | Montags zur Uhrzeit aus `REPORT_TIME` |
-| `biweekly` | Am 1. und 15. des Monats |
+| `biweekly` | Montags in ungeraden ISO-Kalenderwochen |
 | `monthly` | Am 1. des Monats |
 
 ### Cron-Job entfernen

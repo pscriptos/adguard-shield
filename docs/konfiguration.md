@@ -380,7 +380,7 @@ Details zu allen Kanälen stehen in [Benachrichtigungen](benachrichtigungen.md).
 | `REPORT_EMAIL_FROM` | `adguard-shield@example.com` | Absenderadresse |
 | `REPORT_FORMAT` | `html` | Report-Format |
 | `REPORT_MAIL_CMD` | `msmtp` | Mailprogramm für den Versand |
-| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum für "Aktivster Tag" (Kompatibilitätsparameter) |
+| `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum für "Aktivster Tag"; `0` nutzt den Berichtszeitraum |
 
 ### Verfügbare Intervalle
 
@@ -388,7 +388,7 @@ Details zu allen Kanälen stehen in [Benachrichtigungen](benachrichtigungen.md).
 |---|---|
 | `daily` | Täglich zur konfigurierten Uhrzeit |
 | `weekly` | Montags zur konfigurierten Uhrzeit |
-| `biweekly` | Am 1. und 15. des Monats |
+| `biweekly` | Montags in ungeraden ISO-Kalenderwochen |
 | `monthly` | Am 1. des Monats |
 
 ### Verfügbare Formate
@@ -417,6 +417,8 @@ sudo /opt/adguard-shield/adguard-shield report-install
 ```
 
 Details stehen in [E-Mail Report](report.md).
+
+Die Templates werden bei `install`/`update` nach `/opt/adguard-shield/templates` geschrieben. Eigene Templates können alternativ über `ADGUARD_SHIELD_TEMPLATE_DIR` bereitgestellt werden.
 
 ---
 

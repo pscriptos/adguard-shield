@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"adguard-shield/internal/report"
 )
 
 const (
@@ -59,23 +61,23 @@ func Install(opts Options) error {
 	opts = normalize(opts)
 	fmt.Println("AdGuard Shield Go-Installation")
 	fmt.Printf("Installationspfad: %s\n", opts.InstallDir)
-	fmt.Println("1/8 Pruefe Betriebssystem und root-Rechte ...")
+	fmt.Println("1/9 Pruefe Betriebssystem und root-Rechte ...")
 	if err := requireLinuxRoot(); err != nil {
 		return err
 	}
-	fmt.Println("2/8 Pruefe auf scriptbasierte Altinstallation ...")
+	fmt.Println("2/9 Pruefe auf scriptbasierte Altinstallation ...")
 	if findings := DetectLegacy(opts.InstallDir); len(findings) > 0 {
 		return &LegacyError{Findings: findings}
 	}
 	if !opts.SkipDeps {
-		fmt.Println("3/8 Pruefe System-Abhaengigkeiten ...")
+		fmt.Println("3/9 Pruefe System-Abhaengigkeiten ...")
 		if err := ensureDependencies(); err != nil {
 			return err
 		}
 	} else {
-		fmt.Println("3/8 System-Abhaengigkeiten uebersprungen (--skip-deps)")
+		fmt.Println("3/9 System-Abhaengigkeiten uebersprungen (--skip-deps)")
 	}
-	fmt.Println("4/8 Erstelle Verzeichnisse ...")
+	fmt.Println("4/9 Erstelle Verzeichnisse ...")
 	if err := os.MkdirAll(opts.InstallDir, 0755); err != nil {
 		return err
 	}
@@ -85,19 +87,23 @@ func Install(opts Options) error {
 	if err := os.MkdirAll(filepath.Join(opts.InstallDir, "geoip"), 0755); err != nil {
 		return err
 	}
-	fmt.Println("5/8 Installiere Binary ...")
+	fmt.Println("5/9 Installiere Binary ...")
 	if err := copySelf(filepath.Join(opts.InstallDir, "adguard-shield")); err != nil {
 		return err
 	}
-	fmt.Println("6/8 Installiere oder migriere Konfiguration ...")
+	fmt.Println("6/9 Installiere Report-Templates ...")
+	if err := report.InstallTemplates(filepath.Join(opts.InstallDir, "templates")); err != nil {
+		return err
+	}
+	fmt.Println("7/9 Installiere oder migriere Konfiguration ...")
 	if err := ensureConfig(opts); err != nil {
 		return err
 	}
-	fmt.Println("7/8 Schreibe systemd-Service ...")
+	fmt.Println("8/9 Schreibe systemd-Service ...")
 	if err := writeService(opts.InstallDir); err != nil {
 		return err
 	}
-	fmt.Println("8/8 Aktualisiere systemd ...")
+	fmt.Println("9/9 Aktualisiere systemd ...")
 	_ = run("systemctl", "daemon-reload")
 	if opts.Enable {
 		fmt.Println("Aktiviere Autostart ...")

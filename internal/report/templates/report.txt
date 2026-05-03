@@ -1,0 +1,68 @@
+================================================================
+  AdGuard Shield - Sicherheits-Report
+================================================================
+
+  Zeitraum: {{REPORT_PERIOD}}
+  Erstellt: {{REPORT_DATE}}
+  Host:     {{HOSTNAME}}
+
+----------------------------------------------------------------
+  ZEITRAUM-SCHNELLUEBERSICHT
+----------------------------------------------------------------
+
+{{PERIOD_OVERVIEW_TEXT}}
+
+----------------------------------------------------------------
+  UEBERSICHT (Berichtszeitraum)
+----------------------------------------------------------------
+
+  Sperren gesamt:          {{TOTAL_BANS}}
+  Entsperrungen:           {{TOTAL_UNBANS}}
+  Eindeutige IPs:          {{UNIQUE_IPS}}
+  Permanente Sperren:      {{PERMANENT_BANS}}
+  Aktuell aktive Sperren:  {{ACTIVE_BANS}}
+  AbuseIPDB Reports:       {{ABUSEIPDB_REPORTS}}
+
+----------------------------------------------------------------
+  ANGRIFFSARTEN
+----------------------------------------------------------------
+
+  Rate-Limit Sperren:      {{RATELIMIT_BANS}}
+  Subdomain-Flood Sperren: {{SUBDOMAIN_FLOOD_BANS}}
+  Externe Blocklist:       {{EXTERNAL_BLOCKLIST_BANS}}
+  {{BUSIEST_DAY_LABEL}}: {{BUSIEST_DAY}}
+
+----------------------------------------------------------------
+  TOP 10 - AUFFAELLIGSTE IPs
+----------------------------------------------------------------
+
+{{TOP10_IPS_TEXT}}
+
+----------------------------------------------------------------
+  TOP 10 - MEISTBETROFFENE DOMAINS
+----------------------------------------------------------------
+
+{{TOP10_DOMAINS_TEXT}}
+
+----------------------------------------------------------------
+  PROTOKOLL-VERTEILUNG
+----------------------------------------------------------------
+
+{{PROTOCOL_TEXT}}
+
+----------------------------------------------------------------
+  LETZTE 10 SPERREN
+----------------------------------------------------------------
+
+{{RECENT_BANS_TEXT}}
+
+{{UPDATE_NOTICE_TXT}}
+================================================================
+  Dieser Report wurde automatisch von AdGuard Shield generiert.
+  AdGuard Shield {{VERSION}}
+
+  Web:  https://www.patrick-asmus.de
+  Blog: https://www.cleveradmin.de
+  Repo: https://git.techniverse.net/scriptos/adguard-shield.git
+  Docs: https://git.techniverse.net/scriptos/adguard-shield/src/branch/main/docs
+================================================================
