@@ -20,7 +20,7 @@ Nach Änderungen muss der Service neu gestartet werden:
 
 ```bash
 sudo systemctl restart adguard-shield
-sudo /opt/adguard-shield/adguard-shield status
+sudo adguard-shield status
 ```
 
 ## Automatische Migration
@@ -42,10 +42,10 @@ Nach dem Bearbeiten der Konfiguration:
 
 ```bash
 # API-Verbindung testen
-sudo /opt/adguard-shield/adguard-shield test
+sudo adguard-shield test
 
 # Dry-Run: zeigt, was gesperrt würde, ohne die Firewall zu verändern
-sudo /opt/adguard-shield/adguard-shield dry-run
+sudo adguard-shield dry-run
 ```
 
 ---
@@ -262,10 +262,10 @@ Progressive Sperren gelten für Monitor-Sperren wie `rate-limit` und `subdomain-
 ### Verwaltungsbefehle
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield offense-status         # Zähler anzeigen
-sudo /opt/adguard-shield/adguard-shield offense-cleanup        # Abgelaufene entfernen
-sudo /opt/adguard-shield/adguard-shield reset-offenses         # Alle zurücksetzen
-sudo /opt/adguard-shield/adguard-shield reset-offenses <IP>    # Eine IP zurücksetzen
+sudo adguard-shield offense-status         # Zähler anzeigen
+sudo adguard-shield offense-cleanup        # Abgelaufene entfernen
+sudo adguard-shield reset-offenses         # Alle zurücksetzen
+sudo adguard-shield reset-offenses <IP>    # Eine IP zurücksetzen
 ```
 
 ---
@@ -289,9 +289,9 @@ sudo /opt/adguard-shield/adguard-shield reset-offenses <IP>    # Eine IP zurück
 ### CLI-Befehle
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
-sudo /opt/adguard-shield/adguard-shield logs-follow debug
-sudo /opt/adguard-shield/adguard-shield live
+sudo adguard-shield logs --level warn --limit 100
+sudo adguard-shield logs-follow debug
+sudo adguard-shield live
 ```
 
 **Hinweis:** Query-Inhalte werden nicht dauerhaft ins Log geschrieben. Für Query-nahe Diagnose ist die Live-Ansicht gedacht.
@@ -413,7 +413,7 @@ REPORT_MAIL_CMD="msmtp"
 ### Cron-Job installieren
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield report-install
+sudo adguard-shield report-install
 ```
 
 Details stehen in [E-Mail Report](report.md).
@@ -642,11 +642,11 @@ Die Datenbank wird unter `/opt/adguard-shield/geoip/` gespeichert und nach 24 St
 ### GeoIP-Befehle
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield geoip-status         # Status anzeigen
-sudo /opt/adguard-shield/adguard-shield geoip-lookup 8.8.8.8 # IP nachschlagen
-sudo /opt/adguard-shield/adguard-shield geoip-sync            # Clients prüfen
-sudo /opt/adguard-shield/adguard-shield geoip-flush-cache     # Cache leeren
-sudo /opt/adguard-shield/adguard-shield geoip-flush           # Alle GeoIP-Sperren aufheben
+sudo adguard-shield geoip-status         # Status anzeigen
+sudo adguard-shield geoip-lookup 8.8.8.8 # IP nachschlagen
+sudo adguard-shield geoip-sync            # Clients prüfen
+sudo adguard-shield geoip-flush-cache     # Cache leeren
+sudo adguard-shield geoip-flush           # Alle GeoIP-Sperren aufheben
 ```
 
 ---
@@ -739,6 +739,6 @@ NTFY_TOPIC="adguard-shield-prod"
 ### Vor produktiver Aktivierung
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield test
-sudo /opt/adguard-shield/adguard-shield dry-run
+sudo adguard-shield test
+sudo adguard-shield dry-run
 ```
