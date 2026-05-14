@@ -12,12 +12,15 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"adguard-shield/internal/report"
 )
 
 const (
 	DefaultInstallDir = "/opt/adguard-shield"
 	DefaultStateDir   = "/var/lib/adguard-shield"
 	DefaultLogFile    = "/var/log/adguard-shield.log"
+	CLICommandPath    = "/usr/local/bin/adguard-shield"
 	ServiceName       = "adguard-shield.service"
 	ServicePath       = "/etc/systemd/system/adguard-shield.service"
 )
@@ -28,19 +31,22 @@ type Options struct {
 	Enable       bool
 	SkipDeps     bool
 	KeepConfig   bool
+	RegisterCLI  bool
 }
 
 type Status struct {
-	InstallDir     string
-	BinaryPath     string
-	ConfigPath     string
-	BinaryExists   bool
-	ConfigExists   bool
-	ServiceExists  bool
-	ServiceEnabled bool
-	ServiceActive  bool
-	Version        string
-	LegacyFindings []string
+	InstallDir          string
+	BinaryPath          string
+	ConfigPath          string
+	CLICommandPath      string
+	BinaryExists        bool
+	ConfigExists        bool
+	CLICommandInstalled bool
+	ServiceExists       bool
+	ServiceEnabled      bool
+	ServiceActive       bool
+	Version             string
+	LegacyFindings      []string
 }
 
 type LegacyError struct {
@@ -52,30 +58,30 @@ func (e *LegacyError) Error() string {
 }
 
 func DefaultOptions() Options {
-	return Options{InstallDir: DefaultInstallDir, Enable: true}
+	return Options{InstallDir: DefaultInstallDir, Enable: true, RegisterCLI: true}
 }
 
 func Install(opts Options) error {
 	opts = normalize(opts)
 	fmt.Println("AdGuard Shield Go-Installation")
 	fmt.Printf("Installationspfad: %s\n", opts.InstallDir)
-	fmt.Println("1/8 Pruefe Betriebssystem und root-Rechte ...")
+	fmt.Println("1/10 Pruefe Betriebssystem und root-Rechte ...")
 	if err := requireLinuxRoot(); err != nil {
 		return err
 	}
-	fmt.Println("2/8 Pruefe auf scriptbasierte Altinstallation ...")
+	fmt.Println("2/10 Pruefe auf scriptbasierte Altinstallation ...")
 	if findings := DetectLegacy(opts.InstallDir); len(findings) > 0 {
 		return &LegacyError{Findings: findings}
 	}
 	if !opts.SkipDeps {
-		fmt.Println("3/8 Pruefe System-Abhaengigkeiten ...")
+		fmt.Println("3/10 Pruefe System-Abhaengigkeiten ...")
 		if err := ensureDependencies(); err != nil {
 			return err
 		}
 	} else {
-		fmt.Println("3/8 System-Abhaengigkeiten uebersprungen (--skip-deps)")
+		fmt.Println("3/10 System-Abhaengigkeiten uebersprungen (--skip-deps)")
 	}
-	fmt.Println("4/8 Erstelle Verzeichnisse ...")
+	fmt.Println("4/10 Erstelle Verzeichnisse ...")
 	if err := os.MkdirAll(opts.InstallDir, 0755); err != nil {
 		return err
 	}
@@ -85,19 +91,31 @@ func Install(opts Options) error {
 	if err := os.MkdirAll(filepath.Join(opts.InstallDir, "geoip"), 0755); err != nil {
 		return err
 	}
-	fmt.Println("5/8 Installiere Binary ...")
+	fmt.Println("5/10 Installiere Binary ...")
 	if err := copySelf(filepath.Join(opts.InstallDir, "adguard-shield")); err != nil {
 		return err
 	}
-	fmt.Println("6/8 Installiere oder migriere Konfiguration ...")
+	if opts.RegisterCLI {
+		fmt.Printf("6/10 Registriere CLI-Befehl (%s) ...\n", CLICommandPath)
+		if err := registerCLICommand(opts.InstallDir); err != nil {
+			return err
+		}
+	} else {
+		fmt.Println("6/10 CLI-Registrierung uebersprungen (--no-register)")
+	}
+	fmt.Println("7/10 Installiere Report-Templates ...")
+	if err := report.InstallTemplates(filepath.Join(opts.InstallDir, "templates")); err != nil {
+		return err
+	}
+	fmt.Println("8/10 Installiere oder migriere Konfiguration ...")
 	if err := ensureConfig(opts); err != nil {
 		return err
 	}
-	fmt.Println("7/8 Schreibe systemd-Service ...")
+	fmt.Println("9/10 Schreibe systemd-Service ...")
 	if err := writeService(opts.InstallDir); err != nil {
 		return err
 	}
-	fmt.Println("8/8 Aktualisiere systemd ...")
+	fmt.Println("10/10 Aktualisiere systemd ...")
 	_ = run("systemctl", "daemon-reload")
 	if opts.Enable {
 		fmt.Println("Aktiviere Autostart ...")
@@ -138,6 +156,7 @@ func Uninstall(opts Options) error {
 	}
 	_ = os.Remove(ServicePath)
 	_ = run("systemctl", "daemon-reload")
+	_ = unregisterCLICommand(opts.InstallDir)
 	if opts.KeepConfig {
 		for _, p := range []string{
 			filepath.Join(opts.InstallDir, "adguard-shield"),
@@ -160,13 +179,15 @@ func GetStatus(installDir string) Status {
 	bin := filepath.Join(installDir, "adguard-shield")
 	conf := filepath.Join(installDir, "adguard-shield.conf")
 	st := Status{
-		InstallDir:     installDir,
-		BinaryPath:     bin,
-		ConfigPath:     conf,
-		BinaryExists:   fileExists(bin),
-		ConfigExists:   fileExists(conf),
-		ServiceExists:  fileExists(ServicePath),
-		LegacyFindings: DetectLegacy(installDir),
+		InstallDir:          installDir,
+		BinaryPath:          bin,
+		ConfigPath:          conf,
+		CLICommandPath:      CLICommandPath,
+		BinaryExists:        fileExists(bin),
+		ConfigExists:        fileExists(conf),
+		CLICommandInstalled: cliCommandInstalled(installDir),
+		ServiceExists:       fileExists(ServicePath),
+		LegacyFindings:      DetectLegacy(installDir),
 	}
 	if st.BinaryExists {
 		if out, err := exec.Command(bin, "version").Output(); err == nil {
@@ -247,6 +268,7 @@ func PrintStatus(st Status) string {
 	if st.Version != "" {
 		b.WriteString(fmt.Sprintf("Version: %s\n", st.Version))
 	}
+	b.WriteString(fmt.Sprintf("CLI-Befehl (%s): %s\n", st.CLICommandPath, yesNo(st.CLICommandInstalled)))
 	b.WriteString(fmt.Sprintf("Konfiguration: %s\n", yesNo(st.ConfigExists)))
 	b.WriteString(fmt.Sprintf("systemd Service: %s\n", yesNo(st.ServiceExists)))
 	b.WriteString(fmt.Sprintf("Autostart: %s\n", yesNo(st.ServiceEnabled)))
@@ -383,6 +405,62 @@ func sameFile(a, b string) bool {
 	ai, errA := os.Stat(a)
 	bi, errB := os.Stat(b)
 	return errA == nil && errB == nil && os.SameFile(ai, bi)
+}
+
+func registerCLICommand(installDir string) error {
+	target := filepath.Join(installDir, "adguard-shield")
+	if err := os.MkdirAll(filepath.Dir(CLICommandPath), 0755); err != nil {
+		return err
+	}
+	if existingTarget, err := os.Readlink(CLICommandPath); err == nil {
+		resolved := resolveLinkTarget(CLICommandPath, existingTarget)
+		if filepath.Clean(resolved) == filepath.Clean(target) {
+			return nil
+		}
+		return fmt.Errorf("%s existiert bereits und verweist auf %s", CLICommandPath, existingTarget)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if fileExists(CLICommandPath) {
+		return fmt.Errorf("%s existiert bereits und ist kein Symlink", CLICommandPath)
+	}
+	return os.Symlink(target, CLICommandPath)
+}
+
+func unregisterCLICommand(installDir string) error {
+	existingTarget, err := os.Readlink(CLICommandPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+	target := filepath.Join(installDir, "adguard-shield")
+	resolved := resolveLinkTarget(CLICommandPath, existingTarget)
+	if filepath.Clean(resolved) != filepath.Clean(target) {
+		return nil
+	}
+	return os.Remove(CLICommandPath)
+}
+
+func cliCommandInstalled(installDir string) bool {
+	existingTarget, err := os.Readlink(CLICommandPath)
+	if err != nil {
+		return false
+	}
+	target := filepath.Join(installDir, "adguard-shield")
+	if !fileExists(target) {
+		return false
+	}
+	resolved := resolveLinkTarget(CLICommandPath, existingTarget)
+	return filepath.Clean(resolved) == filepath.Clean(target)
+}
+
+func resolveLinkTarget(linkPath, target string) string {
+	if filepath.IsAbs(target) {
+		return target
+	}
+	return filepath.Join(filepath.Dir(linkPath), target)
 }
 
 func ensureConfig(opts Options) error {

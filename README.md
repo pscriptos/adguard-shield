@@ -94,15 +94,16 @@ docker run --rm -v "$PWD":/src -w /src -e GOOS=linux -e GOARCH=amd64 -e CGO_ENAB
 # Binary auf dem Server installieren
 sudo ./adguard-shield install
 # Der Installer fragt am Ende, ob AdGuard Shield direkt gestartet werden soll.
+# Dabei wird der Befehl adguard-shield in /usr/local/bin registriert.
 
 # Konfiguration anpassen (mindestens API-Zugangsdaten und Whitelist)
 sudo nano /opt/adguard-shield/adguard-shield.conf
 
 # API-Verbindung testen
-sudo /opt/adguard-shield/adguard-shield test
+sudo adguard-shield test
 
 # Dry-Run: loggt Erkennungen, sperrt aber nicht
-sudo /opt/adguard-shield/adguard-shield dry-run
+sudo adguard-shield dry-run
 
 # Service starten und prüfen
 sudo systemctl start adguard-shield
@@ -110,6 +111,7 @@ sudo systemctl status adguard-shield
 ```
 
 > Beim Installieren wird der systemd-Service für den Autostart registriert und am Ende nach dem direkten Start gefragt. Die Go-Version nutzt `Restart=on-failure`; einen separaten Watchdog-Timer wie in der alten Shell-Version gibt es nicht mehr.
+> Zusätzlich legt der Installer standardmäßig `/usr/local/bin/adguard-shield` als Symlink auf das installierte Binary an. Danach kannst du `sudo adguard-shield <befehl>` statt `sudo /opt/adguard-shield/adguard-shield <befehl>` verwenden.
 
 > **Bestehende Shell-Installation?** Der Go-Installer bricht ab und meldet die gefundenen Script-Artefakte. Die alte Version muss zuerst deinstalliert werden (Konfiguration behalten). Details unter [docs/update.md](docs/update.md).
 
@@ -120,7 +122,7 @@ sudo systemctl status adguard-shield
 AdGuard Shield wird über ein einzelnes Binary bedient. Die Grundform lautet:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield <befehl>
+sudo adguard-shield <befehl>
 ```
 
 ### Installation & Updates
@@ -130,9 +132,11 @@ sudo /opt/adguard-shield/adguard-shield <befehl>
 | `install` | Binary, Konfiguration und systemd-Service installieren |
 | `install --skip-deps` | Installation ohne automatische Paketprüfung |
 | `install --no-enable` | Installation ohne systemd-Autostart |
+| `install --no-register` | Installation ohne globalen CLI-Befehl in `/usr/local/bin` |
 | `install --config-source <pfad>` | Bestehende Konfiguration als Vorlage übernehmen |
 | `update` | Binary, Service und Konfiguration aktualisieren |
-| `install-status` | Installationsstatus anzeigen (Binary, Service, Version) |
+| `update --no-register` | Update ohne Änderung des globalen CLI-Befehls |
+| `install-status` | Installationsstatus anzeigen (Binary, CLI-Befehl, Service, Version) |
 | `uninstall` | Vollständige Deinstallation |
 | `uninstall --keep-config` | Deinstallation mit Erhalt der Konfiguration |
 

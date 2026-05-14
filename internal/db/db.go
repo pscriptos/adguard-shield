@@ -26,20 +26,42 @@ type Ban struct {
 }
 
 type ReportStats struct {
-	Since        int64
-	Until        int64
-	TotalBans    int
-	TotalUnbans  int
-	ActiveBans   int
-	TopClients   []ReportCount
-	Reasons      []ReportCount
-	Sources      []ReportCount
-	RecentEvents []string
+	Since                 int64
+	Until                 int64
+	TotalBans             int
+	TotalUnbans           int
+	UniqueIPs             int
+	PermanentBans         int
+	ActiveBans            int
+	AbuseIPDBReports      int
+	RateLimitBans         int
+	SubdomainFloodBans    int
+	ExternalBlocklistBans int
+	BusiestDay            string
+	BusiestDayCount       int
+	TopClients            []ReportCount
+	TopDomains            []ReportCount
+	Protocols             []ReportCount
+	Reasons               []ReportCount
+	Sources               []ReportCount
+	RecentBans            []ReportEvent
+	RecentEvents          []string
 }
 
 type ReportCount struct {
 	Name  string
 	Count int
+}
+
+type ReportEvent struct {
+	Timestamp string
+	Action    string
+	IP        string
+	Domain    string
+	Count     string
+	Duration  string
+	Protocol  string
+	Reason    string
 }
 
 func Open(path string) (*Store, error) {
@@ -356,7 +378,7 @@ func (s *Store) ClearGeoIPCache() (int64, error) {
 	return res.RowsAffected()
 }
 
-func (s *Store) ReportStats(since, until int64, limit int) (ReportStats, error) {
+func (s *Store) ReportStats(since, until, busiestSince int64, limit int) (ReportStats, error) {
 	st := ReportStats{Since: since, Until: until}
 	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ?`, since, until).Scan(&st.TotalBans); err != nil {
 		return st, err
@@ -364,11 +386,40 @@ func (s *Store) ReportStats(since, until int64, limit int) (ReportStats, error) 
 	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='UNBAN' AND timestamp_epoch BETWEEN ? AND ?`, since, until).Scan(&st.TotalUnbans); err != nil {
 		return st, err
 	}
+	if err := s.DB.QueryRow(`SELECT COUNT(DISTINCT client_ip) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ?`, since, until).Scan(&st.UniqueIPs); err != nil {
+		return st, err
+	}
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(duration,'')) LIKE '%permanent%'`, since, until).Scan(&st.PermanentBans); err != nil {
+		return st, err
+	}
 	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM active_bans`).Scan(&st.ActiveBans); err != nil {
+		return st, err
+	}
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(reason,'')) LIKE '%rate%limit%'`, since, until).Scan(&st.RateLimitBans); err != nil {
+		return st, err
+	}
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(reason,'')) LIKE '%subdomain%flood%'`, since, until).Scan(&st.SubdomainFloodBans); err != nil {
+		return st, err
+	}
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(reason,'')) LIKE '%external%blocklist%'`, since, until).Scan(&st.ExternalBlocklistBans); err != nil {
+		return st, err
+	}
+	if busiestSince <= 0 {
+		busiestSince = since
+	}
+	if err := s.DB.QueryRow(`SELECT SUBSTR(timestamp_text, 1, 10), COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? GROUP BY SUBSTR(timestamp_text, 1, 10) ORDER BY COUNT(*) DESC, SUBSTR(timestamp_text, 1, 10) DESC LIMIT 1`, busiestSince, until).Scan(&st.BusiestDay, &st.BusiestDayCount); err != nil && err != sql.ErrNoRows {
 		return st, err
 	}
 	var err error
 	st.TopClients, err = s.reportCounts(`SELECT client_ip, COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? GROUP BY client_ip ORDER BY COUNT(*) DESC, client_ip LIMIT ?`, since, until, limit)
+	if err != nil {
+		return st, err
+	}
+	st.TopDomains, err = s.reportCounts(`SELECT domain, COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND COALESCE(domain,'') NOT IN ('', '-') GROUP BY domain ORDER BY COUNT(*) DESC, domain LIMIT ?`, since, until, limit)
+	if err != nil {
+		return st, err
+	}
+	st.Protocols, err = s.reportCounts(`SELECT COALESCE(NULLIF(protocol,''), 'unbekannt'), COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? GROUP BY COALESCE(NULLIF(protocol,''), 'unbekannt') ORDER BY COUNT(*) DESC LIMIT ?`, since, until, limit)
 	if err != nil {
 		return st, err
 	}
@@ -377,6 +428,10 @@ func (s *Store) ReportStats(since, until int64, limit int) (ReportStats, error) 
 		return st, err
 	}
 	st.Sources, err = s.reportCounts(`SELECT COALESCE(NULLIF(source,''), 'unknown'), COUNT(*) FROM active_bans GROUP BY COALESCE(NULLIF(source,''), 'unknown') ORDER BY COUNT(*) DESC LIMIT ?`, 0, 0, limit)
+	if err != nil {
+		return st, err
+	}
+	st.RecentBans, err = s.reportRecentBans(since, until, 10)
 	if err != nil {
 		return st, err
 	}
@@ -403,6 +458,24 @@ func (s *Store) reportCounts(query string, since, until int64, limit int) ([]Rep
 			return nil, err
 		}
 		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) reportRecentBans(since, until int64, limit int) ([]ReportEvent, error) {
+	rows, err := s.DB.Query(`SELECT timestamp_text, action, client_ip, COALESCE(domain,''), COALESCE(count,''), COALESCE(duration,''), COALESCE(protocol,''), COALESCE(reason,'')
+FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? ORDER BY id DESC LIMIT ?`, since, until, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReportEvent
+	for rows.Next() {
+		var e ReportEvent
+		if err := rows.Scan(&e.Timestamp, &e.Action, &e.IP, &e.Domain, &e.Count, &e.Duration, &e.Protocol, &e.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }

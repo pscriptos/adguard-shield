@@ -14,11 +14,13 @@ sudo ./adguard-shield update
 
 Am Ende fragt der Updater, ob AdGuard Shield direkt neu gestartet werden soll.
 
+Der Updater registriert dabei auch den globalen CLI-Befehl `/usr/local/bin/adguard-shield`. Nach dem Update kannst du die installierte Anwendung daher direkt mit `sudo adguard-shield <befehl>` verwenden.
+
 ### Nach dem Update prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield install-status
-sudo /opt/adguard-shield/adguard-shield status
+sudo adguard-shield install-status
+sudo adguard-shield status
 sudo journalctl -u adguard-shield --no-pager -n 50
 ```
 
@@ -66,11 +68,12 @@ Der Update-Befehl nutzt intern dieselbe Routine wie die Installation:
 | 3 | Systemabhängigkeiten prüfen (sofern nicht `--skip-deps`) |
 | 4 | Installationsverzeichnis sicherstellen |
 | 5 | Neues Binary nach `/opt/adguard-shield/adguard-shield` kopieren |
-| 6 | Konfiguration migrieren (vorhandene Werte behalten, neue ergänzen) |
-| 7 | systemd-Service neu schreiben |
-| 8 | `systemctl daemon-reload` |
-| 9 | Autostart aktivieren (sofern nicht `--no-enable`) |
-| 10 | Nachfrage: Service direkt neu starten |
+| 6 | CLI-Befehl `/usr/local/bin/adguard-shield` registrieren/aktualisieren (sofern nicht `--no-register`) |
+| 7 | Report-Templates installieren |
+| 8 | Konfiguration migrieren (vorhandene Werte behalten, neue ergänzen) |
+| 9 | systemd-Service neu schreiben |
+| 10 | `systemctl daemon-reload` und Autostart aktivieren (sofern nicht `--no-enable`) |
+| 11 | Nachfrage: Service direkt neu starten |
 
 ---
 
@@ -113,8 +116,8 @@ Wenn du vorher manuell prüfen möchtest:
 
 ```bash
 sudo ./adguard-shield update
-sudo /opt/adguard-shield/adguard-shield test
-sudo /opt/adguard-shield/adguard-shield dry-run
+sudo adguard-shield test
+sudo adguard-shield dry-run
 sudo systemctl restart adguard-shield
 ```
 
@@ -125,6 +128,14 @@ sudo ./adguard-shield update --skip-deps
 ```
 
 Sinnvoll, wenn `iptables`, `ip6tables`, `ipset` und `systemctl` bereits vorhanden sind oder die Paketinstallation nicht über `apt-get` laufen soll.
+
+### Update ohne CLI-Registrierung
+
+```bash
+sudo ./adguard-shield update --no-register
+```
+
+Damit wird kein Symlink unter `/usr/local/bin/adguard-shield` angelegt oder geändert. Die Anwendung bleibt dann weiterhin über `/opt/adguard-shield/adguard-shield` erreichbar.
 
 ### Update mit expliziter Konfigurationsquelle
 
@@ -138,7 +149,7 @@ sudo ./adguard-shield update --config-source ./adguard-shield.conf
 sudo ./adguard-shield update --install-dir /opt/adguard-shield-test
 ```
 
-**Hinweis:** Die systemd-Unit heißt weiterhin `adguard-shield.service`. Mehrere parallele produktive Installationen über dieselbe Unit sind nicht vorgesehen.
+**Hinweis:** Die systemd-Unit heißt weiterhin `adguard-shield.service`, und der globale CLI-Befehl heißt weiterhin `/usr/local/bin/adguard-shield`. Mehrere parallele produktive Installationen über dieselbe Unit oder denselben CLI-Befehl sind nicht vorgesehen.
 
 ---
 
@@ -178,10 +189,10 @@ sudo cp /opt/adguard-shield/adguard-shield.conf /root/adguard-shield.conf.backup
 sudo ./adguard-shield install --config-source /root/adguard-shield.conf.backup
 
 # 4. API-Verbindung prüfen
-sudo /opt/adguard-shield/adguard-shield test
+sudo adguard-shield test
 
 # 5. Dry-Run: prüfen, was gesperrt würde
-sudo /opt/adguard-shield/adguard-shield dry-run
+sudo adguard-shield dry-run
 
 # 6. Produktiven Service starten
 sudo systemctl start adguard-shield
@@ -197,7 +208,7 @@ sudo systemctl status adguard-shield
 ### Installation
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield install-status
+sudo adguard-shield install-status
 ```
 
 ### Service
@@ -210,20 +221,20 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 ### API-Verbindung
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield test
+sudo adguard-shield test
 ```
 
 ### Laufzeitstatus
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield status
-sudo /opt/adguard-shield/adguard-shield live --once
+sudo adguard-shield status
+sudo adguard-shield live --once
 ```
 
 ### Firewall
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield firewall-status
+sudo adguard-shield firewall-status
 ```
 
 ---

@@ -14,19 +14,19 @@ sudo systemctl status adguard-shield
 sudo journalctl -u adguard-shield --no-pager -n 100
 
 # 3. Funktioniert die API?
-sudo /opt/adguard-shield/adguard-shield test
+sudo adguard-shield test
 
 # 4. Was ist der aktuelle Zustand?
-sudo /opt/adguard-shield/adguard-shield status
+sudo adguard-shield status
 
 # 5. Gibt es Warnungen oder Fehler?
-sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
+sudo adguard-shield logs --level warn --limit 100
 ```
 
 Wenn du aktuelle Queries und den Echtzeit-Zustand sehen willst:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield live
+sudo adguard-shield live
 ```
 
 ---
@@ -68,7 +68,7 @@ sudo systemctl daemon-reload
 ### Test
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield test
+sudo adguard-shield test
 ```
 
 ### Konfiguration prüfen
@@ -104,9 +104,9 @@ Passe URL und Zugangsdaten entsprechend an.
 ### Prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield live --once
-sudo /opt/adguard-shield/adguard-shield history 50
-sudo /opt/adguard-shield/adguard-shield logs --level debug --limit 100
+sudo adguard-shield live --once
+sudo adguard-shield history 50
+sudo adguard-shield logs --level debug --limit 100
 ```
 
 ### Mögliche Ursachen und Lösungen
@@ -131,8 +131,8 @@ sudo /opt/adguard-shield/adguard-shield logs --level debug --limit 100
 ### Übersicht verschaffen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield status
-sudo /opt/adguard-shield/adguard-shield history 100
+sudo adguard-shield status
+sudo adguard-shield history 100
 ```
 
 ### Ursachen und Gegenmaßnahmen
@@ -149,10 +149,10 @@ sudo /opt/adguard-shield/adguard-shield history 100
 
 ```bash
 # Sperre aufheben
-sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+sudo adguard-shield unban 192.168.1.100
 
 # Offense-Zähler zurücksetzen (damit progressive Sperren nicht sofort eskalieren)
-sudo /opt/adguard-shield/adguard-shield reset-offenses 192.168.1.100
+sudo adguard-shield reset-offenses 192.168.1.100
 ```
 
 ### Dauerhaft ausnehmen
@@ -174,7 +174,7 @@ sudo systemctl restart adguard-shield
 ### Status über AdGuard Shield
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield firewall-status
+sudo adguard-shield firewall-status
 ```
 
 ### Direkte Prüfung mit Systembefehlen
@@ -198,8 +198,8 @@ sudo iptables -n -L DOCKER-USER --line-numbers -v | grep ADGUARD
 ### Firewall neu aufbauen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield firewall-remove
-sudo /opt/adguard-shield/adguard-shield firewall-create
+sudo adguard-shield firewall-remove
+sudo adguard-shield firewall-create
 sudo systemctl restart adguard-shield
 ```
 
@@ -212,8 +212,8 @@ Nach dem Neustart werden aktive Sperren aus SQLite wieder in die ipsets geschrie
 ### Prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield status
-sudo /opt/adguard-shield/adguard-shield history 100
+sudo adguard-shield status
+sudo adguard-shield history 100
 ```
 
 Temporäre Sperren werden beim Start und während jedes Pollings auf Ablauf geprüft. Wenn eine Sperre als permanent angezeigt wird, wird sie nicht automatisch freigegeben.
@@ -231,7 +231,7 @@ Temporäre Sperren werden beim Start und während jedes Pollings auf Ablauf gepr
 ### Manuell freigeben
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield unban 192.168.1.100
+sudo adguard-shield unban 192.168.1.100
 ```
 
 ---
@@ -242,13 +242,13 @@ Dry-Run ist ideal, um neue Konfigurationen zu prüfen, bevor sie produktiv gehen
 
 ```bash
 # Dry-Run starten (Strg+C zum Beenden)
-sudo /opt/adguard-shield/adguard-shield dry-run
+sudo adguard-shield dry-run
 ```
 
 Währenddessen die Ergebnisse prüfen:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield history 50
+sudo adguard-shield history 50
 ```
 
 Im Dry-Run werden mögliche Sperren als `DRY` protokolliert. Es entstehen keine aktiven Sperren und keine Firewall-Änderungen.
@@ -260,13 +260,13 @@ Im Dry-Run werden mögliche Sperren als `DRY` protokolliert. Es entstehen keine 
 ### Status prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield whitelist-status
+sudo adguard-shield whitelist-status
 ```
 
 ### Manuell synchronisieren
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield whitelist-sync
+sudo adguard-shield whitelist-sync
 ```
 
 ### Typische Probleme
@@ -295,19 +295,19 @@ trusted.example.com     # Hostname (wird per DNS aufgelöst)
 ### Status prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield blocklist-status
+sudo adguard-shield blocklist-status
 ```
 
 ### Manuell synchronisieren
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield blocklist-sync
+sudo adguard-shield blocklist-sync
 ```
 
 ### Alle Blocklist-Sperren freigeben
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield blocklist-flush
+sudo adguard-shield blocklist-flush
 ```
 
 ### Zu viele IPs gesperrt?
@@ -325,25 +325,25 @@ sudo /opt/adguard-shield/adguard-shield blocklist-flush
 ### Status prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield geoip-status
+sudo adguard-shield geoip-status
 ```
 
 ### Einzelne IP prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield geoip-lookup 8.8.8.8
+sudo adguard-shield geoip-lookup 8.8.8.8
 ```
 
 ### Cache leeren
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield geoip-flush-cache
+sudo adguard-shield geoip-flush-cache
 ```
 
 ### Alle GeoIP-Sperren freigeben
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield geoip-flush
+sudo adguard-shield geoip-flush
 ```
 
 ### Typische Probleme und Lösungen
@@ -368,17 +368,17 @@ Die GeoIP-Ländercodes folgen dem Standard ISO 3166-1 Alpha-2. Eine vollständig
 ### Status prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield report-status
+sudo adguard-shield report-status
 ```
 
 ### Funktionstest
 
 ```bash
 # Testmail senden
-sudo /opt/adguard-shield/adguard-shield report-test
+sudo adguard-shield report-test
 
 # Text-Report in der Konsole ansehen
-sudo /opt/adguard-shield/adguard-shield report-generate txt
+sudo adguard-shield report-generate txt
 ```
 
 ### Keine Mail kommt an?
@@ -396,7 +396,7 @@ sudo /opt/adguard-shield/adguard-shield report-generate txt
 
 ```bash
 sudo cat /etc/cron.d/adguard-shield-report
-sudo /opt/adguard-shield/adguard-shield report-send
+sudo adguard-shield report-send
 ```
 
 ---
@@ -406,7 +406,7 @@ sudo /opt/adguard-shield/adguard-shield report-send
 ### Prüfen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
+sudo adguard-shield logs --level warn --limit 100
 ```
 
 ### Checkliste
@@ -497,13 +497,13 @@ Wenn der Zustand unklar ist und ein sauberer Neustart nötig ist:
 sudo systemctl stop adguard-shield
 
 # Firewall-Struktur entfernen
-sudo /opt/adguard-shield/adguard-shield firewall-remove
+sudo adguard-shield firewall-remove
 
 # Service neu starten (baut Firewall aus SQLite wieder auf)
 sudo systemctl start adguard-shield
 
 # Status prüfen
-sudo /opt/adguard-shield/adguard-shield status
+sudo adguard-shield status
 ```
 
 Das entfernt die Firewall-Struktur und lässt den Daemon sie beim Start wieder aus dem SQLite-State aufbauen. Aktive Sperren bleiben in der Datenbank erhalten.
@@ -515,13 +515,13 @@ Das entfernt die Firewall-Struktur und lässt den Daemon sie beim Start wieder a
 ### Konfiguration behalten
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield uninstall --keep-config
+sudo adguard-shield uninstall --keep-config
 ```
 
 ### Alles entfernen
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield uninstall
+sudo adguard-shield uninstall
 ```
 
 Ohne `--keep-config` werden Installationsverzeichnis, State-Verzeichnis und Logdatei entfernt.

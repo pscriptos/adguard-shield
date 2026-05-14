@@ -25,6 +25,12 @@ Die Go-Version bündelt alle Aufgaben in einem einzelnen Binary:
 /opt/adguard-shield/adguard-shield
 ```
 
+Bei Installation und Update wird zusätzlich ein Symlink in den üblichen PATH gelegt:
+
+```text
+/usr/local/bin/adguard-shield -> /opt/adguard-shield/adguard-shield
+```
+
 Dieses Binary ist gleichzeitig:
 
 - **Daemon** für den produktiven Betrieb (Querylog-Polling, Erkennung, Sperren)
@@ -33,10 +39,10 @@ Dieses Binary ist gleichzeitig:
 - **Report-Generator** für HTML- und Text-Reports
 - **Hintergrundprozess** für externe Whitelist, externe Blocklist, GeoIP und Offense-Cleanup
 
-Die meisten Befehle beginnen daher mit:
+Die meisten Befehle beginnen daher nach der Installation mit:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield <befehl>
+sudo adguard-shield <befehl>
 ```
 
 Für Installation oder Update nutzt du das neue Binary aus dem Repository, Release oder Build-Verzeichnis:

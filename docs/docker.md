@@ -143,8 +143,8 @@ BLOCKED_PORTS="53 443 853"
 
 ```bash
 sudo systemctl restart adguard-shield
-sudo /opt/adguard-shield/adguard-shield firewall-status
-sudo /opt/adguard-shield/adguard-shield status
+sudo adguard-shield firewall-status
+sudo adguard-shield status
 ```
 
 ## Firewall neu aufbauen
@@ -152,9 +152,9 @@ sudo /opt/adguard-shield/adguard-shield status
 Falls der Modus gewechselt wurde:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield firewall-remove
+sudo adguard-shield firewall-remove
 sudo systemctl restart adguard-shield
-sudo /opt/adguard-shield/adguard-shield firewall-status
+sudo adguard-shield firewall-status
 ```
 
 Der Daemon erstellt die Firewall-Struktur beim Start automatisch neu und überträgt aktive Sperren aus SQLite.

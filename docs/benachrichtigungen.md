@@ -217,9 +217,9 @@ GEOIP_NOTIFY=false
 Diese Befehle können viele IPs auf einmal freigeben:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield flush
-sudo /opt/adguard-shield/adguard-shield geoip-flush
-sudo /opt/adguard-shield/adguard-shield blocklist-flush
+sudo adguard-shield flush
+sudo adguard-shield geoip-flush
+sudo adguard-shield blocklist-flush
 ```
 
 AdGuard Shield sendet dafür **nicht** eine Nachricht pro IP, sondern eine zusammenfassende Meldung mit der Anzahl der freigegebenen Sperren.
@@ -326,7 +326,7 @@ Aktion: Manual-Flush
 Wenn keine Benachrichtigung ankommt:
 
 ```bash
-sudo /opt/adguard-shield/adguard-shield logs --level warn --limit 100
+sudo adguard-shield logs --level warn --limit 100
 sudo journalctl -u adguard-shield --no-pager -n 100
 ```
 

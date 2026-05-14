@@ -244,7 +244,11 @@ func run() error {
 	case "report-test":
 		return report.SendTest(ctx, cfg)
 	case "report-install":
-		return report.InstallCron("/opt/adguard-shield/adguard-shield", cfg.Path, cfg)
+		binary := "/opt/adguard-shield/adguard-shield"
+		if _, err := os.Stat(installer.CLICommandPath); err == nil {
+			binary = installer.CLICommandPath
+		}
+		return report.InstallCron(binary, cfg.Path, cfg)
 	case "report-remove":
 		return report.RemoveCron()
 	case "firewall-create":
@@ -463,8 +467,8 @@ func usage() {
 
 Nutzung:
   adguard-shield version
-  adguard-shield install [--config-source PATH] [--skip-deps]
-  adguard-shield update [--config-source PATH] [--skip-deps]
+  adguard-shield install [--config-source PATH] [--skip-deps] [--no-register]
+  adguard-shield update [--config-source PATH] [--skip-deps] [--no-register]
   adguard-shield uninstall [--keep-config]
   adguard-shield install-status
   adguard-shield [-config PATH] run|start|stop|dry-run
@@ -653,9 +657,11 @@ func parseInstallFlags(name string, args []string) (installer.Options, error) {
 	fs.StringVar(&opts.ConfigSource, "config-source", "", "Konfiguration fuer Neuinstallation uebernehmen")
 	fs.BoolVar(&opts.SkipDeps, "skip-deps", false, "Paketpruefung ueberspringen")
 	noEnable := fs.Bool("no-enable", false, "systemd Autostart nicht aktivieren")
+	noRegister := fs.Bool("no-register", false, "CLI-Befehl nicht in /usr/local/bin registrieren")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
 	opts.Enable = !*noEnable
+	opts.RegisterCLI = !*noRegister
 	return opts, nil
 }
