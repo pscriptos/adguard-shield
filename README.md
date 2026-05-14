@@ -66,7 +66,7 @@ Die benötigten Pakete werden vom Installer auf Ubuntu/Debian automatisch instal
 ```bash
 # Release-Archiv herunterladen und entpacken
 curl -fL -o adguard-shield-linux-amd64.tar.gz \
-  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.0.0/adguard-shield-linux-amd64.tar.gz
+  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.1.0/adguard-shield-linux-amd64.tar.gz
 tar -xzf adguard-shield-linux-amd64.tar.gz
 chmod +x ./adguard-shield
 ```
