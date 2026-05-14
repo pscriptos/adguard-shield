@@ -131,6 +131,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	d.runJob(ctx, "external-whitelist", d.Config.ExternalWhitelistEnabled, time.Duration(d.Config.ExternalWhitelistInterval)*time.Second, d.SyncWhitelist)
 	d.runJob(ctx, "external-blocklist", d.Config.ExternalBlocklistEnabled, time.Duration(d.Config.ExternalBlocklistInterval)*time.Second, d.SyncBlocklist)
+	d.runJob(ctx, "ban-expiry", true, 60*time.Second, func(ctx context.Context) error {
+		expired, err := d.Store.ExpiredBans(time.Now().Unix())
+		if err != nil {
+			return err
+		}
+		for _, ip := range expired {
+			_ = d.Unban(ctx, ip, "expired")
+		}
+		return nil
+	})
 	d.runJob(ctx, "offense-cleanup", d.Config.ProgressiveBanEnabled, time.Hour, func(ctx context.Context) error {
 		n, err := d.Store.CleanupOffenses(d.Config.ProgressiveBanResetAfter)
 		if n > 0 {
