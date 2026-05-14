@@ -1,5 +1,5 @@
 package appinfo
 
-var Version = "v1.0.0"
+var Version = "v1.1.0"
 
-const ProjectURL = "https://tnvs.de/as"
+const ProjectURL = "https://git.techniverse.net/scriptos/adguard-shield.git"

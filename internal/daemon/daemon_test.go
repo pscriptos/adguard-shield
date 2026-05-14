@@ -319,7 +319,7 @@ func TestAbuseReportingScope(t *testing.T) {
 
 	d.Config.RateLimitWindow = 60
 	got := d.abuseIPDBComment(db.Ban{Count: 110, Domain: "abb.com", Reason: "rate-limit"})
-	want := "DNS flooding on our DNS server: 110x abb.com in 60s. Banned by Adguard Shield 🔗 https://tnvs.de/as"
+	want := "DNS flooding on our DNS server: 110x abb.com in 60s. Banned by Adguard Shield 🔗 https://git.techniverse.net/scriptos/adguard-shield.git"
 	if got != want {
 		t.Fatalf("comment = %q, want %q", got, want)
 	}
