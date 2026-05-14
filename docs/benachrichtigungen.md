@@ -250,13 +250,13 @@ ABUSEIPDB_API_KEY="..."
 ### Service gestartet
 
 ```text
-AdGuard Shield v1.1.0 wurde auf dns1 gestartet.
+AdGuard Shield v1.1.1 wurde auf dns1 gestartet.
 ```
 
 ### Service gestoppt
 
 ```text
-AdGuard Shield v1.1.0 wurde auf dns1 gestoppt.
+AdGuard Shield v1.1.1 wurde auf dns1 gestoppt.
 ```
 
 ### Rate-Limit-Sperre

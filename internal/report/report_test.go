@@ -19,7 +19,7 @@ func TestGenerateUsesTemplatesAndFullStats(t *testing.T) {
 	}
 	defer store.Close()
 
-	yesterday := time.Now().AddDate(0, 0, -1)
+	yesterday := midnight(time.Now()).AddDate(0, 0, -1).Add(12 * time.Hour)
 	events := []struct {
 		ip       string
 		domain   string
