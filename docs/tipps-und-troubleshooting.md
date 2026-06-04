@@ -4,7 +4,7 @@ Dieses Dokument hilft beim Eingrenzen typischer Probleme im Betrieb. Die Reihenf
 
 ## Erste Diagnose
 
-Diese fünf Befehle liefern meistens schon genug Hinweise, um ein Problem einzugrenzen:
+Diese Befehle liefern meistens schon genug Hinweise, um ein Problem einzugrenzen:
 
 ```bash
 # 1. Läuft der Service?
@@ -19,7 +19,10 @@ sudo adguard-shield test
 # 4. Was ist der aktuelle Zustand?
 sudo adguard-shield status
 
-# 5. Gibt es Warnungen oder Fehler?
+# 5. Was ist zu einer konkreten IP bekannt?
+sudo adguard-shield ip-status 192.168.1.100
+
+# 6. Gibt es Warnungen oder Fehler?
 sudo adguard-shield logs --level warn --limit 100
 ```
 
@@ -132,6 +135,7 @@ sudo adguard-shield logs --level debug --limit 100
 
 ```bash
 sudo adguard-shield status
+sudo adguard-shield ip-status 192.168.1.100
 sudo adguard-shield history 100
 ```
 
@@ -536,6 +540,7 @@ Ohne `--keep-config` werden Installationsverzeichnis, State-Verzeichnis und Logd
 | `journalctl -u adguard-shield -n 100` | Systemd-Journal ansehen |
 | `test` | API-Verbindung prüfen |
 | `status` | Aktuellen Zustand und aktive Sperren anzeigen |
+| `ip-status <IP>` | Einzelne IP auf Sperre, Whitelist, Offenses, GeoIP und History prüfen |
 | `live` | Echtzeit-Ansicht mit Queries, Sperren und Logs |
 | `history 100` | Ban-History anzeigen |
 | `logs --level warn --limit 100` | Warnungen und Fehler anzeigen |

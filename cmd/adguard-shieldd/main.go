@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -90,6 +91,11 @@ func run() error {
 		fmt.Printf("Verbindung erfolgreich. %d Querylog-Einträge gefunden.\n", len(items))
 	case "status":
 		return status(d)
+	case "ip-status":
+		if len(args) < 1 {
+			return fmt.Errorf("Nutzung: adguard-shield ip-status <IP>")
+		}
+		return ipStatus(d, args[0])
 	case "live", "watch":
 		return liveCommand(ctx, d, args)
 	case "logs":
@@ -269,6 +275,146 @@ func run() error {
 	return nil
 }
 
+func ipStatus(d *daemon.Daemon, rawIP string) error {
+	ip := strings.TrimSpace(rawIP)
+	if _, err := netip.ParseAddr(ip); err != nil {
+		return fmt.Errorf("ungültige IP %q", rawIP)
+	}
+
+	fmt.Println("IP Status")
+	fmt.Printf("IP: %s\n", ip)
+
+	printIPBanStatus(d, ip)
+	printIPWhitelistStatus(d, ip)
+	printIPOffenseStatus(d, ip)
+	printIPGeoIPCacheStatus(d, ip)
+	return printIPHistory(d, ip, 5)
+}
+
+func printIPBanStatus(d *daemon.Daemon, ip string) {
+	b, ok, err := d.Store.BanByIP(ip)
+	if err != nil {
+		fmt.Printf("Sperre: Fehler (%v)\n", err)
+		return
+	}
+	if !ok {
+		fmt.Println("Sperre: nein")
+		return
+	}
+	fmt.Println("Sperre: aktiv")
+	fmt.Printf("  Quelle: %s\n", empty(b.Source, "unbekannt"))
+	fmt.Printf("  Grund: %s\n", empty(b.Reason, "unbekannt"))
+	if b.Domain != "" && b.Domain != "-" {
+		fmt.Printf("  Domain: %s\n", b.Domain)
+	}
+	if b.Count > 0 {
+		fmt.Printf("  Anzahl: %d\n", b.Count)
+	}
+	if b.Protocol != "" && b.Protocol != "-" {
+		fmt.Printf("  Protokoll: %s\n", b.Protocol)
+	}
+	fmt.Printf("  Dauer: %s\n", ipStatusDuration(b.Permanent, b.Duration))
+	if !b.Permanent && b.BanUntil > 0 {
+		until := time.Unix(b.BanUntil, 0)
+		state := until.Format("2006-01-02 15:04:05")
+		if time.Now().Unix() >= b.BanUntil {
+			state += " (abgelaufen, Cleanup ausstehend)"
+		}
+		fmt.Printf("  Ablauf: %s\n", state)
+	}
+	if b.OffenseLevel > 0 {
+		fmt.Printf("  Offense-Stufe bei Sperre: %d\n", b.OffenseLevel)
+	}
+	if b.GeoIPCountry != "" {
+		fmt.Printf("  GeoIP: %s (%s)\n", b.GeoIPCountry, empty(b.GeoIPMode, "unbekannt"))
+	}
+}
+
+func printIPWhitelistStatus(d *daemon.Daemon, ip string) {
+	var hits []string
+	for _, entry := range d.Config.Whitelist {
+		if strings.TrimSpace(entry) == ip {
+			hits = append(hits, "statisch")
+			break
+		}
+	}
+	wl, ok, err := d.Store.WhitelistByIP(ip)
+	if err != nil {
+		fmt.Printf("Whitelist: Fehler (%v)\n", err)
+		return
+	}
+	if ok {
+		source := empty(wl.Source, "extern")
+		if wl.ResolvedAt != "" {
+			source += ", aufgeloest " + wl.ResolvedAt
+		}
+		hits = append(hits, source)
+	}
+	if len(hits) == 0 {
+		fmt.Println("Whitelist: nein")
+		return
+	}
+	fmt.Printf("Whitelist: ja (%s)\n", strings.Join(hits, "; "))
+}
+
+func printIPOffenseStatus(d *daemon.Daemon, ip string) {
+	o, ok, err := d.Store.OffenseByIP(ip)
+	if err != nil {
+		fmt.Printf("Offense-Zaehler: Fehler (%v)\n", err)
+		return
+	}
+	if !ok {
+		fmt.Println("Offense-Zaehler: keiner")
+		return
+	}
+	state := "aktiv"
+	if o.LastEpoch > 0 && time.Now().Unix()-o.LastEpoch > d.Config.ProgressiveBanResetAfter {
+		state = "abgelaufen"
+	}
+	fmt.Printf("Offense-Zaehler: Stufe %d (%s)\n", o.Level, state)
+	if o.First != "" {
+		fmt.Printf("  Erster Treffer: %s\n", o.First)
+	}
+	if o.Last != "" {
+		fmt.Printf("  Letzter Treffer: %s\n", o.Last)
+	}
+	if d.Config.ProgressiveBanResetAfter > 0 {
+		fmt.Printf("  Reset nach: %ds\n", d.Config.ProgressiveBanResetAfter)
+	}
+}
+
+func printIPGeoIPCacheStatus(d *daemon.Daemon, ip string) {
+	cache, ok, err := d.Store.GeoIPCacheByIP(ip)
+	if err != nil {
+		fmt.Printf("GeoIP-Cache: Fehler (%v)\n", err)
+		return
+	}
+	if !ok {
+		fmt.Println("GeoIP-Cache: kein Eintrag")
+		return
+	}
+	fmt.Printf("GeoIP-Cache: %s\n", empty(cache.CountryCode, "unbekannt"))
+	if cache.LookedUpAtEpoch > 0 {
+		fmt.Printf("  Nachgeschlagen: %s\n", time.Unix(cache.LookedUpAtEpoch, 0).Format("2006-01-02 15:04:05"))
+	}
+}
+
+func printIPHistory(d *daemon.Daemon, ip string, limit int) error {
+	lines, err := d.Store.RecentHistoryByIP(ip, limit)
+	if err != nil {
+		return err
+	}
+	if len(lines) == 0 {
+		fmt.Println("History: keine Eintraege")
+		return nil
+	}
+	fmt.Printf("History: letzte %d Eintraege\n", len(lines))
+	for _, l := range lines {
+		fmt.Printf("  %s\n", l)
+	}
+	return nil
+}
+
 func status(d *daemon.Daemon) error {
 	bans, err := d.Store.ActiveBans()
 	if err != nil {
@@ -290,9 +436,16 @@ func status(d *daemon.Daemon) error {
 		fmt.Printf("  %s | %s | %s | %s\n", b.IP, b.Source, b.Reason, until)
 	}
 	if len(bans) > limit {
-		fmt.Printf("  ... %d weitere Sperren. Details mit: adguard-shield history oder direkt in SQLite.\n", len(bans)-limit)
+		fmt.Printf("  ... %d weitere Sperren. Details mit: adguard-shield ip-status <IP> oder history.\n", len(bans)-limit)
 	}
 	return nil
+}
+
+func ipStatusDuration(permanent bool, seconds int64) string {
+	if permanent || seconds == 0 {
+		return "permanent"
+	}
+	return strconv.FormatInt(seconds, 10) + "s"
 }
 
 func blocklistStatus(d *daemon.Daemon) error {
@@ -472,7 +625,7 @@ Nutzung:
   adguard-shield uninstall [--keep-config]
   adguard-shield install-status
   adguard-shield [-config PATH] run|start|stop|dry-run
-  adguard-shield status|history [N]|test|flush|ban IP|unban IP|reset-offenses [IP]
+  adguard-shield status|ip-status IP|history [N]|test|flush|ban IP|unban IP|reset-offenses [IP]
   adguard-shield live [--interval N] [--top N] [--recent N] [--logs LEVEL] [--once]
   adguard-shield logs [--level LEVEL] [--limit N]|logs-follow [--level LEVEL]
   adguard-shield offense-status|offense-cleanup

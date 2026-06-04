@@ -66,7 +66,7 @@ Die benötigten Pakete werden vom Installer auf Ubuntu/Debian automatisch instal
 ```bash
 # Release-Archiv herunterladen und entpacken
 curl -fL -o adguard-shield-linux-amd64.tar.gz \
-  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.1.1/adguard-shield-linux-amd64.tar.gz
+  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.1.2/adguard-shield-linux-amd64.tar.gz
 tar -xzf adguard-shield-linux-amd64.tar.gz
 chmod +x ./adguard-shield
 ```
@@ -155,6 +155,7 @@ sudo adguard-shield <befehl>
 | Befehl | Beschreibung |
 |---|---|
 | `status` | Aktive Sperren und Konfigurationsübersicht anzeigen |
+| `ip-status <IP>` | Status einer einzelnen IP anzeigen |
 | `live` / `watch` | Terminal-Live-Ansicht mit Queries, Top-Clients, Sperren und Logs |
 | `live --interval 2` | Live-Ansicht mit benutzerdefiniertem Aktualisierungsintervall |
 | `live --top 20` | Live-Ansicht mit mehr Top-Einträgen |

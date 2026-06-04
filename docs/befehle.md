@@ -58,6 +58,7 @@ sudo systemctl status adguard-shield
 # Diagnose und Monitoring
 sudo adguard-shield test
 sudo adguard-shield status
+sudo adguard-shield ip-status 192.168.1.100
 sudo adguard-shield live
 sudo adguard-shield history 100
 sudo adguard-shield logs --level warn --limit 100
@@ -360,7 +361,26 @@ Zeigt eine Übersicht des aktuellen Zustands:
 - Externe Whitelist (aktiv/inaktiv, Anzahl URLs)
 - Aktive Sperren mit IP, Quelle, Grund und Ablaufzeit
 
-Bei sehr vielen aktiven Sperren werden nur die ersten 50 angezeigt. Für Details nutze `history` oder frage SQLite direkt ab.
+Bei sehr vielen aktiven Sperren werden nur die ersten 50 angezeigt. Für Details zu einer konkreten Adresse nutze `ip-status <IP>`, für Ereignisse `history`.
+
+---
+
+## IP-Status
+
+```bash
+sudo adguard-shield ip-status 192.168.1.100
+```
+
+Zeigt den Status einer einzelnen IP-Adresse:
+
+- ob eine aktive Sperre existiert
+- Quelle, Grund, Domain, Protokoll, Dauer und Ablaufzeit der Sperre
+- statische oder externe Whitelist-Treffer
+- Offense-Zähler für progressive Sperren
+- GeoIP-Cache-Eintrag
+- letzte History-Einträge für diese IP
+
+Der Befehl ist besonders hilfreich, wenn eine IP nicht in der gekürzten `status`-Übersicht auftaucht oder du prüfen möchtest, warum ein Client gesperrt, nicht gesperrt oder nicht erneut eskaliert wurde.
 
 ---
 
