@@ -155,6 +155,7 @@ sudo adguard-shield <befehl>
 | Befehl | Beschreibung |
 |---|---|
 | `status` | Aktive Sperren und Konfigurationsübersicht anzeigen |
+| `ip-status <IP>` | Status einer einzelnen IP anzeigen |
 | `live` / `watch` | Terminal-Live-Ansicht mit Queries, Top-Clients, Sperren und Logs |
 | `live --interval 2` | Live-Ansicht mit benutzerdefiniertem Aktualisierungsintervall |
 | `live --top 20` | Live-Ansicht mit mehr Top-Einträgen |

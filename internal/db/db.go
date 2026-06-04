@@ -25,6 +25,27 @@ type Ban struct {
 	GeoIPMode    string
 }
 
+type Offense struct {
+	IP        string
+	Level     int
+	LastEpoch int64
+	Last      string
+	First     string
+}
+
+type WhitelistEntry struct {
+	IP         string
+	Source     string
+	ResolvedAt string
+}
+
+type GeoIPCacheEntry struct {
+	IP              string
+	CountryCode     string
+	LookedUpAtEpoch int64
+	DBMtime         int64
+}
+
 type ReportStats struct {
 	Since                 int64
 	Until                 int64
@@ -118,6 +139,22 @@ func (s *Store) BanExists(ip string) (bool, error) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+func (s *Store) BanByIP(ip string) (Ban, bool, error) {
+	row := s.DB.QueryRow(`SELECT client_ip, COALESCE(domain,''), COALESCE(count,0), COALESCE(ban_until_epoch,0),
+COALESCE(ban_duration,0), COALESCE(offense_level,0), COALESCE(is_permanent,0), COALESCE(reason,''), COALESCE(protocol,''),
+COALESCE(source,''), COALESCE(geoip_country,''), COALESCE(geoip_mode,'') FROM active_bans WHERE client_ip=? LIMIT 1`, ip)
+	var b Ban
+	var perm int
+	if err := row.Scan(&b.IP, &b.Domain, &b.Count, &b.BanUntil, &b.Duration, &b.OffenseLevel, &perm, &b.Reason, &b.Protocol, &b.Source, &b.GeoIPCountry, &b.GeoIPMode); err != nil {
+		if err == sql.ErrNoRows {
+			return Ban{}, false, nil
+		}
+		return Ban{}, false, err
+	}
+	b.Permanent = perm == 1
+	return b, true, nil
 }
 
 func (s *Store) InsertBan(b Ban) error {
@@ -259,6 +296,18 @@ func (s *Store) WhitelistContains(ip string) (bool, error) {
 	return err == nil, err
 }
 
+func (s *Store) WhitelistByIP(ip string) (WhitelistEntry, bool, error) {
+	var e WhitelistEntry
+	err := s.DB.QueryRow(`SELECT ip_address, COALESCE(source,''), COALESCE(resolved_at,'') FROM whitelist_cache WHERE ip_address=? LIMIT 1`, ip).Scan(&e.IP, &e.Source, &e.ResolvedAt)
+	if err == sql.ErrNoRows {
+		return WhitelistEntry{}, false, nil
+	}
+	if err != nil {
+		return WhitelistEntry{}, false, err
+	}
+	return e, true, nil
+}
+
 func (s *Store) ReplaceWhitelist(ips []string, source string) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -348,6 +397,19 @@ func (s *Store) CountExpiredOffenses(resetAfter int64) (int, error) {
 	return count, err
 }
 
+func (s *Store) OffenseByIP(ip string) (Offense, bool, error) {
+	var o Offense
+	err := s.DB.QueryRow(`SELECT client_ip, COALESCE(offense_level,0), COALESCE(last_offense_epoch,0), COALESCE(last_offense,''), COALESCE(first_offense,'')
+FROM offense_tracking WHERE client_ip=? LIMIT 1`, ip).Scan(&o.IP, &o.Level, &o.LastEpoch, &o.Last, &o.First)
+	if err == sql.ErrNoRows {
+		return Offense{}, false, nil
+	}
+	if err != nil {
+		return Offense{}, false, err
+	}
+	return o, true, nil
+}
+
 func (s *Store) LoadGeoIPCache(ttl, dbMtime int64) (map[string]string, error) {
 	rows, err := s.DB.Query(`SELECT ip, country_code FROM geoip_cache WHERE looked_up_at_epoch >= ? AND (db_mtime=? OR db_mtime=0)`, time.Now().Unix()-ttl, dbMtime)
 	if err != nil {
@@ -363,6 +425,18 @@ func (s *Store) LoadGeoIPCache(ttl, dbMtime int64) (map[string]string, error) {
 		out[ip] = cc
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) GeoIPCacheByIP(ip string) (GeoIPCacheEntry, bool, error) {
+	var e GeoIPCacheEntry
+	err := s.DB.QueryRow(`SELECT ip, country_code, COALESCE(looked_up_at_epoch,0), COALESCE(db_mtime,0) FROM geoip_cache WHERE ip=? LIMIT 1`, ip).Scan(&e.IP, &e.CountryCode, &e.LookedUpAtEpoch, &e.DBMtime)
+	if err == sql.ErrNoRows {
+		return GeoIPCacheEntry{}, false, nil
+	}
+	if err != nil {
+		return GeoIPCacheEntry{}, false, err
+	}
+	return e, true, nil
 }
 
 func (s *Store) UpsertGeoIP(ip, country string, dbMtime int64) error {
@@ -476,6 +550,24 @@ FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? ORDER BY
 			return nil, err
 		}
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RecentHistoryByIP(ip string, limit int) ([]string, error) {
+	rows, err := s.DB.Query(`SELECT timestamp_text, action, client_ip, COALESCE(domain,''), COALESCE(count,''), COALESCE(duration,''), COALESCE(protocol,''), COALESCE(reason,'')
+FROM ban_history WHERE client_ip=? ORDER BY id DESC LIMIT ?`, ip, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var ts, action, clientIP, domain, count, duration, proto, reason string
+		if err := rows.Scan(&ts, &action, &clientIP, &domain, &count, &duration, &proto, &reason); err != nil {
+			return nil, err
+		}
+		out = append(out, fmt.Sprintf("%s | %s | %s | %s | %s | %s | %s | %s", ts, action, clientIP, domain, count, duration, proto, reason))
 	}
 	return out, rows.Err()
 }
