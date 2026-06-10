@@ -363,3 +363,37 @@ func TestDryRunDoesNotInsertActiveBan(t *testing.T) {
 		t.Fatal("dry-run must not create an active ban")
 	}
 }
+
+func TestGeoIPCheckGateUsesConfiguredInterval(t *testing.T) {
+	now := time.Unix(1000, 0)
+	d := &Daemon{
+		Config:  &config.Config{CheckInterval: 10, GeoIPCheckInterval: 30},
+		geoSeen: map[string]time.Time{},
+	}
+	if !d.shouldCheckGeoIP("203.0.113.7", now) {
+		t.Fatal("first GeoIP check should be allowed")
+	}
+	if d.shouldCheckGeoIP("203.0.113.7", now.Add(29*time.Second)) {
+		t.Fatal("GeoIP check inside configured interval should be skipped")
+	}
+	if !d.shouldCheckGeoIP("203.0.113.7", now.Add(30*time.Second)) {
+		t.Fatal("GeoIP check after configured interval should be allowed")
+	}
+}
+
+func TestGeoIPCheckGateFallsBackToPollInterval(t *testing.T) {
+	now := time.Unix(1000, 0)
+	d := &Daemon{
+		Config:  &config.Config{CheckInterval: 10},
+		geoSeen: map[string]time.Time{},
+	}
+	if !d.shouldCheckGeoIP("203.0.113.7", now) {
+		t.Fatal("first GeoIP check should be allowed")
+	}
+	if d.shouldCheckGeoIP("203.0.113.7", now.Add(9*time.Second)) {
+		t.Fatal("GeoIP check inside poll interval should be skipped")
+	}
+	if !d.shouldCheckGeoIP("203.0.113.7", now.Add(10*time.Second)) {
+		t.Fatal("GeoIP check after poll interval should be allowed")
+	}
+}

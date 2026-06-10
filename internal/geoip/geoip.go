@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oschwald/maxminddb-golang"
@@ -31,6 +32,7 @@ type Resolver struct {
 	Dir           string
 	TTL           int64
 	Store         Store
+	mu            sync.RWMutex
 	reader        *maxminddb.Reader
 	cache         map[string]string
 	mtime         int64
@@ -65,7 +67,9 @@ func (r *Resolver) Open(ctx context.Context) error {
 	r.mtime = st.ModTime().Unix()
 	if r.Store != nil {
 		if c, err := r.Store.LoadGeoIPCache(r.TTL, r.mtime); err == nil {
+			r.mu.Lock()
 			r.cache = c
+			r.mu.Unlock()
 		}
 	}
 	return nil
@@ -79,9 +83,12 @@ func (r *Resolver) Close() error {
 }
 
 func (r *Resolver) Lookup(ip string) (string, error) {
+	r.mu.RLock()
 	if v, ok := r.cache[ip]; ok {
+		r.mu.RUnlock()
 		return v, nil
 	}
+	r.mu.RUnlock()
 	if r.reader == nil {
 		return r.lookupLegacy(ip)
 	}
@@ -104,31 +111,42 @@ func (r *Resolver) Lookup(ip string) (string, error) {
 	if cc == "" {
 		cc = strings.ToUpper(rec.RegisteredCountry.ISOCode)
 	}
-	if cc != "" {
-		r.cache[ip] = cc
-		if r.Store != nil {
-			_ = r.Store.UpsertGeoIP(ip, cc, r.mtime)
-		}
-	}
+	r.storeCache(ip, cc)
 	return cc, nil
 }
 
 func (r *Resolver) lookupLegacy(ip string) (string, error) {
 	if strings.Contains(ip, ":") {
 		if cc, err := runGeoIPCommand("geoiplookup6", ip); err == nil && cc != "" {
+			r.storeCache(ip, cc)
 			return cc, nil
 		}
 	} else {
 		if cc, err := runGeoIPCommand("geoiplookup", ip); err == nil && cc != "" {
+			r.storeCache(ip, cc)
 			return cc, nil
 		}
 	}
 	if r.effectivePath != "" {
 		if cc, err := runGeoIPCommand("mmdblookup", "--file", r.effectivePath, "--ip", ip, "country", "iso_code"); err == nil && cc != "" {
+			r.storeCache(ip, cc)
 			return cc, nil
 		}
 	}
 	return "", fmt.Errorf("no GeoIP result for %s", ip)
+}
+
+func (r *Resolver) storeCache(ip, country string) {
+	country = strings.ToUpper(strings.TrimSpace(country))
+	if country == "" {
+		return
+	}
+	r.mu.Lock()
+	r.cache[ip] = country
+	r.mu.Unlock()
+	if r.Store != nil {
+		_ = r.Store.UpsertGeoIP(ip, country, r.mtime)
+	}
 }
 
 func runGeoIPCommand(name string, args ...string) (string, error) {

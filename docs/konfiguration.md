@@ -560,7 +560,7 @@ ABUSEIPDB_CATEGORIES="4"
 | `GEOIP_ENABLED` | `false` | GeoIP-Filter aktivieren |
 | `GEOIP_MODE` | `blocklist` | Filtermodus |
 | `GEOIP_COUNTRIES` | leer | Ländercodes nach ISO 3166-1 Alpha-2 |
-| `GEOIP_CHECK_INTERVAL` | `0` | Legacy-Parameter (Go-Version nutzt den zentralen Poller) |
+| `GEOIP_CHECK_INTERVAL` | `0` | Eigenes GeoIP-Prüfintervall in Sekunden; `0` nutzt `CHECK_INTERVAL`. |
 | `GEOIP_NOTIFY` | `true` | Benachrichtigungen bei GeoIP-Sperren senden |
 | `GEOIP_SKIP_PRIVATE` | `true` | Private/lokale IPs überspringen |
 | `GEOIP_LICENSE_KEY` | leer | MaxMind-License-Key für automatischen Download |
