@@ -40,7 +40,7 @@ type Daemon struct {
 	mu      sync.Mutex
 	seen    map[string]time.Time
 	events  []queryEvent
-	geoSeen map[string]bool
+	geoSeen map[string]time.Time
 	wl      map[string]bool
 
 	serviceMu            sync.Mutex
@@ -93,7 +93,7 @@ func New(c *config.Config) (*Daemon, error) {
 	d := &Daemon{
 		Config: c, Store: st, FW: fw, Logger: logger,
 		Client: &http.Client{Timeout: 20 * time.Second, Transport: tr},
-		seen:   map[string]time.Time{}, geoSeen: map[string]bool{},
+		seen:   map[string]time.Time{}, geoSeen: map[string]time.Time{},
 	}
 	d.Geo = geoip.New(c.GeoIPMMDBPath, c.GeoIPLicenseKey, filepath.Join(filepath.Dir(c.Path), "geoip"), c.GeoIPCacheTTL, st)
 	return d, nil
@@ -409,18 +409,14 @@ func (d *Daemon) checkGeoIP(ctx context.Context, ip string) {
 	if d.Config.GeoIPSkipPrivate && geoip.IsPrivateIP(ip) {
 		return
 	}
-	d.mu.Lock()
-	if d.geoSeen[ip] {
-		d.mu.Unlock()
-		return
-	}
-	d.geoSeen[ip] = true
-	d.mu.Unlock()
 	if d.isWhitelisted(ip) {
 		return
 	}
 	exists, _ := d.Store.BanExists(ip)
 	if exists {
+		return
+	}
+	if !d.shouldCheckGeoIP(ip, time.Now()) {
 		return
 	}
 	cc, err := d.Geo.Lookup(ip)
@@ -429,6 +425,41 @@ func (d *Daemon) checkGeoIP(ctx context.Context, ip string) {
 	}
 	if geoip.ShouldBlock(cc, d.Config.GeoIPMode, d.Config.GeoIPCountries) {
 		_ = d.Ban(ctx, ip, "GeoIP:"+cc, 0, "-", "geoip", "geoip", cc, true)
+	}
+}
+
+func (d *Daemon) shouldCheckGeoIP(ip string, now time.Time) bool {
+	interval := d.geoIPCheckInterval()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if last, ok := d.geoSeen[ip]; ok && now.Sub(last) < interval {
+		return false
+	}
+	d.geoSeen[ip] = now
+	d.pruneGeoSeenLocked(now, interval)
+	return true
+}
+
+func (d *Daemon) geoIPCheckInterval() time.Duration {
+	seconds := 0
+	if d.Config != nil {
+		seconds = d.Config.GeoIPCheckInterval
+		if seconds <= 0 {
+			seconds = d.Config.CheckInterval
+		}
+	}
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (d *Daemon) pruneGeoSeenLocked(now time.Time, interval time.Duration) {
+	cutoff := now.Add(-2 * interval)
+	for ip, last := range d.geoSeen {
+		if last.Before(cutoff) {
+			delete(d.geoSeen, ip)
+		}
 	}
 }
 
