@@ -106,3 +106,93 @@ func TestStoreIPStatusQueries(t *testing.T) {
 		t.Fatalf("unexpected history: %#v", history)
 	}
 }
+
+func TestReportStatsAttackTypesAndFilters(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows := []struct {
+		action, ip, domain, duration, proto, reason string
+	}{
+		{"BAN", "192.0.2.1", "a.example", "600s", "dns", "rate-limit"},
+		{"BAN", "192.0.2.2", "*.b.example", "600s", "dns", "subdomain-flood"},
+		{"BAN", "192.0.2.3", "c.example", "permanent", "doh", "dns-flood-watchlist"},
+		{"BAN", "192.0.2.4", "-", "permanent", "-", "external-blocklist"},
+		{"BAN", "192.0.2.5", "GeoIP:CN", "permanent", "-", "geoip"},
+		{"BAN", "192.0.2.6", "GeoIP:RU", "permanent", "-", "geoip"},
+		{"BAN", "192.0.2.7", "manual", "permanent", "-", "manual"},
+		{"BAN", "192.0.2.8", "d.example", "600s", "DNS", "legacy-reason"},
+		{"DRY", "192.0.2.9", "e.example", "dry-run", "dns", "dry-run (rate-limit)"},
+		{"UNBAN", "192.0.2.1", "-", "-", "-", "expired"},
+	}
+	for i, r := range rows {
+		if _, err := s.DB.Exec(`INSERT INTO ban_history (timestamp_epoch, timestamp_text, action, client_ip, domain, count, duration, protocol, reason) VALUES (?, '2026-09-15 12:00:00', ?, ?, ?, '1', ?, ?, ?)`,
+			int64(1000+i), r.action, r.ip, r.domain, r.duration, r.proto, r.reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := s.ReportStats(1000, 2000, 1000, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.TotalBans != 8 || st.TotalUnbans != 1 {
+		t.Fatalf("totals: bans=%d unbans=%d", st.TotalBans, st.TotalUnbans)
+	}
+	got := []int{st.RateLimitBans, st.SubdomainFloodBans, st.WatchlistBans, st.ExternalBlocklistBans, st.GeoIPBans, st.ManualBans, st.OtherBans}
+	want := []int{1, 1, 1, 1, 2, 1, 1}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attack types = %v, want %v", got, want)
+		}
+	}
+	sum := 0
+	for _, v := range got {
+		sum += v
+	}
+	if sum != st.TotalBans {
+		t.Fatalf("attack type sum %d != total %d", sum, st.TotalBans)
+	}
+	for _, d := range st.TopDomains {
+		if d.Name == "GeoIP:CN" || d.Name == "GeoIP:RU" || d.Name == "manual" || d.Name == "-" {
+			t.Fatalf("placeholder domain in top domains: %#v", st.TopDomains)
+		}
+	}
+	if len(st.TopDomains) != 4 {
+		t.Fatalf("unexpected top domains: %#v", st.TopDomains)
+	}
+	protocols := map[string]int{}
+	for _, p := range st.Protocols {
+		protocols[p.Name] = p.Count
+	}
+	if protocols["n/a"] != 4 || protocols["dns"] != 3 || protocols["doh"] != 1 || len(protocols) != 3 {
+		t.Fatalf("unexpected protocols: %#v", st.Protocols)
+	}
+}
+
+func TestAbuseIPDBReportStats(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	count, first, err := s.AbuseIPDBReportStats(0, 1<<40)
+	if err != nil || count != 0 || first != 0 {
+		t.Fatalf("empty table: count=%d first=%d err=%v", count, first, err)
+	}
+	if err := s.RecordAbuseIPDBReport("192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.Exec(`INSERT INTO abuseipdb_reports (timestamp_epoch, timestamp_text, client_ip) VALUES (500, 'x', '192.0.2.2')`); err != nil {
+		t.Fatal(err)
+	}
+	count, first, err = s.AbuseIPDBReportStats(400, 600)
+	if err != nil || count != 1 || first != 500 {
+		t.Fatalf("window: count=%d first=%d err=%v", count, first, err)
+	}
+	count, _, err = s.AbuseIPDBReportStats(0, 1<<40)
+	if err != nil || count != 2 {
+		t.Fatalf("all: count=%d err=%v", count, err)
+	}
+}

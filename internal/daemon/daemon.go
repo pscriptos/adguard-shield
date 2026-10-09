@@ -952,6 +952,9 @@ func (d *Daemon) reportAbuseIPDB(ctx context.Context, b db.Ban) {
 		defer resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			d.info("AbuseIPDB: %s erfolgreich gemeldet", b.IP)
+			if err := d.Store.RecordAbuseIPDBReport(b.IP); err != nil {
+				d.warn("AbuseIPDB: Meldung für %s nicht gespeichert: %v", b.IP, err)
+			}
 		} else {
 			d.warn("AbuseIPDB: HTTP %d für %s", resp.StatusCode, b.IP)
 		}

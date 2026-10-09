@@ -397,3 +397,62 @@ func TestGeoIPCheckGateFallsBackToPollInterval(t *testing.T) {
 		t.Fatal("GeoIP check after poll interval should be allowed")
 	}
 }
+
+type statusRoundTripper struct {
+	status int
+	hosts  chan string
+}
+
+func (rt statusRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	rt.hosts <- r.URL.Host
+	return &http.Response{StatusCode: rt.status, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+}
+
+func TestReportAbuseIPDBRecordsOnlySuccessfulReports(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, tt := range []struct {
+		ip     string
+		status int
+		want   int
+	}{
+		{"203.0.113.7", http.StatusOK, 1},
+		{"203.0.113.8", http.StatusTooManyRequests, 1},
+	} {
+		hosts := make(chan string, 1)
+		d := &Daemon{
+			Config: &config.Config{AbuseIPDBAPIKey: "test", AbuseIPDBCategories: "4"},
+			Store:  store,
+			Client: &http.Client{Transport: statusRoundTripper{status: tt.status, hosts: hosts}},
+		}
+		d.reportAbuseIPDB(context.Background(), db.Ban{IP: tt.ip, Domain: "example.com", Count: 100})
+		select {
+		case host := <-hosts:
+			if host != "api.abuseipdb.com" {
+				t.Fatalf("unexpected host %q", host)
+			}
+		case <-time.After(4 * time.Second):
+			t.Fatal("AbuseIPDB request was not sent")
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		count := 0
+		for time.Now().Before(deadline) {
+			count, _, err = store.AbuseIPDBReportStats(0, time.Now().Unix()+1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count >= tt.want {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond)
+		count, _, _ = store.AbuseIPDBReportStats(0, time.Now().Unix()+1)
+		if count != tt.want {
+			t.Fatalf("after %s (HTTP %d): stored reports = %d, want %d", tt.ip, tt.status, count, tt.want)
+		}
+	}
+}

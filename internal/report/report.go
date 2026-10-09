@@ -27,7 +27,10 @@ var embeddedTemplates embed.FS
 
 type Store interface {
 	ReportStats(since, until, busiestSince int64, limit int) (db.ReportStats, error)
+	AbuseIPDBReportStats(since, until int64) (int, int64, error)
 }
+
+const topLimit = 10
 
 const cronPath = "/etc/cron.d/adguard-shield-report"
 
@@ -80,11 +83,14 @@ func Generate(c *config.Config, st Store, format string) (string, error) {
 	format = normalizeFormat(format, c.ReportFormat)
 	since, until, period := reportWindow(c.ReportInterval, time.Now())
 	busiestSince := busiestWindowStart(c, since)
-	stats, err := st.ReportStats(since, until, busiestSince, 20)
+	stats, err := st.ReportStats(since, until, busiestSince, topLimit)
 	if err != nil {
 		return "", err
 	}
-	stats.AbuseIPDBReports = countAbuseReports(c.LogFile, since, until)
+	stats.AbuseIPDBReports, err = abuseReports(c, st, since, until)
+	if err != nil {
+		return "", err
+	}
 
 	tpl, err := loadTemplate(c, format)
 	if err != nil {
@@ -216,6 +222,12 @@ func templateValues(c *config.Config, st Store, stats db.ReportStats, period, fo
 		"RATELIMIT_BANS":          strconv.Itoa(stats.RateLimitBans),
 		"SUBDOMAIN_FLOOD_BANS":    strconv.Itoa(stats.SubdomainFloodBans),
 		"EXTERNAL_BLOCKLIST_BANS": strconv.Itoa(stats.ExternalBlocklistBans),
+		"WATCHLIST_BANS":          strconv.Itoa(stats.WatchlistBans),
+		"GEOIP_BANS":              strconv.Itoa(stats.GeoIPBans),
+		"MANUAL_BANS":             strconv.Itoa(stats.ManualBans),
+		"OTHER_BANS":              strconv.Itoa(stats.OtherBans),
+		"ATTACK_TYPES_TABLE":      attackTypesHTML(stats),
+		"ATTACK_TYPES_TEXT":       attackTypesText(stats),
 		"BUSIEST_DAY":             busiestDay,
 		"BUSIEST_DAY_LABEL":       busiestLabel,
 		"TOP10_IPS_TABLE":         topCountsHTML(stats.TopClients, "IP-Adresse"),
@@ -237,6 +249,57 @@ func templateValues(c *config.Config, st Store, stats db.ReportStats, period, fo
 		values["PERIOD_OVERVIEW_TEXT"] = periodOverviewText(st)
 	}
 	return values, nil
+}
+
+type attackType struct {
+	Label string
+	Class string
+	Count int
+}
+
+func attackTypes(stats db.ReportStats) []attackType {
+	rows := []attackType{
+		{"Rate-Limit", "rate-limit", stats.RateLimitBans},
+		{"Subdomain-Flood", "subdomain-flood", stats.SubdomainFloodBans},
+		{"DNS-Flood Watchlist", "watchlist", stats.WatchlistBans},
+		{"Externe Blocklist", "external", stats.ExternalBlocklistBans},
+		{"GeoIP", "geoip", stats.GeoIPBans},
+		{"Manuell", "manual", stats.ManualBans},
+	}
+	if stats.OtherBans > 0 {
+		rows = append(rows, attackType{"Sonstige", "", stats.OtherBans})
+	}
+	return rows
+}
+
+func percent(count, total int) string {
+	if total <= 0 {
+		return "0,0 %"
+	}
+	return strings.Replace(strconv.FormatFloat(float64(count)*100/float64(total), 'f', 1, 64), ".", ",", 1) + " %"
+}
+
+func attackTypesHTML(stats db.ReportStats) string {
+	var b strings.Builder
+	b.WriteString("<table><tr><th>Angriffsart</th><th>Sperren</th><th>Anteil</th></tr>")
+	for _, r := range attackTypes(stats) {
+		fmt.Fprintf(&b, `<tr><td><span class="reason-badge %s">%s</span></td><td>%d</td><td>%s</td></tr>`, r.Class, html.EscapeString(r.Label), r.Count, percent(r.Count, stats.TotalBans))
+	}
+	fmt.Fprintf(&b, `<tr class="sum-row"><td><strong>Summe</strong></td><td><strong>%d</strong></td><td><strong>%s</strong></td></tr>`, stats.TotalBans, percent(stats.TotalBans, stats.TotalBans))
+	b.WriteString("</table>")
+	return b.String()
+}
+
+func attackTypesText(stats db.ReportStats) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %-24s %-9s %s\n", "Angriffsart", "Sperren", "Anteil")
+	fmt.Fprintf(&b, "  %-24s %-9s %s\n", strings.Repeat("-", 24), strings.Repeat("-", 9), "-------")
+	for _, r := range attackTypes(stats) {
+		fmt.Fprintf(&b, "  %-24s %-9d %s\n", r.Label, r.Count, percent(r.Count, stats.TotalBans))
+	}
+	fmt.Fprintf(&b, "  %-24s %-9s %s\n", strings.Repeat("-", 24), strings.Repeat("-", 9), "-------")
+	fmt.Fprintf(&b, "  %-24s %-9d %s", "Summe", stats.TotalBans, percent(stats.TotalBans, stats.TotalBans))
+	return b.String()
 }
 
 func topCountsHTML(rows []db.ReportCount, nameHeader string) string {
@@ -273,7 +336,7 @@ func protocolHTML(rows []db.ReportCount) string {
 	b.WriteString("<table><tr><th>Protokoll</th><th>Anzahl Sperren</th></tr>")
 	for _, r := range rows {
 		class := protocolClass(r.Name)
-		fmt.Fprintf(&b, `<tr><td><span class="protocol-badge %s">%s</span></td><td>%d</td></tr>`, class, html.EscapeString(r.Name), r.Count)
+		fmt.Fprintf(&b, `<tr><td><span class="protocol-badge %s">%s</span></td><td>%d</td></tr>`, class, html.EscapeString(protocolLabel(r.Name)), r.Count)
 	}
 	b.WriteString("</table>")
 	return b.String()
@@ -332,7 +395,7 @@ func protocolText(rows []db.ReportCount) string {
 	fmt.Fprintf(&b, "  %-20s %s\n", "Protokoll", "Anzahl")
 	fmt.Fprintf(&b, "  %-20s %s\n", strings.Repeat("-", 20), "------")
 	for _, r := range rows {
-		fmt.Fprintf(&b, "  %-20s %d\n", r.Name, r.Count)
+		fmt.Fprintf(&b, "  %-20s %d\n", protocolLabel(r.Name), r.Count)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -391,17 +454,17 @@ func periodOverviewRows(st Store) []overviewRow {
 			label string
 			since time.Time
 			until time.Time
-		}{"Letzte 7 Tage", today.AddDate(0, 0, -7), now},
+		}{"Letzte 7 Tage", today.AddDate(0, 0, -7), today.Add(-time.Second)},
 		struct {
 			label string
 			since time.Time
 			until time.Time
-		}{"Letzte 14 Tage", today.AddDate(0, 0, -14), now},
+		}{"Letzte 14 Tage", today.AddDate(0, 0, -14), today.Add(-time.Second)},
 		struct {
 			label string
 			since time.Time
 			until time.Time
-		}{"Letzte 30 Tage", today.AddDate(0, 0, -30), now},
+		}{"Letzte 30 Tage", today.AddDate(0, 0, -30), today.Add(-time.Second)},
 	)
 	rows := make([]overviewRow, 0, len(defs))
 	for _, d := range defs {
@@ -498,6 +561,12 @@ func reportWindow(interval string, now time.Time) (int64, int64, string) {
 	}
 	start := today.AddDate(0, 0, -days)
 	end := today.Add(-time.Second)
+	if strings.EqualFold(interval, "monthly") {
+		// Immer der vollständige Vormonat, unabhängig von dessen Länge.
+		monthStart := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
+		start = monthStart.AddDate(0, -1, 0)
+		end = monthStart.Add(-time.Second)
+	}
 	if strings.EqualFold(interval, "daily") {
 		return start.Unix(), end.Unix(), label + ": " + start.Format("02.01.2006")
 	}
@@ -516,6 +585,23 @@ func midnight(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
+// abuseReports zählt Meldungen aus der Datenbank. Für den Zeitraum vor der
+// ersten gespeicherten Meldung (ältere Versionen) wird auf das Log zurückgegriffen.
+func abuseReports(c *config.Config, st Store, since, until int64) (int, error) {
+	count, first, err := st.AbuseIPDBReportStats(since, until)
+	if err != nil {
+		return 0, err
+	}
+	logUntil := until
+	if first > 0 && first-1 < logUntil {
+		logUntil = first - 1
+	}
+	if since <= logUntil {
+		count += countAbuseReports(c.LogFile, since, logUntil)
+	}
+	return count, nil
+}
+
 func countAbuseReports(path string, since, until int64) int {
 	f, err := os.Open(path)
 	if err != nil {
@@ -526,16 +612,31 @@ func countAbuseReports(path string, since, until int64) int {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
-		if !strings.Contains(line, "AbuseIPDB:") || !strings.Contains(line, "erfolgreich gemeldet") || len(line) < 21 {
+		if !strings.Contains(line, "AbuseIPDB:") || !strings.Contains(line, "erfolgreich gemeldet") {
 			continue
 		}
-		ts := strings.TrimPrefix(line[:20], "[")
-		t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
-		if err == nil && t.Unix() >= since && t.Unix() <= until {
+		t, ok := logLineTime(line)
+		if ok && t.Unix() >= since && t.Unix() <= until {
 			count++
 		}
 	}
 	return count
+}
+
+// logLineTime liest den Zeitstempel einer Logzeile. Unterstützt werden das
+// Go-Format "2006/01/02 15:04:05 ..." und das alte Bash-Format "[2006-01-02 15:04:05] ...".
+func logLineTime(line string) (time.Time, bool) {
+	var value, layout string
+	switch {
+	case strings.HasPrefix(line, "[") && len(line) >= 20:
+		value, layout = line[1:20], "2006-01-02 15:04:05"
+	case len(line) >= 19:
+		value, layout = line[:19], "2006/01/02 15:04:05"
+	default:
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation(layout, value, time.Local)
+	return t, err == nil
 }
 
 func checkForUpdate() (string, string) {
@@ -639,6 +740,25 @@ func shortTime(value string) string {
 	return value
 }
 
+func protocolLabel(proto string) string {
+	switch strings.ToLower(proto) {
+	case "dns":
+		return "DNS"
+	case "doh":
+		return "DoH"
+	case "dot":
+		return "DoT"
+	case "doq":
+		return "DoQ"
+	case "dnscrypt":
+		return "DNSCrypt"
+	case "n/a":
+		return "ohne Protokoll"
+	default:
+		return proto
+	}
+}
+
 func protocolClass(proto string) string {
 	s := strings.ToLower(proto)
 	switch {
@@ -658,10 +778,16 @@ func protocolClass(proto string) string {
 func reasonClass(reason string) string {
 	s := strings.ToLower(reason)
 	switch {
+	case strings.Contains(s, "watchlist"):
+		return "watchlist"
 	case strings.Contains(s, "subdomain"):
 		return "subdomain-flood"
 	case strings.Contains(s, "external"):
 		return "external"
+	case strings.HasPrefix(s, "geoip"):
+		return "geoip"
+	case s == "manual":
+		return "manual"
 	default:
 		return "rate-limit"
 	}

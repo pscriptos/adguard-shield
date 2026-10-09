@@ -17,14 +17,14 @@ Der Report basiert auf der SQLite-Datenbank:
 | Zeitraum | Start- und Enddatum des Berichtszeitraums |
 | Sperren | Anzahl der Sperren im Zeitraum |
 | Freigaben | Anzahl der Freigaben im Zeitraum |
-| Zeitraum-Schnellübersicht | Heute, gestern, letzte 7/14/30 Tage |
+| Zeitraum-Schnellübersicht | Heute (ab 20 Uhr), gestern, letzte 7/14/30 volle Tage bis gestern |
 | Aktive Sperren | Derzeit aktive Sperren zum Zeitpunkt der Report-Erstellung |
 | Permanente Sperren | Anzahl permanenter Sperren im Zeitraum |
 | AbuseIPDB | Anzahl erfolgreicher AbuseIPDB-Meldungen im Zeitraum |
-| Angriffsarten | Rate-Limit, Subdomain-Flood und externe Blocklist |
-| Top-Clients | Die am häufigsten gesperrten Client-IPs |
-| Top-Domains | Die am häufigsten betroffenen Domains |
-| Protokolle | Verteilung nach DNS, DoH, DoT, DoQ usw. |
+| Angriffsarten | Rate-Limit, Subdomain-Flood, DNS-Flood Watchlist, externe Blocklist, GeoIP, manuell (ggf. Sonstige) mit Anteil und Summe |
+| Top-Clients | Die 10 am häufigsten gesperrten Client-IPs |
+| Top-Domains | Die 10 am häufigsten betroffenen Domains (ohne GeoIP-, Blocklist- und manuelle Sperren) |
+| Protokolle | Verteilung nach DNS, DoH, DoT, DoQ usw.; Sperren ohne Protokoll (GeoIP, Blocklist, manuell) erscheinen als "ohne Protokoll" |
 | Letzte Sperren | Die letzten 10 Sperren im Berichtszeitraum |
 
 ### Templates
@@ -61,6 +61,23 @@ Sie werden ins Binary eingebettet und bei `install` sowie `update` nach `/opt/ad
 | `weekly` | Montags zur Uhrzeit aus `REPORT_TIME` |
 | `biweekly` | Montags in ungeraden ISO-Kalenderwochen zur Uhrzeit aus `REPORT_TIME` |
 | `monthly` | Am 1. des Monats zur Uhrzeit aus `REPORT_TIME` |
+
+### Berichtszeitraum
+
+Der Berichtszeitraum endet immer gestern um 23:59:59, der Tag des Versands zählt also nicht mit.
+
+| Intervall | Berichtszeitraum |
+|---|---|
+| `daily` | Der Vortag |
+| `weekly` | Die letzten 7 vollen Tage |
+| `biweekly` | Die letzten 14 vollen Tage |
+| `monthly` | Der komplette Vormonat (1. bis letzter Tag), unabhängig von der Monatslänge |
+
+Jede Sperre wird genau einer Angriffsart zugeordnet. Die Summe der Angriffsarten entspricht daher immer "Sperren gesamt".
+
+### AbuseIPDB-Zählung
+
+Erfolgreiche AbuseIPDB-Meldungen werden in der Tabelle `abuseipdb_reports` der SQLite-Datenbank gespeichert und bleiben so auch nach einer Logrotation erhalten. Für Zeiträume vor der ersten gespeicherten Meldung (ältere Versionen) wertet der Report zusätzlich die Logdatei aus `LOG_FILE` aus.
 
 ### Formate
 
