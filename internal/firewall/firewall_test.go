@@ -322,10 +322,10 @@ func TestTimeoutClamped(t *testing.T) {
 	if err := fw.AddBatch(context.Background(), []Entry{{IP: "192.0.2.2", Timeout: 1 << 40}, {IP: "192.0.2.3", Timeout: maxIPSetTimeout}}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(ex.calls, "\n"), "ipset add adguard_shield_v4 192.0.2.1 -exist timeout 2147483") {
+	if !strings.Contains(strings.Join(ex.calls, "\n"), "ipset add adguard_shield_v4 192.0.2.1 -exist timeout 0") {
 		t.Fatalf("Add timeout not clamped: %v", ex.calls)
 	}
-	want := "add adguard_shield_v4 192.0.2.2 timeout 2147483\nadd adguard_shield_v4 192.0.2.3 timeout 2147483\n"
+	want := "add adguard_shield_v4 192.0.2.2 timeout 0\nadd adguard_shield_v4 192.0.2.3 timeout 2147483\n"
 	if len(ex.inputs) != 1 || ex.inputs[0] != want {
 		t.Fatalf("AddBatch timeout not clamped: %q", ex.inputs)
 	}

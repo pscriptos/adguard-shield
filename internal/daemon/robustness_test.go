@@ -396,8 +396,8 @@ func TestSyncBlocklistFailureSkipsAutoUnban(t *testing.T) {
 	if err := d.Store.InsertBan(db.Ban{IP: "198.51.100.7", Source: "external-blocklist", Reason: "external-blocklist", Permanent: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SyncBlocklist(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := d.SyncBlocklist(context.Background()); err == nil || !strings.Contains(err.Error(), "1 von 2 Quellen fehlgeschlagen") {
+		t.Fatalf("partial failure must be reported: %v", err)
 	}
 	if ok, _ := d.Store.BanExists("198.51.100.7"); !ok {
 		t.Fatal("auto-unban must be skipped while a source is unavailable")

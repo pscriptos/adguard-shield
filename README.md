@@ -172,7 +172,7 @@ sudo adguard-shield <befehl>
 
 | Befehl | Beschreibung |
 |---|---|
-| `ban <IP>` | IP-Adresse manuell permanent sperren |
+| `ban <IP>` | IP-Adresse oder CIDR-Netz manuell permanent sperren |
 | `unban <IP>` | Sperre für eine IP-Adresse aufheben |
 | `flush` | Alle aktiven Sperren aufheben |
 
@@ -327,6 +327,7 @@ DNS-relevante Ports (53, 443, 853) werden für gesperrte Clients blockiert
 | Docker-Installationen | [docs/docker.md](docs/docker.md) | Firewall-Modi für klassische Installation, Docker Host Network und Docker Bridge |
 | Benachrichtigungen | [docs/benachrichtigungen.md](docs/benachrichtigungen.md) | Einrichtung von Ntfy, Discord, Slack, Gotify und Generic Webhooks |
 | E-Mail Report | [docs/report.md](docs/report.md) | Report-Inhalte, Mailversand, Cron-Job und manuelle Tests |
+| Web-Statusseite | [docs/webinterface.md](docs/webinterface.md) | Optionale, schreibgeschützte Statusseite mit Live-Ansicht, Basic Auth und Reverse-Proxy-Beispielen |
 | Updates | [docs/update.md](docs/update.md) | Update-Ablauf, Konfigurationsmigration und Migration von der Shell-Version |
 | Tipps & Troubleshooting | [docs/tipps-und-troubleshooting.md](docs/tipps-und-troubleshooting.md) | Diagnosewege für API, Firewall, GeoIP, Reports, Listen und falsche Sperren |
 

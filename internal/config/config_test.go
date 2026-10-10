@@ -238,3 +238,88 @@ func TestLoadNotifyTLSInsecure(t *testing.T) {
 		t.Fatalf("NOTIFY_TLS_INSECURE=true not applied: %v %v", c.NotifyTLSInsecure, c.Warnings)
 	}
 }
+
+func TestLoadWebDefaults(t *testing.T) {
+	c := loadString(t, "ADGUARD_URL=\"https://dns.example\"\n")
+	if c.WebEnabled || c.WebListen != "127.0.0.1:8443" || c.WebBasePath != "/" || c.WebUser != "admin" || c.WebPassword != "" || c.WebTLSCert != "" || c.WebTLSKey != "" {
+		t.Fatalf("unexpected web defaults: %+v", c)
+	}
+	keys := map[string]bool{}
+	for _, k := range KnownKeys() {
+		keys[k] = true
+	}
+	for _, k := range []string{"WEB_ENABLED", "WEB_LISTEN", "WEB_BASE_PATH", "WEB_USER", "WEB_PASSWORD", "WEB_TLS_CERT", "WEB_TLS_KEY"} {
+		if !keys[k] {
+			t.Fatalf("KnownKeys misses %s", k)
+		}
+	}
+}
+
+func TestLoadWebValues(t *testing.T) {
+	c := loadString(t, `WEB_ENABLED=true
+WEB_LISTEN="[::1]:9000"
+WEB_BASE_PATH="adguard-shield"
+WEB_USER="viewer"
+WEB_PASSWORD='p#ss word'
+WEB_TLS_CERT="/etc/ssl/c.pem"
+WEB_TLS_KEY="/etc/ssl/k.pem"
+`)
+	if !c.WebEnabled || c.WebListen != "[::1]:9000" || c.WebBasePath != "/adguard-shield/" || c.WebUser != "viewer" || c.WebPassword != "p#ss word" || c.WebTLSCert != "/etc/ssl/c.pem" || c.WebTLSKey != "/etc/ssl/k.pem" {
+		t.Fatalf("unexpected web values: %+v", c)
+	}
+	if len(c.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", c.Warnings)
+	}
+}
+
+func TestLoadWebListenValidation(t *testing.T) {
+	for _, v := range []string{"8443", "127.0.0.1", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:70000", "127.0.0.1:http", "::1:8443"} {
+		c := loadString(t, "WEB_LISTEN=\""+v+"\"\n")
+		if c.WebListen != DefaultWebListen || !hasWarning(c, "WEB_LISTEN") {
+			t.Errorf("%q: listen=%q warnings=%v", v, c.WebListen, c.Warnings)
+		}
+	}
+	for _, v := range []string{":8443", "0.0.0.0:443", "localhost:8080"} {
+		c := loadString(t, "WEB_LISTEN=\""+v+"\"\n")
+		if c.WebListen != v || len(c.Warnings) != 0 {
+			t.Errorf("%q: listen=%q warnings=%v", v, c.WebListen, c.Warnings)
+		}
+	}
+}
+
+func TestNormalizeBasePath(t *testing.T) {
+	ok := map[string]string{
+		"":                 "/",
+		"/":                "/",
+		"adguard-shield":   "/adguard-shield/",
+		"/adguard-shield":  "/adguard-shield/",
+		"/adguard-shield/": "/adguard-shield/",
+		"//a//b//":         "/a/b/",
+		"/a.b/c_d~e/":      "/a.b/c_d~e/",
+	}
+	for in, want := range ok {
+		if got, valid := NormalizeBasePath(in); !valid || got != want {
+			t.Errorf("%q -> %q (%v), erwartet %q", in, got, valid, want)
+		}
+	}
+	for _, in := range []string{"/../etc", "/a/./b", "/a b", "/a?x", "/a#b", "/ä", `/<script>`, "/a%2f"} {
+		if _, valid := NormalizeBasePath(in); valid {
+			t.Errorf("%q sollte ungültig sein", in)
+		}
+	}
+	c := loadString(t, "WEB_BASE_PATH=\"/../x\"\n")
+	if c.WebBasePath != "/" || !hasWarning(c, "WEB_BASE_PATH") {
+		t.Fatalf("base=%q warnings=%v", c.WebBasePath, c.Warnings)
+	}
+}
+
+func TestLoadWebTLSPairWarning(t *testing.T) {
+	for _, content := range []string{"WEB_TLS_CERT=\"/c.pem\"\n", "WEB_TLS_KEY=\"/k.pem\"\n"} {
+		if c := loadString(t, content); !hasWarning(c, "WEB_TLS_CERT und WEB_TLS_KEY") {
+			t.Errorf("%q: warnings=%v", content, c.Warnings)
+		}
+	}
+	if c := loadString(t, "WEB_USER=\"a:b\"\n"); !hasWarning(c, "WEB_USER") {
+		t.Errorf("Doppelpunkt im Benutzernamen nicht gewarnt: %v", c.Warnings)
+	}
+}

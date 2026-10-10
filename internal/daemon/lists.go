@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,18 +18,21 @@ import (
 	"adguard-shield/internal/firewall"
 )
 
-// collectListEntries lädt alle Listen und liefert die normalisierten IPs/Netze
-// sowie die Zahl der Quellen, die weder geladen noch aus dem Cache gelesen
-// werden konnten.
-func (d *Daemon) collectListEntries(ctx context.Context, urls []string, cacheDir, prefix string) (map[string]bool, int) {
+// collectListEntries lädt alle Listen und liefert die normalisierten IPs/Netze,
+// die Zahl der Quellen, die weder geladen noch aus dem Cache gelesen werden
+// konnten, und die Zahl der Quellen, für die nur der Cache genutzt wurde.
+func (d *Daemon) collectListEntries(ctx context.Context, urls []string, cacheDir, prefix string) (map[string]bool, int, int) {
 	out := map[string]bool{}
-	failed := 0
+	failed, stale := 0, 0
 	for i, u := range urls {
-		lines, err := d.fetchCachedLines(ctx, u, cacheDir, prefix, i)
+		lines, fromCache, err := d.fetchCachedLines(ctx, u, cacheDir, prefix, i)
 		if err != nil {
-			d.warn("%s Download Warnung %s: %v", prefix, u, err)
+			d.warn("%s Download Warnung %s: %v", prefix, listSource(i, u), err)
 			failed++
 			continue
+		}
+		if fromCache {
+			stale++
 		}
 		for _, line := range lines {
 			for _, entry := range parseListEntry(line) {
@@ -37,14 +42,33 @@ func (d *Daemon) collectListEntries(ctx context.Context, urls []string, cacheDir
 			}
 		}
 	}
-	return out, failed
+	return out, failed, stale
+}
+
+// listSource beschreibt eine Listen-URL für Logs ohne Pfad, Query und
+// Zugangsdaten, da diese Tokens enthalten können.
+func listSource(i int, raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Sprintf("Quelle #%d", i+1)
+	}
+	return fmt.Sprintf("Quelle #%d (%s://%s)", i+1, u.Scheme, u.Host)
+}
+
+// listErr entfernt die vollständige URL aus Fehlern von net/http.
+func listErr(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Err != nil {
+		return ue.Err
+	}
+	return err
 }
 
 func (d *Daemon) SyncWhitelist(ctx context.Context) error {
 	if err := os.MkdirAll(d.Config.ExternalWhitelistCacheDir, 0755); err != nil {
 		return err
 	}
-	ips, failed := d.collectListEntries(ctx, d.Config.ExternalWhitelistURLs, d.Config.ExternalWhitelistCacheDir, "whitelist")
+	ips, failed, _ := d.collectListEntries(ctx, d.Config.ExternalWhitelistURLs, d.Config.ExternalWhitelistCacheDir, "whitelist")
 	if failed > 0 {
 		d.warn("Externe Whitelist: %d von %d Quellen nicht verfügbar, bisherige Einträge bleiben erhalten", failed, len(d.Config.ExternalWhitelistURLs))
 		return fmt.Errorf("externe Whitelist: %d Quelle(n) nicht verfügbar", failed)
@@ -105,7 +129,7 @@ func (d *Daemon) SyncBlocklist(ctx context.Context) error {
 	if err := os.MkdirAll(d.Config.ExternalBlocklistCacheDir, 0755); err != nil {
 		return err
 	}
-	desired, failed := d.collectListEntries(ctx, d.Config.ExternalBlocklistURLs, d.Config.ExternalBlocklistCacheDir, "blocklist")
+	desired, failed, stale := d.collectListEntries(ctx, d.Config.ExternalBlocklistURLs, d.Config.ExternalBlocklistCacheDir, "blocklist")
 	for entry := range desired {
 		if !blockableTarget(entry) {
 			d.warn("Externe Blocklist: Eintrag %s wird ignoriert", entry)
@@ -192,6 +216,9 @@ func (d *Daemon) SyncBlocklist(ctx context.Context) error {
 		}
 	}
 	d.info("Externe Blocklist synchronisiert: %d IPs/Netze, %d neu gesperrt", len(desired), len(added))
+	if n := failed + stale; n > 0 {
+		return fmt.Errorf("%d von %d Quellen fehlgeschlagen (Cache genutzt bzw. übersprungen)", n, len(d.Config.ExternalBlocklistURLs))
+	}
 	return nil
 }
 
@@ -222,14 +249,17 @@ func previewList(items []string, n int) string {
 	return strings.Join(items[:n], ", ") + ", ..."
 }
 
-func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, prefix string, index int) ([]string, error) {
+// fetchCachedLines lädt eine Liste; fromCache meldet, dass der Download
+// fehlschlug und stattdessen der Cache genutzt wurde.
+func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, prefix string, index int) (lines []string, fromCache bool, err error) {
 	cacheFile := filepath.Join(cacheDir, fmt.Sprintf("%s_%d.txt", prefix, index))
 	etagFile := filepath.Join(cacheDir, fmt.Sprintf("%s_%d.etag", prefix, index))
 	tmpFile := filepath.Join(cacheDir, fmt.Sprintf("%s_%d.tmp", prefix, index))
+	src := listSource(index, sourceURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, listErr(err)
 	}
 	if etag, err := os.ReadFile(etagFile); err == nil {
 		if value := strings.TrimSpace(string(etag)); value != "" {
@@ -238,43 +268,44 @@ func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, pref
 	}
 	resp, err := d.Client.Do(req)
 	if err != nil {
+		err = listErr(err)
 		if b, readErr := os.ReadFile(cacheFile); readErr == nil {
-			d.warn("%s Download fehlgeschlagen, nutze Cache: %v", prefix, err)
-			return strings.Split(string(b), "\n"), nil
+			d.warn("%s Download fehlgeschlagen, nutze Cache: %s: %v", prefix, src, err)
+			return strings.Split(string(b), "\n"), true, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotModified {
-		d.debug("%s Liste unverändert: %s", prefix, sourceURL)
+		d.debug("%s Liste unverändert: %s", prefix, src)
 		b, err := os.ReadFile(cacheFile)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return strings.Split(string(b), "\n"), nil
+		return strings.Split(string(b), "\n"), false, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if b, readErr := os.ReadFile(cacheFile); readErr == nil {
-			d.warn("%s Download HTTP %d, nutze Cache: %s", prefix, resp.StatusCode, sourceURL)
-			return strings.Split(string(b), "\n"), nil
+			d.warn("%s Download HTTP %d, nutze Cache: %s", prefix, resp.StatusCode, src)
+			return strings.Split(string(b), "\n"), true, nil
 		}
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, false, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20))
 	if err != nil {
-		return nil, err
+		return nil, false, listErr(err)
 	}
 	if err := os.WriteFile(tmpFile, b, 0644); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if etag := resp.Header.Get("ETag"); etag != "" {
 		_ = os.WriteFile(etagFile, []byte(etag+"\n"), 0644)
 	}
 	if err := os.Rename(tmpFile, cacheFile); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	d.debug("%s Liste aktualisiert: %s (%d Bytes)", prefix, sourceURL, len(b))
-	return strings.Split(string(b), "\n"), nil
+	d.debug("%s Liste aktualisiert: %s (%d Bytes)", prefix, src, len(b))
+	return strings.Split(string(b), "\n"), false, nil
 }
 
 func parseListEntry(line string) []string {

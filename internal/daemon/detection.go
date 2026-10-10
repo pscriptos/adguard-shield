@@ -26,12 +26,16 @@ func (d *Daemon) pollOnce(ctx context.Context) error {
 	d.mu.Unlock()
 	entries, err := d.fetchQueryLogSince(ctx, d.analysisCutoff(time.Now()), seenUntil)
 	if err != nil {
+		d.mu.Lock()
+		d.lastPollErr, d.lastPollErrAt = err.Error(), time.Now()
+		d.mu.Unlock()
 		return err
 	}
 	events := d.toEvents(entries)
 	var geoIPs []string
 	geoSet := map[string]bool{}
 	d.mu.Lock()
+	d.lastPollAt, d.lastPollEntries = time.Now(), len(entries)
 	if d.seen == nil {
 		d.seen = map[string]time.Time{}
 	}

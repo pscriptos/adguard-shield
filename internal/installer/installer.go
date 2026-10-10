@@ -758,6 +758,17 @@ GEOIP_LICENSE_KEY=""                # MaxMind GeoLite2 Key (optional, für Auto-
 GEOIP_MMDB_PATH=""                  # Manueller DB-Pfad (optional, hat Vorrang)
 GEOIP_CACHE_TTL=86400               # GeoIP-Cache in Sekunden (0 = kein Ablauf)
 
+# --- Web-Statusseite (optional) ---
+# Schreibgeschützte Statusseite (nur Anzeige, keine Aktionen). Zugriff z.B. per SSH-Tunnel:
+#   ssh -L 8443:127.0.0.1:8443 root@server  ->  http://127.0.0.1:8443/
+WEB_ENABLED=false
+WEB_LISTEN="127.0.0.1:8443"         # host:port; Standard nur lokal (Loopback)
+WEB_BASE_PATH="/"                   # Basispfad hinter Reverse-Proxy, z.B. "/adguard-shield/"
+WEB_USER="admin"
+WEB_PASSWORD=""                     # leer = ohne Anmeldung (nur lokal empfohlen); gesetzt = HTTP Basic Auth
+WEB_TLS_CERT=""                     # Zertifikat (PEM); mit WEB_TLS_KEY zusammen = HTTPS
+WEB_TLS_KEY=""                      # Privater Schlüssel (PEM)
+
 # --- Erweiterte Einstellungen ---
 STATE_DIR="/var/lib/adguard-shield"  # SQLite-DB: ${STATE_DIR}/adguard-shield.db
 PID_FILE="/var/run/adguard-shield.pid"

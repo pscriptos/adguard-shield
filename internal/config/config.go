@@ -3,7 +3,9 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -100,6 +102,14 @@ type Config struct {
 	GeoIPMMDBPath      string
 	GeoIPCacheTTL      int64
 	GeoIPCheckInterval int
+
+	WebEnabled  bool
+	WebListen   string
+	WebBasePath string
+	WebUser     string
+	WebPassword string
+	WebTLSCert  string
+	WebTLSKey   string
 }
 
 func Load(path string) (*Config, error) {
@@ -199,8 +209,23 @@ func load(values map[string]string) (*Config, *reader) {
 	c.GeoIPMMDBPath = r.str("GEOIP_MMDB_PATH", "")
 	c.GeoIPCacheTTL = int64(r.intMin("GEOIP_CACHE_TTL", 86400, 0))
 	c.GeoIPCheckInterval = r.intMin("GEOIP_CHECK_INTERVAL", 0, 0)
+	c.WebEnabled = r.bool("WEB_ENABLED", false)
+	c.WebListen = r.listen("WEB_LISTEN", DefaultWebListen)
+	c.WebBasePath = r.basePath("WEB_BASE_PATH", "/")
+	c.WebUser = r.str("WEB_USER", "admin")
+	c.WebPassword = r.str("WEB_PASSWORD", "")
+	c.WebTLSCert = strings.TrimSpace(r.str("WEB_TLS_CERT", ""))
+	c.WebTLSKey = strings.TrimSpace(r.str("WEB_TLS_KEY", ""))
+	if strings.Contains(c.WebUser, ":") {
+		r.warnf("WEB_USER=%q enthält einen Doppelpunkt; Basic Auth erlaubt das nicht, eine Anmeldung ist so nicht möglich", c.WebUser)
+	}
+	if (c.WebTLSCert == "") != (c.WebTLSKey == "") {
+		r.warnf("WEB_TLS_CERT und WEB_TLS_KEY müssen gemeinsam gesetzt sein; die Web-Statusseite wird nicht gestartet")
+	}
 	return c, r
 }
+
+const DefaultWebListen = "127.0.0.1:8443"
 
 // Muss zu firewall.normalizeMode passen.
 var firewallModes = []string{"host", "classic", "native", "docker-host", "docker", "docker-bridge", "docker-published", "published", "hybrid", "both"}
@@ -441,4 +466,58 @@ func portNumber(s string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// listen prüft eine Adresse der Form host:port (host darf leer sein).
+func (r *reader) listen(k, def string) string {
+	v, ok := r.lookup(k)
+	v = strings.TrimSpace(v)
+	if !ok || v == "" {
+		return def
+	}
+	if _, port, err := net.SplitHostPort(v); err != nil {
+		r.warnf("%s=%q ist keine gültige Adresse (host:port), verwende Standardwert %s", k, v, def)
+		return def
+	} else if _, ok := portNumber(port); !ok {
+		r.warnf("%s=%q enthält keinen gültigen Port (1-65535), verwende Standardwert %s", k, v, def)
+		return def
+	}
+	return v
+}
+
+// basePath normalisiert einen URL-Pfad auf führenden und abschließenden Slash.
+func (r *reader) basePath(k, def string) string {
+	v, ok := r.lookup(k)
+	v = strings.TrimSpace(v)
+	if !ok || v == "" {
+		return def
+	}
+	if p, ok := NormalizeBasePath(v); ok {
+		return p
+	}
+	r.warnf("%s=%q ist kein gültiger Pfad (erlaubt: Buchstaben, Ziffern, - _ . ~ /), verwende Standardwert %s", k, v, def)
+	return def
+}
+
+// NormalizeBasePath liefert p mit führendem und abschließendem Slash.
+func NormalizeBasePath(p string) (string, bool) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "/", true
+	}
+	for _, c := range p {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_.~/", c)) {
+			return "", false
+		}
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." {
+			return "", false
+		}
+	}
+	p = path.Clean("/" + p)
+	if p != "/" {
+		p += "/"
+	}
+	return p, true
 }

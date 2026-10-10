@@ -53,6 +53,16 @@ type Daemon struct {
 	geoSeen    map[string]time.Time
 	lastNewest time.Time
 
+	// Für die Web-Statusseite, geschützt durch mu.
+	startedAt       time.Time
+	lastPollAt      time.Time
+	lastPollEntries int
+	lastPollErr     string
+	lastPollErrAt   time.Time
+
+	jobMu sync.Mutex
+	jobs  map[string]jobRun
+
 	wlMu      sync.RWMutex
 	wl        *whitelist
 	wlOnce    sync.Once
@@ -127,6 +137,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if d.LogFile != nil && d.Config.LogMaxSizeMB > 0 {
 		d.LogFile.SetMaxBytes(int64(d.Config.LogMaxSizeMB) << 20)
 	}
+	d.mu.Lock()
+	d.startedAt = time.Now()
+	d.mu.Unlock()
 	d.info("AdGuard Shield Go-Daemon gestartet")
 	for _, w := range d.Config.Warnings {
 		d.warn("Konfiguration: %s", w)
@@ -139,6 +152,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.stopNotifier(notifyDrainTimeout)
 		d.NotifyServiceStop(context.Background())
 	}()
+	stopWeb := d.startWeb(ctx)
+	defer stopWeb()
 	if err := d.FW.Setup(ctx); err != nil {
 		d.warn("Firewall Setup Warnung: %v", err)
 	}
@@ -207,7 +222,9 @@ func (d *Daemon) runJob(ctx context.Context, name string, enabled bool, interval
 	go func() {
 		d.info("Worker %s gestartet (Intervall: %s)", name, interval)
 		if runNow {
-			if err := fn(ctx); err != nil {
+			err := fn(ctx)
+			d.recordJob(name, err)
+			if err != nil {
 				d.error("%s Fehler: %v", name, err)
 			} else {
 				d.debug("%s Lauf abgeschlossen", name)
@@ -221,7 +238,9 @@ func (d *Daemon) runJob(ctx context.Context, name string, enabled bool, interval
 				d.info("Worker %s gestoppt", name)
 				return
 			case <-t.C:
-				if err := fn(ctx); err != nil {
+				err := fn(ctx)
+				d.recordJob(name, err)
+				if err != nil {
 					d.error("%s Fehler: %v", name, err)
 				} else {
 					d.debug("%s Lauf abgeschlossen", name)

@@ -39,6 +39,21 @@ Nach Änderungen:
 sudo systemctl restart adguard-shield
 ```
 
+### Zustellung im Hintergrund
+
+Im Daemon werden Benachrichtigungen asynchron über eine Warteschlange versendet. Ein langsamer oder nicht erreichbarer Benachrichtigungsdienst bremst dadurch weder das Querylog-Polling noch das Setzen von Sperren.
+
+| Aspekt | Verhalten |
+|---|---|
+| Warteschlange | Bis zu 256 ausstehende Nachrichten |
+| Überlauf | Weitere Nachrichten werden verworfen; im Log erscheint `Benachrichtigungs-Warteschlange voll, verwerfe ...` (WARN) |
+| Zeitlimit pro Nachricht | 30 Sekunden (inklusive PTR-Lookup für den Hostnamen) |
+| Beenden des Dienstes | Ausstehende Nachrichten werden noch bis zu 10 Sekunden lang abgearbeitet; danach wird „Service gestoppt“ gesendet |
+| Start des Dienstes | „Service gestartet“ wird direkt beim Start gesendet, noch bevor die Warteschlange läuft |
+| CLI-Befehle | `ban`, `unban`, `flush`, `geoip-flush`, `blocklist-flush`, `blocklist-sync` usw. senden synchron, der Befehl wartet also auf den Versand |
+
+Bei einem Dauerangriff mit sehr vielen neuen Sperren können deshalb einzelne Benachrichtigungen fehlen. Maßgeblich bleiben History (`history`) und Log.
+
 ---
 
 ## Ntfy
@@ -345,6 +360,9 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 | Zertifikat | Gültiges TLS-Zertifikat am Ziel? Sonst `NOTIFY_TLS_INSECURE=true` (siehe unten) |
 | Firewall | Keine Firewall blockiert ausgehende Verbindungen? |
 | Modul-Schalter | `EXTERNAL_BLOCKLIST_NOTIFY` oder `GEOIP_NOTIFY` separat deaktiviert? |
+| Warteschlange | Meldet das Log `Benachrichtigungs-Warteschlange voll`? Dann kamen mehr als 256 Nachrichten auf einmal (siehe [Zustellung im Hintergrund](#zustellung-im-hintergrund)) |
+
+Fehlgeschlagene Zustellungen erscheinen als WARN mit `Benachrichtigung fehlgeschlagen (<Typ>/<Aktion>): ...` im Log, z.B. mit `HTTP 401` bei ungültigem Token oder `x509: certificate signed by unknown authority` bei selbstsigniertem Zertifikat.
 
 Bei `generic` kannst du testweise einen lokalen HTTP-Empfänger oder einen Request-Inspector verwenden, um den gesendeten Payload zu sehen.
 

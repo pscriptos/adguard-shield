@@ -57,6 +57,24 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 | Konfiguration geändert, aber ohne Wirkung | `sudo systemctl restart adguard-shield` ausführen; `systemctl reload` lädt die Konfiguration nicht neu |
 | Warnungen zur Konfiguration im Log | Tippfehler oder ungültige Werte; betroffene Parameter nutzen den Standardwert (siehe [Konfiguration](konfiguration.md#prüfung-beim-laden)) |
 
+### Warnungen zur Konfiguration
+
+Ungültige Werte stoppen den Dienst nicht. AdGuard Shield verwendet stattdessen den Standardwert und meldet das beim Start im Log (`Konfiguration: ...`) sowie bei jedem CLI-Befehl als `WARNUNG:` auf stderr:
+
+```text
+WARNUNG: RATE_LIMIT_WINDOW="abc" ist keine gültige Zahl, verwende Standardwert 60
+WARNUNG: BAN_HISTORY_FILE wird ignoriert (History liegt in der SQLite-Datenbank)
+```
+
+| Warnung | Lösung |
+|---|---|
+| Unbekannter Schlüssel | Tippfehler im Parameternamen korrigieren |
+| Keine gültige Zahl / kein gültiger Wahrheitswert | Wert korrigieren (`true`/`false`, Zahlen ohne Einheit) |
+| Veralteter Schlüssel der Shell-Version | Zeile aus der Konfiguration löschen |
+| Ungültige Ports in `BLOCKED_PORTS` | Nur Portnummern `1`–`65535` oder Bereiche `a:b` verwenden |
+
+Nach der Korrektur `sudo systemctl restart adguard-shield` ausführen. Mit `sudo adguard-shield status` lässt sich schnell prüfen, ob noch Warnungen ausgegeben werden.
+
 ### Nützliche Prüfbefehle
 
 ```bash
@@ -126,6 +144,16 @@ sudo adguard-shield logs --level debug --limit 100
 | Proxy/Forwarder maskiert echte Client-IPs | AdGuard Home sieht nur die Forwarder-IP; Forwarder whitelisten |
 | Querylog enthält die Anfragen nicht | In AdGuard Home prüfen, ob Querylog aktiviert ist |
 | `DRY_RUN=true` ist gesetzt | In der Konfiguration auf `false` setzen |
+
+### Warnung „Limit von 20 Seiten erreicht“
+
+Pro Poll lädt AdGuard Shield das Querylog seitenweise (je `API_QUERY_LIMIT` Einträge), bis bereits ausgewertete Einträge oder der Beginn des Analysefensters erreicht sind, höchstens aber 20 Seiten. Erscheint im Log
+
+```text
+Querylog: Limit von 20 Seiten erreicht, ältere Einträge werden nicht ausgewertet
+```
+
+kamen zwischen zwei Polls mehr als `20 × API_QUERY_LIMIT` Anfragen an. Ein Teil davon wird dann nicht ausgewertet. Abhilfe: `API_QUERY_LIMIT` erhöhen (z.B. `2000`) und/oder `CHECK_INTERVAL` verkürzen. Die Warnung wird höchstens alle 5 Minuten wiederholt; bei einem kurzen Flood ist sie unkritisch.
 
 **Wichtig bei Proxies und Forwardern:** Wenn AdGuard Home nur eine einzige interne IP sieht (z.B. die IP eines Routers oder Reverse Proxy), zählt AdGuard Shield auch nur diese IP. In solchen Setups muss die Architektur geprüft oder der Forwarder gewhitelistet werden.
 
@@ -222,7 +250,7 @@ sudo adguard-shield status
 sudo adguard-shield history 100
 ```
 
-Temporäre Sperren werden beim Start und während jedes Pollings auf Ablauf geprüft. Wenn eine Sperre als permanent angezeigt wird, wird sie nicht automatisch freigegeben.
+Temporäre Sperren werden beim Start und danach minütlich auf Ablauf geprüft. Zusätzlich entfernt der Kernel temporäre Einträge über den ipset-Timeout selbst aus der Firewall. Wenn eine Sperre als permanent angezeigt wird, wird sie nicht automatisch freigegeben.
 
 ### Permanente Sperren (gewollt)
 
@@ -232,7 +260,8 @@ Temporäre Sperren werden beim Start und während jedes Pollings auf Ablauf gepr
 | Progressive-Ban auf Maximalstufe | Eskalation durch wiederholte Verstöße |
 | Manuelle `ban`-Sperren | Manuell gesetzt, manuell aufheben |
 | GeoIP-Sperren | Permanent bis Konfigurationsänderung |
-| Externe Blocklist mit `BAN_DURATION=0` | Permanent bis IP aus Liste entfernt |
+| Externe Blocklist mit `EXTERNAL_BLOCKLIST_BAN_DURATION=0` | Permanent bis IP aus Liste entfernt |
+| Monitor-Sperren mit `BAN_DURATION=0` | Rate-Limit- und Subdomain-Flood-Sperren sind dann immer permanent |
 
 ### Manuell freigeben
 
@@ -284,6 +313,22 @@ sudo adguard-shield whitelist-sync
 | Hostname nicht auflösbar | DNS-Auflösung prüfen, ggf. alternativen Hostnamen verwenden |
 | Einträge enthalten Ports oder URLs | Nur IPs, CIDR-Netze und Hostnamen werden unterstützt |
 | DNS liefert `0.0.0.0` | AdGuard blockiert den Host; Ausnahme in AdGuard Home einrichten |
+| Log meldet „zu breite Netze werden ignoriert“ | `/0`, IPv4 kürzer als `/8` und IPv6 kürzer als `/16` werden bewusst nicht übernommen; kleinere Netze eintragen |
+| Sync bricht mit Fehler ab, Whitelist bleibt alt | Mindestens eine Quelle ist nicht erreichbar und nicht im Cache; die bisherige Whitelist bleibt absichtlich erhalten. URL prüfen und `whitelist-sync` wiederholen |
+
+### Sicherheitsbremse: Freigabe abgebrochen
+
+Würde eine Whitelist-Synchronisation auf einen Schlag mehr als 50 % der aktiven Sperren (und mehr als 100 Sperren) aufheben, bricht AdGuard Shield die Freigabe ab und schreibt einen ERROR ins Log:
+
+```text
+Externe Whitelist: Freigabe von 812 der 1000 aktiven Sperren abgebrochen (Sicherheitsbremse, mehr als 50%); Whitelist ist aktiv, bitte Listen prüfen
+```
+
+Die neue Whitelist ist trotzdem aktiv, verhindert also neue Sperren; nur die bestehenden Sperren bleiben stehen. Typische Ursache ist eine fehlerhafte oder zu weit gefasste Liste. Vorgehen:
+
+1. Listeninhalt prüfen (`sudo adguard-shield whitelist-status` und die Quell-URLs).
+2. Ist die Liste fehlerhaft: Liste korrigieren, danach `sudo adguard-shield whitelist-sync`.
+3. Ist die Freigabe gewollt: betroffene Sperren gezielt mit `unban` aufheben oder mit `flush` alle Sperren aufheben.
 
 ### Erwartetes Listenformat
 
@@ -361,7 +406,8 @@ sudo adguard-shield geoip-flush
 | Zu viele Länder gesperrt | `GEOIP_MODE` und `GEOIP_COUNTRIES` prüfen |
 | Allowlist sperrt fast alles | Im Allowlist-Modus sind nur genannte Länder erlaubt; alle anderen werden gesperrt |
 | Datenbank nicht gefunden | `GEOIP_LICENSE_KEY` oder `GEOIP_MMDB_PATH` setzen |
-| Datenbank veraltet | `geoip-flush-cache` und Service neu starten |
+| Datenbank veraltet | Wird täglich automatisch erneuert und ohne Neustart übernommen (Worker `geoip-refresh`); für sofortige Übernahme `geoip-flush-cache` und Service neu starten |
+| Log meldet `geoip-refresh Fehler` | Download fehlgeschlagen (z.B. ungültiger `GEOIP_LICENSE_KEY` oder kein Internetzugang); die ältere Datenbank wird weiter genutzt |
 
 ### Ländercodes nachschlagen
 
@@ -425,9 +471,41 @@ sudo adguard-shield logs --level warn --limit 100
 | Ntfy-Topic | Nicht leer? |
 | Token | Gültig und nicht abgelaufen? |
 | Netzwerk | Ausgehende HTTPS-Verbindungen möglich? |
+| TLS-Zertifikat | Gültiges Zertifikat am Ziel? Siehe unten |
 | Modul-Schalter | `EXTERNAL_BLOCKLIST_NOTIFY` und `GEOIP_NOTIFY` separat prüfen |
+| Warteschlange voll | Bei sehr vielen Sperren auf einmal werden Nachrichten über 256 verworfen (WARN im Log) |
+
+### TLS-Fehler bei Benachrichtigungen
+
+Seit v1.2.0 prüfen Benachrichtigungen das TLS-Zertifikat des Ziels. Bei einem selbst gehosteten Dienst (ntfy, Gotify, eigener Webhook) mit selbstsigniertem Zertifikat erscheint im Log z.B.:
+
+```text
+Benachrichtigung fehlgeschlagen (ntfy/ban): ... x509: certificate signed by unknown authority
+```
+
+Lösung: ein gültiges Zertifikat einsetzen (z.B. Let's Encrypt) oder für dieses interne Ziel die Prüfung abschalten:
+
+```bash
+NOTIFY_TLS_INSECURE=true
+```
+
+Danach `sudo systemctl restart adguard-shield`. Die Einstellung gilt nur für Benachrichtigungen, nicht für AbuseIPDB, externe Listen oder den MaxMind-Download. Details stehen in [Benachrichtigungen](benachrichtigungen.md#tls-zertifikate).
 
 Bei `generic` Webhook kannst du testweise einen lokalen HTTP-Empfänger oder einen Request-Inspector (z.B. webhook.site) verwenden, um den gesendeten Payload zu sehen.
+
+---
+
+## Logdatei und Rotation
+
+Die Logdatei (`LOG_FILE`, Standard `/var/log/adguard-shield.log`) wird ab `LOG_MAX_SIZE_MB` (Standard `50`) automatisch rotiert: Die aktuelle Datei wird nach `adguard-shield.log.1` verschoben und eine neue Datei begonnen. Es gibt genau ein Backup; ein älteres `.1` wird dabei ersetzt.
+
+| Beobachtung | Erklärung |
+|---|---|
+| `adguard-shield.log` ist plötzlich fast leer | Rotation hat stattgefunden; ältere Einträge stehen in `adguard-shield.log.1` |
+| `logs` zeigt ältere Einträge nicht mehr | `logs` und `logs-follow` lesen nur die aktuelle Datei; ältere Einträge mit `sudo less /var/log/adguard-shield.log.1` ansehen |
+| Log wächst unbegrenzt | `LOG_MAX_SIZE_MB=0` deaktiviert die Rotation; Wert größer als `0` setzen und Dienst neu starten |
+
+Soll stattdessen ein externes `logrotate` die Datei verwalten, `LOG_MAX_SIZE_MB=0` setzen und in logrotate `copytruncate` verwenden, da der Daemon die Logdatei dauerhaft geöffnet hält.
 
 ---
 
@@ -460,7 +538,7 @@ sudo sqlite3 /var/lib/adguard-shield/adguard-shield.db \
 
 ```bash
 sudo sqlite3 /var/lib/adguard-shield/adguard-shield.db \
-  "SELECT ip, source FROM whitelist_cache ORDER BY ip;"
+  "SELECT ip_address, source FROM whitelist_cache ORDER BY ip_address;"
 ```
 
 ### GeoIP-Cache

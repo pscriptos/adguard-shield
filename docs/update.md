@@ -42,7 +42,7 @@ Was automatisch passiert:
 | Bereich | Änderung |
 |---|---|
 | Datenbank | Schema-Migration auf Version 2 (nur zusätzliche Indizes). v1.1.3 kann die Datenbank weiterhin lesen. |
-| Konfiguration | Neue Parameter `ADGUARD_TLS_INSECURE` und `NOTIFY_TLS_INSECURE` werden ergänzt, vorhandene Werte bleiben unverändert. Die bisherige Datei liegt danach als `adguard-shield.conf.old` vor (eine ältere `.old` wird dabei ersetzt). |
+| Konfiguration | Neue Parameter `ADGUARD_TLS_INSECURE`, `NOTIFY_TLS_INSECURE`, `LOG_MAX_SIZE_MB`, `BAN_HISTORY_RETENTION_DAYS` und die `WEB_*`-Parameter der optionalen [Web-Statusseite](webinterface.md) (standardmäßig aus) werden ergänzt (sofern noch nicht vorhanden), vorhandene Werte bleiben unverändert. Die bisherige Datei liegt danach als `adguard-shield.conf.old` vor (eine ältere `.old` wird dabei ersetzt). |
 | systemd-Unit | Wird neu geschrieben, `ExecReload` entfällt. |
 | Firewall | Beim Start werden alle Sperren aus der Datenbank per `ipset restore` übernommen. Permanente Sperren, die durch einen Fehler in älteren Versionen nach `BAN_DURATION` aus dem ipset gefallen waren, sind danach wieder aktiv. |
 
@@ -55,6 +55,9 @@ Was du prüfen solltest:
 | Logrotation | `LOG_MAX_SIZE_MB` (Standard 50) wird jetzt ausgewertet: Das Log wird nach `adguard-shield.log.1` rotiert. |
 | `BLOCKED_PORTS` | Kommas sind jetzt erlaubt, ungültige Ports werden mit Warnung ignoriert. Port-Namen wie `domain` werden nicht mehr akzeptiert – bitte Portnummern verwenden. |
 | `systemctl reload` | Wird nicht mehr unterstützt; nach Änderungen an der Konfiguration `systemctl restart adguard-shield` verwenden. |
+| Subdomain-Flood | Die Basisdomain wird jetzt über die Public Suffix List bestimmt. Hosts unter Plattform-Suffixen wie `github.io` oder `cloudfront.net` zählen als eigene Basisdomains und lösen dadurch seltener Subdomain-Flood-Sperren aus. |
+| Whitelist-Netze | Zu breite Netze (`/0`, IPv4 kürzer als `/8`, IPv6 kürzer als `/16`) werden in `WHITELIST` und externen Whitelists ignoriert und mit Warnung gemeldet. |
+| Benachrichtigungen | Werden im Daemon jetzt asynchron über eine Warteschlange (256 Einträge) versendet; bei Überlauf werden einzelne Nachrichten verworfen (WARN im Log). |
 
 Rollback: Dienst stoppen, Binary und Datenbank aus dem Backup zurückkopieren (`-wal`/`-shm` der neuen Version vorher löschen), `systemctl daemon-reload`, Dienst starten.
 

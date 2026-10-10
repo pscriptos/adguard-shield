@@ -362,3 +362,26 @@ func TestQueryLogLimitWarningRateLimited(t *testing.T) {
 		t.Fatal("warning must be logged again after 5 minutes")
 	}
 }
+
+func TestUnbanNormalizesInputAndRejectsMissingBan(t *testing.T) {
+	d, _ := newTestDaemon(t, &config.Config{})
+	ctx := context.Background()
+	if err := d.Ban(ctx, BanRequest{IP: "2001:db8::1", Domain: "manual", Reason: "manual", Source: "manual", Permanent: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UnbanQuiet(ctx, "2001:DB8:0::1", "manual"); err != nil {
+		t.Fatalf("unban with non-canonical IPv6 failed: %v", err)
+	}
+	if ok, _ := d.Store.BanExists("2001:db8::1"); ok {
+		t.Fatal("ban still active after unban")
+	}
+	if n := countHistory(t, d.Store, "2001:db8::1", "UNBAN"); n != 1 {
+		t.Fatalf("UNBAN history rows = %d, want 1", n)
+	}
+	if err := d.UnbanQuiet(ctx, "2001:db8::1", "manual"); err == nil {
+		t.Fatal("unban of missing ban returned no error")
+	}
+	if n := countHistory(t, d.Store, "2001:db8::1", "UNBAN"); n != 1 {
+		t.Fatalf("missing ban wrote history: %d UNBAN rows", n)
+	}
+}

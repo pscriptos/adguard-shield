@@ -175,8 +175,14 @@ func (f *Firewall) Add(ctx context.Context, ip string, timeout int64) error {
 // maxIPSetTimeout ist der groesste Timeout-Wert, den ipset akzeptiert.
 const maxIPSetTimeout = 2147483
 
+// clampTimeout liefert 0 (ohne Ablauf) fuer Werte ueber dem ipset-Maximum. Die
+// Sperre wird dann vom Ablauf-Job anhand der Datenbank rechtzeitig aufgehoben,
+// statt nach ~24,8 Tagen vorzeitig aus dem ipset zu fallen.
 func clampTimeout(t int64) int64 {
-	return min(t, maxIPSetTimeout)
+	if t > maxIPSetTimeout {
+		return 0
+	}
+	return t
 }
 
 func addArgs(set, ip string, timeout int64) []string {

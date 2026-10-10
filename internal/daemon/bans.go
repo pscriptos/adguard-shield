@@ -108,23 +108,59 @@ func (d *Daemon) UnbanQuiet(ctx context.Context, ip, reason string) error {
 // erfolgt außerhalb. FW.Del läuft auch bei abgebrochenem ctx (SIGTERM), damit
 // kein ipset-Eintrag ohne Datenbankzeile zurückbleibt.
 func (d *Daemon) unban(ctx context.Context, ip, reason string, notify bool) error {
+	raw := ip
+	if n, ok := normalizeTarget(ip); ok {
+		ip = n
+	}
 	delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), firewallDelTimeout)
 	defer cancel()
 	d.banMu.Lock()
 	_ = d.FW.Del(delCtx, ip)
-	err := d.Store.DeleteBan(ip)
-	if err == nil {
-		_ = d.Store.History("UNBAN", ip, "-", "-", "-", "-", reason)
+	stored, exists, err := d.storedBanIP(ip, raw)
+	if err == nil && exists {
+		err = d.Store.DeleteBan(stored)
+		if err == nil {
+			_ = d.Store.History("UNBAN", stored, "-", "-", "-", "-", reason)
+		}
 	}
 	d.banMu.Unlock()
 	if err != nil {
 		return err
+	}
+	if !exists {
+		return fmt.Errorf("keine aktive Sperre für %s gefunden", ip)
 	}
 	if notify {
 		d.notifyUnban(ip, reason)
 	}
 	d.info("UNBAN %s (%s)", ip, reason)
 	return nil
+}
+
+// storedBanIP sucht die Schreibweise, unter der eine Sperre gespeichert ist.
+// Ältere Versionen haben Adressen nicht normalisiert (z.B. "2001:DB8::0001",
+// "::ffff:192.0.2.5" oder "10.0.0.1/8"); solche Zeilen werden über die
+// Rohform oder, falls nötig, über einen Abgleich aller Sperren gefunden.
+func (d *Daemon) storedBanIP(norm, raw string) (string, bool, error) {
+	exists, err := d.Store.BanExists(norm)
+	if err != nil || exists {
+		return norm, exists, err
+	}
+	if raw != norm {
+		if exists, err = d.Store.BanExists(raw); err != nil || exists {
+			return raw, exists, err
+		}
+	}
+	bans, err := d.Store.ActiveBans()
+	if err != nil {
+		return norm, false, err
+	}
+	for _, b := range bans {
+		if b.IP != norm && canonicalOrRaw(b.IP) == norm {
+			return b.IP, true, nil
+		}
+	}
+	return norm, false, nil
 }
 
 func (d *Daemon) AutoUnbanGeoIP(ctx context.Context) error {

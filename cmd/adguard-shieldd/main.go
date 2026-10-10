@@ -55,6 +55,9 @@ func run() error {
 		return uninstallCommand(args)
 	case "install-status":
 		return installStatusCommand(args)
+	case "help", "-h", "--help":
+		usage()
+		return nil
 	}
 	cfg, err := config.Load(confPath)
 	if err != nil {

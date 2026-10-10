@@ -14,6 +14,7 @@ AdGuard Shield ist ein Go-Daemon, der das Query Log von AdGuard Home auswertet, 
 | [Docker-Installationen](docker.md) | Firewall-Modi für klassische Installation, Docker Host Network und veröffentlichte Docker-Ports |
 | [Benachrichtigungen](benachrichtigungen.md) | Einrichtung von Ntfy, Discord, Slack, Gotify und Generic Webhooks mit Beispielinhalten |
 | [E-Mail Report](report.md) | Report-Inhalte, Formate, Mailversand, Cron-Job und manuelle Tests |
+| [Web-Statusseite](webinterface.md) | Optionale, schreibgeschützte Statusseite: Einrichtung, Absicherung, SSH-Tunnel und Reverse-Proxy |
 | [Update-Anleitung](update.md) | Update der Go-Version, Konfigurationsmigration und Migration von alten Shell-Installationen |
 | [Tipps & Troubleshooting](tipps-und-troubleshooting.md) | Diagnosewege für API, Firewall, GeoIP, Reports, externe Listen und falsch gesetzte Sperren |
 

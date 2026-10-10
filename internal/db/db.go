@@ -301,6 +301,19 @@ func (s *Store) CountActiveBans() (int, error) {
 	return count, err
 }
 
+// CountPermanentActiveBans zählt Sperren ohne Ablauf (wie banUntil in der Anzeige).
+func (s *Store) CountPermanentActiveBans() (int, error) {
+	var count int
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM active_bans WHERE COALESCE(is_permanent,0) <> 0 OR COALESCE(ban_until_epoch,0) <= 0`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountWhitelist() (int, error) {
+	var count int
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM whitelist_cache`).Scan(&count)
+	return count, err
+}
+
 func (s *Store) BansBySource(source string) ([]Ban, error) {
 	return s.queryBans(`WHERE source=?`, source)
 }
