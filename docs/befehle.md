@@ -474,6 +474,8 @@ AdGuard Shield schreibt Daemon-Ereignisse in `LOG_FILE`, standardmäßig:
 /var/log/adguard-shield.log
 ```
 
+Ab `LOG_MAX_SIZE_MB` (Standard `50`) wird die Datei nach `adguard-shield.log.1` rotiert (ein Backup).
+
 ### CLI-Befehle
 
 ```bash

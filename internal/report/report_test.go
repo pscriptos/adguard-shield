@@ -1,6 +1,8 @@
 package report
 
 import (
+	"io"
+	"mime/quotedprintable"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -281,5 +283,66 @@ func TestPeriodOverviewUsesFullDaysUntilYesterday(t *testing.T) {
 	}
 	if byLabel["Gestern"] != 1 || byLabel["Letzte 7 Tage"] != 2 || byLabel["Letzte 14 Tage"] != 3 || byLabel["Letzte 30 Tage"] != 3 {
 		t.Fatalf("unexpected overview: %#v", byLabel)
+	}
+}
+
+func TestBuildMessageQuotedPrintable(t *testing.T) {
+	body := "<html><body>" + strings.Repeat(`<tr><td class="ip-cell">192.0.2.1</td><td>Größe = 100 %</td></tr>`, 60) + "</body></html>\nZeile mit Leerzeichen am Ende   \nletzte Zeile"
+	for _, format := range []string{"html", "txt"} {
+		msg, err := buildMessage("shield@example.test", "admin@example.test", "AdGuard Shield Wochenbericht – Test", body, format, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		header, encoded, ok := strings.Cut(msg, "\n\n")
+		if !ok {
+			t.Fatalf("no header/body separator\n%s", msg)
+		}
+		if !strings.Contains(header, "\nContent-Transfer-Encoding: quoted-printable\n") || strings.Contains(header, "8bit") {
+			t.Fatalf("missing quoted-printable header\n%s", header)
+		}
+		wantType := "text/plain; charset=UTF-8"
+		if format == "html" {
+			wantType = "text/html; charset=UTF-8"
+		}
+		if !strings.Contains(header, "Content-Type: "+wantType) {
+			t.Fatalf("unexpected content type\n%s", header)
+		}
+		for i, line := range strings.Split(msg, "\n") {
+			if len(line) > 998 {
+				t.Fatalf("line %d has %d chars", i+1, len(line))
+			}
+			if strings.HasSuffix(line, "\r") {
+				t.Fatalf("line %d has CRLF, want LF only", i+1)
+			}
+		}
+		decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(encoded)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(decoded) != body {
+			t.Fatalf("decoded body differs\n got: %q\nwant: %q", decoded, body)
+		}
+	}
+}
+
+func TestGenerateDoesNotReplacePlaceholdersInValues(t *testing.T) {
+	t.Setenv("ADGUARD_SHIELD_SKIP_UPDATE_CHECK", "true")
+	store, err := db.Open(filepath.Join(t.TempDir(), "report.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ts := midnight(time.Now()).AddDate(0, 0, -1).Add(time.Hour)
+	if _, err := store.DB.Exec(`INSERT INTO ban_history (timestamp_epoch, timestamp_text, action, client_ip, domain, count, duration, protocol, reason) VALUES (?, ?, 'BAN', '192.0.2.1', '{{HOSTNAME}}.example', '1', '600s', 'dns', 'rate-limit')`,
+		ts.Unix(), ts.Format("2006-01-02 15:04:05")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ReportInterval: "weekly", LogFile: filepath.Join(t.TempDir(), "none.log")}
+	txt, err := Generate(cfg, store, "txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(txt, "{{HOSTNAME}}.example") {
+		t.Fatalf("placeholder inside value was replaced\n%s", txt)
 	}
 }

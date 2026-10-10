@@ -60,18 +60,25 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	daemonMode := cmd == "run" || cmd == "start" || cmd == "dry-run"
+	if cmd == "dry-run" {
+		// Vor daemon.New setzen, damit auch die Firewall im Dry-Run-Modus arbeitet.
+		cfg.DryRun = true
+	}
+	if !daemonMode {
+		for _, w := range cfg.Warnings {
+			fmt.Fprintln(os.Stderr, "WARNUNG:", w)
+		}
+	}
 	d, err := daemon.New(cfg)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	ctx, stop := commandContext(d, cmd == "run" || cmd == "start" || cmd == "dry-run")
+	ctx, stop := commandContext(d, daemonMode)
 	defer stop()
 	switch cmd {
 	case "run", "start", "dry-run":
-		if cmd == "dry-run" {
-			cfg.DryRun = true
-		}
 		if err := writePID(cfg.PIDFile); err != nil {
 			return err
 		}
@@ -135,7 +142,7 @@ func run() error {
 		if len(args) < 1 {
 			return fmt.Errorf("Nutzung: adguard-shield ban <IP>")
 		}
-		return d.Ban(ctx, args[0], "manual", 0, "-", "manual", "manual", "", true)
+		return d.Ban(ctx, daemon.BanRequest{IP: args[0], Domain: "manual", Protocol: "-", Reason: "manual", Source: "manual", Permanent: true})
 	case "reset-offenses":
 		ip := ""
 		if len(args) > 0 {
@@ -350,6 +357,9 @@ func printIPWhitelistStatus(d *daemon.Daemon, ip string) {
 		}
 		hits = append(hits, source)
 	}
+	if len(hits) == 0 && d.IsWhitelisted(ip) {
+		hits = append(hits, "Netzbereich")
+	}
 	if len(hits) == 0 {
 		fmt.Println("Whitelist: nein")
 		return
@@ -416,7 +426,11 @@ func printIPHistory(d *daemon.Daemon, ip string, limit int) error {
 }
 
 func status(d *daemon.Daemon) error {
-	bans, err := d.Store.ActiveBans()
+	total, err := d.Store.CountActiveBans()
+	if err != nil {
+		return err
+	}
+	bans, err := d.Store.RecentActiveBans(statusBanLimit)
 	if err != nil {
 		return err
 	}
@@ -426,17 +440,16 @@ func status(d *daemon.Daemon) error {
 	fmt.Printf("GeoIP: %v (%s %v)\n", d.Config.GeoIPEnabled, d.Config.GeoIPMode, d.Config.GeoIPCountries)
 	fmt.Printf("Externe Blocklist: %v (%d URLs)\n", d.Config.ExternalBlocklistEnabled, len(d.Config.ExternalBlocklistURLs))
 	fmt.Printf("Externe Whitelist: %v (%d URLs)\n", d.Config.ExternalWhitelistEnabled, len(d.Config.ExternalWhitelistURLs))
-	fmt.Printf("Aktive Sperren: %d\n", len(bans))
-	limit := min(len(bans), statusBanLimit)
-	for _, b := range bans[:limit] {
+	fmt.Printf("Aktive Sperren: %d\n", total)
+	for _, b := range bans {
 		until := "permanent"
 		if !b.Permanent && b.BanUntil > 0 {
 			until = time.Unix(b.BanUntil, 0).Format("2006-01-02 15:04:05")
 		}
 		fmt.Printf("  %s | %s | %s | %s\n", b.IP, b.Source, b.Reason, until)
 	}
-	if len(bans) > limit {
-		fmt.Printf("  ... %d weitere Sperren. Details mit: adguard-shield ip-status <IP> oder history.\n", len(bans)-limit)
+	if total > len(bans) {
+		fmt.Printf("  ... %d weitere Sperren. Details mit: adguard-shield ip-status <IP> oder history.\n", total-len(bans))
 	}
 	return nil
 }
@@ -486,7 +499,11 @@ func geoipStatus(d *daemon.Daemon) error {
 	fmt.Printf("Aktiv: %v\n", d.Config.GeoIPEnabled)
 	fmt.Printf("Modus: %s\n", d.Config.GeoIPMode)
 	fmt.Printf("Länder: %v\n", d.Config.GeoIPCountries)
-	fmt.Printf("Cache TTL: %ds\n", d.Config.GeoIPCacheTTL)
+	if d.Config.GeoIPCacheTTL > 0 {
+		fmt.Printf("Cache TTL: %ds\n", d.Config.GeoIPCacheTTL)
+	} else {
+		fmt.Println("Cache TTL: kein Ablauf")
+	}
 	fmt.Printf("MMDB: %s\n", empty(d.Config.GeoIPMMDBPath, "<auto/falls License-Key gesetzt>"))
 	bans, err := d.Store.BansByReason("geoip")
 	if err != nil {
@@ -516,19 +533,28 @@ func writePID(path string) error {
 	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0644)
 }
 
-func commandContext(d *daemon.Daemon, notifyServiceStop bool) (context.Context, context.CancelFunc) {
+func commandContext(d *daemon.Daemon, daemonMode bool) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	signals := make(chan os.Signal, 1)
 	done := make(chan struct{})
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	go func() {
-		select {
-		case <-signals:
-			if notifyServiceStop {
-				d.NotifyServiceStop(context.Background())
+		for {
+			select {
+			case sig := <-signals:
+				if sig == syscall.SIGHUP && daemonMode {
+					if d.Logger != nil {
+						d.Logger.Warnf("SIGHUP empfangen: Konfigurationsänderungen erfordern einen Neustart (systemctl restart adguard-shield)")
+					}
+					continue
+				}
+				// Im Daemon-Modus sendet Run die Stopp-Benachrichtigung, nachdem
+				// die Benachrichtigungs-Warteschlange abgearbeitet wurde.
+				cancel()
+				return
+			case <-done:
+				return
 			}
-			cancel()
-		case <-done:
 		}
 	}()
 	return ctx, func() {

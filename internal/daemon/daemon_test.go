@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -335,8 +336,42 @@ func TestBaseDomain(t *testing.T) {
 	if got := baseDomain("a.b.example.com"); got != "example.com" {
 		t.Fatalf("unexpected base domain: %s", got)
 	}
-	if got := baseDomain("a.b.example.co.uk"); got != "example.co.uk" {
-		t.Fatalf("unexpected multipart base domain: %s", got)
+	cases := map[string]string{
+		"a.b.example.co.uk":       "example.co.uk",
+		"x.y.example.com.au":      "example.com.au",
+		"cdn1.foo.github.io":      "foo.github.io",
+		"abc.cloudfront.net":      "abc.cloudfront.net",
+		"x.abc.cloudfront.net":    "abc.cloudfront.net",
+		"Sub.Example.ORG.":        "example.org",
+		"host.lan":                "host.lan",
+		"a.b.c.example.de":        "example.de",
+		"example.com":             "example.com",
+		"com":                     "",
+		"co.uk":                   "",
+		"localhost":               "",
+		"":                        "",
+		"bad..example.com":        "",
+		"1.0.0.10.in-addr.arpa":   "10.in-addr.arpa",
+		"very.deep.a.example.net": "example.net",
+	}
+	for in, want := range cases {
+		if got := baseDomain(in); got != want {
+			t.Errorf("baseDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSubdomainAnalysisSkipsPrivateSuffixAndBaseDomain(t *testing.T) {
+	now := time.Now()
+	var events []queryEvent
+	for i := 0; i < 20; i++ {
+		events = append(events, queryEvent{At: now, Client: "203.0.113.9", Domain: fmt.Sprintf("u%d.github.io", i)})
+		events = append(events, queryEvent{At: now, Client: "203.0.113.9", Domain: fmt.Sprintf("r%d.flood.example", i)})
+	}
+	events = append(events, queryEvent{At: now, Client: "203.0.113.9", Domain: "flood.example"})
+	groups := topSubdomainGroups(events, 60, 10)
+	if len(groups) != 1 || groups[0].Domain != "flood.example" || groups[0].Count != 20 {
+		t.Fatalf("unexpected groups: %+v", groups)
 	}
 }
 
@@ -350,9 +385,8 @@ func TestDryRunDoesNotInsertActiveBan(t *testing.T) {
 		Config: &config.Config{DryRun: true, BanDuration: 60},
 		Store:  store,
 		FW:     firewall.New(firewall.OSExecutor{}, "ADGUARD_SHIELD", []string{"53"}, "host", true),
-		wl:     map[string]bool{},
 	}
-	if err := d.Ban(context.Background(), "1.2.3.4", "example.com", 99, "dns", "rate-limit", "monitor", "", false); err != nil {
+	if err := d.Ban(context.Background(), BanRequest{IP: "1.2.3.4", Domain: "example.com", Count: 99, Protocol: "dns", Reason: "rate-limit", Source: "monitor"}); err != nil {
 		t.Fatal(err)
 	}
 	ok, err := store.BanExists("1.2.3.4")

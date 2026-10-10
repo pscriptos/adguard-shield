@@ -9,6 +9,7 @@ import (
 	"html"
 	"io/fs"
 	"mime"
+	"mime/quotedprintable"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,6 +29,7 @@ var embeddedTemplates embed.FS
 type Store interface {
 	ReportStats(since, until, busiestSince int64, limit int) (db.ReportStats, error)
 	AbuseIPDBReportStats(since, until int64) (int, int64, error)
+	PeriodSummary(since, until int64) (db.ReportStats, error)
 }
 
 const topLimit = 10
@@ -100,10 +102,13 @@ func Generate(c *config.Config, st Store, format string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Ein einziger Durchlauf: Platzhalter in eingesetzten Werten (z. B. Domains)
+	// werden nicht erneut ersetzt, und das Ergebnis hängt nicht von der Map-Reihenfolge ab.
+	pairs := make([]string, 0, 2*len(values))
 	for key, value := range values {
-		tpl = strings.ReplaceAll(tpl, "{{"+key+"}}", value)
+		pairs = append(pairs, "{{"+key+"}}", value)
 	}
-	return tpl, nil
+	return strings.NewReplacer(pairs...).Replace(tpl), nil
 }
 
 func Send(ctx context.Context, c *config.Config, st Store) error {
@@ -139,7 +144,8 @@ func InstallCron(binary, configPath string, c *config.Config) error {
 	}
 	command := shellQuote(binary) + " -config " + shellQuote(configPath) + " report-send"
 	if strings.EqualFold(c.ReportInterval, "biweekly") {
-		command = "[ $(( $(date +\\%V) \\% 2 )) -eq 1 ] && " + command
+		// expr statt $(( )): "08"/"09" wären in der Shell-Arithmetik ungültige Oktalzahlen.
+		command = "[ $(expr $(date +\\%V) \\% 2) -eq 1 ] && " + command
 	}
 	line := fmt.Sprintf(`# AdGuard Shield - Automatischer Report
 # Intervall: %s
@@ -170,27 +176,45 @@ func sendMail(ctx context.Context, c *config.Config, subject, body, format, xMai
 	if _, err := exec.LookPath(parts[0]); err != nil {
 		return fmt.Errorf("Mail-Befehl nicht gefunden: %s", parts[0])
 	}
-	contentType := "text/plain; charset=UTF-8"
-	if strings.EqualFold(format, "html") {
-		contentType = "text/html; charset=UTF-8"
+	msg, err := buildMessage(c.ReportEmailFrom, c.ReportEmailTo, subject, body, format, xMailer)
+	if err != nil {
+		return err
 	}
-	msg := strings.Join([]string{
-		"From: " + c.ReportEmailFrom,
-		"To: " + c.ReportEmailTo,
-		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
-		"MIME-Version: 1.0",
-		"Content-Type: " + contentType,
-		"Content-Transfer-Encoding: 8bit",
-		"X-Mailer: " + xMailer,
-		"",
-		body,
-	}, "\n")
 	args := append(parts[1:], "-t")
 	cmd := exec.CommandContext(ctx, parts[0], args...)
 	cmd.Stdin = strings.NewReader(msg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// buildMessage baut die Mail für "sendmail -t". Der Body wird quoted-printable
+// kodiert, da generierte Tabellen sonst Zeilen über 998 Zeichen erzeugen (RFC 5322).
+// Zeilenenden bleiben LF wie bei den Headern; der MTA wandelt sie in CRLF um.
+func buildMessage(from, to, subject, body, format, xMailer string) (string, error) {
+	contentType := "text/plain; charset=UTF-8"
+	if strings.EqualFold(format, "html") {
+		contentType = "text/html; charset=UTF-8"
+	}
+	var qp strings.Builder
+	w := quotedprintable.NewWriter(&qp)
+	if _, err := w.Write([]byte(body)); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	return strings.Join([]string{
+		"From: " + from,
+		"To: " + to,
+		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
+		"MIME-Version: 1.0",
+		"Content-Type: " + contentType,
+		"Content-Transfer-Encoding: quoted-printable",
+		"X-Mailer: " + xMailer,
+		"",
+		strings.ReplaceAll(qp.String(), "\r\n", "\n"),
+	}, "\n"), nil
 }
 
 func templateValues(c *config.Config, st Store, stats db.ReportStats, period, format string) (map[string]string, error) {
@@ -468,7 +492,7 @@ func periodOverviewRows(st Store) []overviewRow {
 	)
 	rows := make([]overviewRow, 0, len(defs))
 	for _, d := range defs {
-		stats, err := st.ReportStats(d.since.Unix(), d.until.Unix(), d.since.Unix(), 0)
+		stats, err := st.PeriodSummary(d.since.Unix(), d.until.Unix())
 		if err != nil {
 			stats = db.ReportStats{}
 		}

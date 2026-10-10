@@ -26,6 +26,40 @@ sudo journalctl -u adguard-shield --no-pager -n 50
 
 ---
 
+## Update von v1.1.x auf v1.2.0
+
+Das Update läuft wie gewohnt über `sudo ./adguard-shield update`. Datenbank, Sperren und Konfiguration werden übernommen. Vorher solltest du trotzdem ein Backup anlegen:
+
+```bash
+sudo systemctl stop adguard-shield
+sudo mkdir -p /root/adguard-shield-backup
+sudo cp -a /opt/adguard-shield/adguard-shield /opt/adguard-shield/adguard-shield.conf* /root/adguard-shield-backup/
+sudo cp -a /var/lib/adguard-shield/adguard-shield.db* /root/adguard-shield-backup/
+```
+
+Was automatisch passiert:
+
+| Bereich | Änderung |
+|---|---|
+| Datenbank | Schema-Migration auf Version 2 (nur zusätzliche Indizes). v1.1.3 kann die Datenbank weiterhin lesen. |
+| Konfiguration | Neue Parameter `ADGUARD_TLS_INSECURE` und `NOTIFY_TLS_INSECURE` werden ergänzt, vorhandene Werte bleiben unverändert. Die bisherige Datei liegt danach als `adguard-shield.conf.old` vor (eine ältere `.old` wird dabei ersetzt). |
+| systemd-Unit | Wird neu geschrieben, `ExecReload` entfällt. |
+| Firewall | Beim Start werden alle Sperren aus der Datenbank per `ipset restore` übernommen. Permanente Sperren, die durch einen Fehler in älteren Versionen nach `BAN_DURATION` aus dem ipset gefallen waren, sind danach wieder aktiv. |
+
+Was du prüfen solltest:
+
+| Thema | Hinweis |
+|---|---|
+| TLS-Zertifikate | Benachrichtigungen (ntfy, Gotify, Webhooks) und externe Listen prüfen jetzt das TLS-Zertifikat. Nutzt du einen eigenen Server mit selbstsigniertem Zertifikat, schlagen Benachrichtigungen fehl (`Benachrichtigung fehlgeschlagen` im Log). Abhilfe: gültiges Zertifikat oder `NOTIFY_TLS_INSECURE=true`. Für externe Listen gibt es keine Ausnahme – bei Fehlern bleibt die bisherige Whitelist erhalten bzw. der Cache wird genutzt. Die AdGuard-API ist nicht betroffen (`ADGUARD_TLS_INSECURE=true`). |
+| Konfigurations-Warnungen | Ungültige, unbekannte oder veraltete Parameter werden beim Start und bei jedem CLI-Befehl als `WARNUNG` gemeldet (z. B. `BAN_HISTORY_FILE` aus der alten Shell-Version). Ungültige Werte werden durch den Standardwert ersetzt. Veraltete Zeilen kannst du aus der Konfiguration löschen. |
+| Logrotation | `LOG_MAX_SIZE_MB` (Standard 50) wird jetzt ausgewertet: Das Log wird nach `adguard-shield.log.1` rotiert. |
+| `BLOCKED_PORTS` | Kommas sind jetzt erlaubt, ungültige Ports werden mit Warnung ignoriert. Port-Namen wie `domain` werden nicht mehr akzeptiert – bitte Portnummern verwenden. |
+| `systemctl reload` | Wird nicht mehr unterstützt; nach Änderungen an der Konfiguration `systemctl restart adguard-shield` verwenden. |
+
+Rollback: Dienst stoppen, Binary und Datenbank aus dem Backup zurückkopieren (`-wal`/`-shm` der neuen Version vorher löschen), `systemctl daemon-reload`, Dienst starten.
+
+---
+
 ## Neues Binary beziehen
 
 Du brauchst ein fertiges Linux-Binary. Das kann aus einem Release, aus CI oder aus einem lokalen Build kommen.
@@ -34,7 +68,7 @@ Du brauchst ein fertiges Linux-Binary. Das kann aus einem Release, aus CI oder a
 
 ```bash
 curl -fL -o adguard-shield-linux-amd64.tar.gz \
-  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.1.3/adguard-shield-linux-amd64.tar.gz
+  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.2.0/adguard-shield-linux-amd64.tar.gz
 tar -xzf adguard-shield-linux-amd64.tar.gz
 chmod +x ./adguard-shield
 ```
@@ -50,7 +84,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o adguard-shield ./cmd/adguard-s
 ```bash
 docker run --rm -v "$PWD":/src -w /src \
   -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=0 \
-  golang:1.22 go build -o adguard-shield ./cmd/adguard-shieldd
+  golang:1.26.9 go build -o adguard-shield ./cmd/adguard-shieldd
 ```
 
 Auf dem Zielserver muss Go nicht installiert sein, wenn dort nur das fertige Binary ausgeführt wird.

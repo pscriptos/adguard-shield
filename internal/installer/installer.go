@@ -479,6 +479,9 @@ func ensureConfig(opts Options) error {
 		}
 		return nil
 	}
+	if opts.ConfigSource != "" {
+		fmt.Printf("  Hinweis: %s existiert bereits, --config-source %s wird ignoriert (nur fehlende Parameter werden ergaenzt).\n", target, opts.ConfigSource)
+	}
 	current, err := os.ReadFile(target)
 	if err != nil {
 		return err
@@ -564,8 +567,14 @@ func blockKey(block []byte) string {
 }
 
 func writeService(installDir string) error {
-	service := fmt.Sprintf(`[Unit]
+	return os.WriteFile(ServicePath, []byte(serviceUnit(installDir)), 0644)
+}
+
+// serviceUnit muss fuer /opt/adguard-shield adguard-shield.service im Repository entsprechen (siehe installer_test.go).
+func serviceUnit(installDir string) string {
+	return fmt.Sprintf(`[Unit]
 Description=AdGuard Shield - Go DNS Rate-Limit Monitor
+Documentation=https://git.techniverse.net/scriptos/adguard-shield
 After=network.target AdGuardHome.service
 Wants=AdGuardHome.service
 StartLimitBurst=5
@@ -573,25 +582,32 @@ StartLimitIntervalSec=300
 
 [Service]
 Type=simple
-ExecStart=%s/adguard-shield -config %s/adguard-shield.conf run
-ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=%[1]s/adguard-shield -config %[1]s/adguard-shield.conf run
+
+# Neustart-Verhalten
 Restart=on-failure
 RestartSec=30
+
+# Sicherheits-Hardening
 ProtectSystem=full
-ReadWritePaths=/var/log /var/lib/adguard-shield /var/run %s/geoip
+ReadWritePaths=/var/log /var/lib/adguard-shield /var/run %[1]s/geoip
 ProtectHome=true
 NoNewPrivileges=false
 PrivateTmp=true
+
+# iptables benötigt CAP_NET_ADMIN + CAP_NET_RAW
+# Weitere Capabilities für Dateizugriff, Signale und Prozessverwaltung
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_CHOWN
+
+# Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=adguard-shield
 
 [Install]
 WantedBy=multi-user.target
-`, installDir, installDir, installDir)
-	return os.WriteFile(ServicePath, []byte(service), 0644)
+`, installDir)
 }
 
 func run(name string, args ...string) error {
@@ -637,84 +653,115 @@ func IsLegacyError(err error) (*LegacyError, bool) {
 	return nil, false
 }
 
-const defaultConfig = `# AdGuard Shield Konfiguration
+// defaultConfig muss inhaltlich adguard-shield.conf im Repository entsprechen (siehe installer_test.go).
+const defaultConfig = `###############################################################################
+# AdGuard Shield - Konfigurationsdatei
+# Ausführliche Dokumentation: docs/konfiguration.md
+###############################################################################
 
+# --- AdGuard Home API ---
 ADGUARD_URL="https://dns1.domain.com"
 ADGUARD_USER="admin"
 ADGUARD_PASS='changeme'
+ADGUARD_TLS_INSECURE=true           # TLS-Zertifikat der AdGuard-API nicht prüfen (selbstsigniert); gilt nur für die AdGuard-API
 
-RATE_LIMIT_MAX_REQUESTS=30
-RATE_LIMIT_WINDOW=60
-CHECK_INTERVAL=10
-API_QUERY_LIMIT=500
+# --- Rate-Limit ---
+RATE_LIMIT_MAX_REQUESTS=30          # Max. Anfragen pro Domain/Client im Zeitfenster
+RATE_LIMIT_WINDOW=60                # Zeitfenster in Sekunden
+CHECK_INTERVAL=10                   # Prüfintervall in Sekunden
 
+# --- Subdomain-Flood-Erkennung ---
 SUBDOMAIN_FLOOD_ENABLED=true
-SUBDOMAIN_FLOOD_MAX_UNIQUE=50
-SUBDOMAIN_FLOOD_WINDOW=60
+SUBDOMAIN_FLOOD_MAX_UNIQUE=50       # Max. eindeutige Subdomains pro Basisdomain/Client
+SUBDOMAIN_FLOOD_WINDOW=60           # Zeitfenster in Sekunden
 
+# --- DNS-Flood-Watchlist ---
 DNS_FLOOD_WATCHLIST_ENABLED=false
-DNS_FLOOD_WATCHLIST=""
+DNS_FLOOD_WATCHLIST=""              # Kommagetrennt, z.B. "example.com,evil.org"
 
-BAN_DURATION=3600
+# --- Sperr-Einstellungen ---
+BAN_DURATION=3600                   # Basis-Sperrdauer in Sekunden (0 = permanent)
 IPTABLES_CHAIN="ADGUARD_SHIELD"
-BLOCKED_PORTS="53 443 853"
-FIREWALL_BACKEND="ipset"
-FIREWALL_MODE="host"
-DRY_RUN=false
+BLOCKED_PORTS="53 443 853"          # DNS(53), DoH(443), DoT/DoQ(853)
+FIREWALL_BACKEND="ipset"            # Daemon: ipset + iptables (schneller als Einzelregeln)
+FIREWALL_MODE="host"                # host/docker-host, docker-bridge oder hybrid
 
+# --- Whitelist ---
+# IPs die niemals gesperrt werden (kommagetrennt)
 WHITELIST="127.0.0.1,::1"
 
+# --- Logging ---
 LOG_FILE="/var/log/adguard-shield.log"
-LOG_LEVEL="INFO"
-STATE_DIR="/var/lib/adguard-shield"
-PID_FILE="/var/run/adguard-shield.pid"
+LOG_LEVEL="INFO"                    # DEBUG, INFO, WARN, ERROR
+LOG_MAX_SIZE_MB=50                  # Log-Rotation ab dieser Größe nach LOG_FILE.1 (0 = keine Rotation)
 
+# --- Benachrichtigungen ---
 NOTIFY_ENABLED=false
-NOTIFY_TYPE="ntfy"
-NOTIFY_WEBHOOK_URL=""
+NOTIFY_TYPE="ntfy"                  # ntfy, discord, slack, gotify, generic
+NOTIFY_WEBHOOK_URL=""               # Webhook-URL (nicht für ntfy)
+NOTIFY_TLS_INSECURE=false           # true = TLS-Zertifikat des Benachrichtigungsziels nicht prüfen (nur selbstsigniert/intern)
+
+# Ntfy-Einstellungen (nur bei NOTIFY_TYPE="ntfy")
 NTFY_SERVER_URL="https://ntfy.sh"
 NTFY_TOPIC=""
 NTFY_TOKEN=""
-NTFY_PRIORITY="4"
+NTFY_PRIORITY="4"                   # 1=min, 3=default, 5=max
 
+# --- E-Mail Report ---
 REPORT_ENABLED=false
-REPORT_INTERVAL="weekly"
+REPORT_INTERVAL="weekly"            # daily, weekly, biweekly, monthly
 REPORT_TIME="08:00"
 REPORT_EMAIL_TO="admin@example.com"
 REPORT_EMAIL_FROM="adguard-shield@example.com"
-REPORT_FORMAT="html"
+REPORT_FORMAT="html"                # html, txt
 REPORT_MAIL_CMD="msmtp"
-REPORT_BUSIEST_DAY_RANGE=30
+REPORT_BUSIEST_DAY_RANGE=30         # Tage für "Aktivster Tag" (0 = nur Berichtszeitraum)
 
+# --- Externe Whitelist ---
+# Externe Whitelist-Dateien mit Domains/IPs; Domains werden per DNS aufgelöst
 EXTERNAL_WHITELIST_ENABLED=false
-EXTERNAL_WHITELIST_URLS=""
-EXTERNAL_WHITELIST_INTERVAL=300
+EXTERNAL_WHITELIST_URLS=""          # URL(s) kommagetrennt
+EXTERNAL_WHITELIST_INTERVAL=300     # Prüfintervall in Sekunden
 EXTERNAL_WHITELIST_CACHE_DIR="/var/lib/adguard-shield/external-whitelist"
 
+# --- Externe Blocklist ---
 EXTERNAL_BLOCKLIST_ENABLED=false
-EXTERNAL_BLOCKLIST_URLS=""
-EXTERNAL_BLOCKLIST_INTERVAL=300
-EXTERNAL_BLOCKLIST_BAN_DURATION=0
+EXTERNAL_BLOCKLIST_URLS=""          # URL(s) kommagetrennt
+EXTERNAL_BLOCKLIST_INTERVAL=300     # Prüfintervall in Sekunden
+EXTERNAL_BLOCKLIST_BAN_DURATION=0   # 0 = permanent bis IP aus Liste entfernt
 EXTERNAL_BLOCKLIST_AUTO_UNBAN=true
-EXTERNAL_BLOCKLIST_NOTIFY=false
+EXTERNAL_BLOCKLIST_NOTIFY=false     # Bei großen Listen auf false lassen
 EXTERNAL_BLOCKLIST_CACHE_DIR="/var/lib/adguard-shield/external-blocklist"
 
+# --- Progressive Sperren (Recidive) ---
+# Wiederholungstäter werden stufenweise länger gesperrt
 PROGRESSIVE_BAN_ENABLED=true
-PROGRESSIVE_BAN_MULTIPLIER=2
-PROGRESSIVE_BAN_MAX_LEVEL=5
-PROGRESSIVE_BAN_RESET_AFTER=86400
+PROGRESSIVE_BAN_MULTIPLIER=2        # Multiplikator pro Stufe (2 = Verdopplung)
+PROGRESSIVE_BAN_MAX_LEVEL=5         # Ab dieser Stufe permanent sperren (0 = nie)
+PROGRESSIVE_BAN_RESET_AFTER=86400   # Zähler-Reset nach X Sekunden ohne Vergehen
 
+# --- AbuseIPDB Reporting ---
+# Meldet nur permanent gesperrte IPs an AbuseIPDB
 ABUSEIPDB_ENABLED=false
 ABUSEIPDB_API_KEY=""
-ABUSEIPDB_CATEGORIES="4"
+ABUSEIPDB_CATEGORIES="4"            # 4 = DDoS Attack (siehe abuseipdb.com/categories)
 
+# --- GeoIP-basierte Länderfilter ---
+# Sperrt/erlaubt DNS-Anfragen nach Herkunftsland (lokale DB, keine Online-API)
 GEOIP_ENABLED=false
-GEOIP_MODE="blocklist"
-GEOIP_COUNTRIES=""
-GEOIP_CHECK_INTERVAL=0
+GEOIP_MODE="blocklist"              # blocklist oder allowlist
+GEOIP_COUNTRIES=""                  # ISO 3166-1 Alpha-2 Codes, z.B. "CN,RU,KP,IR"
+GEOIP_CHECK_INTERVAL=0              # 0 = nutzt CHECK_INTERVAL; sonst eigenes GeoIP-Prüfintervall
 GEOIP_NOTIFY=true
-GEOIP_SKIP_PRIVATE=true
-GEOIP_LICENSE_KEY=""
-GEOIP_MMDB_PATH=""
-GEOIP_CACHE_TTL=86400
+GEOIP_SKIP_PRIVATE=true             # Private IPs ausnehmen
+GEOIP_LICENSE_KEY=""                # MaxMind GeoLite2 Key (optional, für Auto-Download)
+GEOIP_MMDB_PATH=""                  # Manueller DB-Pfad (optional, hat Vorrang)
+GEOIP_CACHE_TTL=86400               # GeoIP-Cache in Sekunden (0 = kein Ablauf)
+
+# --- Erweiterte Einstellungen ---
+STATE_DIR="/var/lib/adguard-shield"  # SQLite-DB: ${STATE_DIR}/adguard-shield.db
+PID_FILE="/var/run/adguard-shield.pid"
+BAN_HISTORY_RETENTION_DAYS=0        # Ban-History/AbuseIPDB-Meldungen nach X Tagen löschen (0 = unbegrenzt)
+API_QUERY_LIMIT=500                 # API-Einträge pro Abfrage (max 5000)
+DRY_RUN=false                       # true = nur loggen, nicht sperren
 `

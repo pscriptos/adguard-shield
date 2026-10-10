@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"adguard-shield/internal/db"
 	"adguard-shield/internal/syslog"
@@ -31,6 +32,7 @@ type liveSnapshot struct {
 	TopPairs        []liveCount
 	SubdomainGroups []liveCount
 	ActiveBans      []db.Ban
+	ActiveBanCount  int
 	Offenses        int
 	ExpiredOffenses int
 	WhitelistCount  int
@@ -99,7 +101,10 @@ func (d *Daemon) liveSnapshot(ctx context.Context, opts LiveOptions) (liveSnapsh
 	snap.TopPairs = topQueryPairs(events, d.Config.RateLimitWindow, opts.Top)
 	snap.SubdomainGroups = topSubdomainGroups(events, d.Config.SubdomainFloodWindow, opts.Top)
 
-	if bans, err := d.Store.ActiveBans(); err == nil {
+	if n, err := d.Store.CountActiveBans(); err == nil {
+		snap.ActiveBanCount = n
+	}
+	if bans, err := d.Store.RecentActiveBans(opts.Top); err == nil {
 		snap.ActiveBans = bans
 	}
 	if n, err := d.Store.CountOffenses(); err == nil {
@@ -257,15 +262,12 @@ func renderLive(w io.Writer, d *Daemon, snap liveSnapshot, snapErr error, opts L
 	if len(snap.ActiveBans) == 0 {
 		fmt.Fprintln(w, "  Keine aktiven Sperren.")
 	} else {
-		maxBans := opts.Top
-		if len(snap.ActiveBans) < maxBans {
-			maxBans = len(snap.ActiveBans)
-		}
+		maxBans := min(opts.Top, len(snap.ActiveBans))
 		for _, b := range snap.ActiveBans[:maxBans] {
 			fmt.Fprintf(w, "  %-39s  %-20s  %-18s  %s\n", trim(b.IP, 39), trim(b.Source, 20), trim(b.Reason, 18), banUntil(b))
 		}
-		if len(snap.ActiveBans) > maxBans {
-			fmt.Fprintf(w, "  ... %d weitere\n", len(snap.ActiveBans)-maxBans)
+		if snap.ActiveBanCount > maxBans {
+			fmt.Fprintf(w, "  ... %d weitere\n", snap.ActiveBanCount-maxBans)
 		}
 	}
 
@@ -281,6 +283,12 @@ func renderLive(w io.Writer, d *Daemon, snap liveSnapshot, snapErr error, opts L
 	}
 }
 
+const logTailChunk = 64 << 10
+
+var logTailMaxRead int64 = 16 << 20
+
+// RecentLogLines liefert die letzten limit Zeilen ab minLevel. Die Datei wird
+// vom Ende her blockweise gelesen (höchstens logTailMaxRead Bytes).
 func RecentLogLines(path, minLevel string, limit int) []string {
 	if strings.EqualFold(strings.TrimSpace(minLevel), "off") || path == "" || limit <= 0 {
 		return nil
@@ -290,27 +298,42 @@ func RecentLogLines(path, minLevel string, limit int) []string {
 		return nil
 	}
 	defer f.Close()
-	min := syslog.ParseLevel(minLevel, syslog.Info)
-	ring := make([]string, limit)
-	count := 0
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		if logLineLevel(line) < min {
-			continue
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	minLvl := syslog.ParseLevel(minLevel, syslog.Info)
+	var rev []string
+	var carry []byte
+	pos := st.Size()
+	read := int64(0)
+	for pos > 0 && len(rev) < limit && read < logTailMaxRead {
+		n := min(int64(logTailChunk), pos)
+		pos -= n
+		read += n
+		buf := make([]byte, n, int(n)+len(carry))
+		if _, err := f.ReadAt(buf, pos); err != nil && err != io.EOF {
+			break
 		}
-		ring[count%limit] = line
-		count++
+		buf = append(buf, carry...)
+		lines := bytes.Split(buf, []byte{'\n'})
+		first := 0
+		carry = nil
+		if pos > 0 {
+			carry = append(carry, lines[0]...)
+			first = 1
+		}
+		for i := len(lines) - 1; i >= first && len(rev) < limit; i-- {
+			line := strings.TrimRight(string(lines[i]), "\r")
+			if line == "" || logLineLevel(line) < minLvl {
+				continue
+			}
+			rev = append(rev, line)
+		}
 	}
-	n := count
-	if n > limit {
-		n = limit
-	}
-	out := make([]string, 0, n)
-	start := count - n
-	for i := 0; i < n; i++ {
-		out = append(out, ring[(start+i)%limit])
+	out := make([]string, len(rev))
+	for i, line := range rev {
+		out[len(rev)-1-i] = line
 	}
 	return out
 }
@@ -366,14 +389,18 @@ func listOrDash(items []string) string {
 	return strings.Join(items, ",")
 }
 
-func trim(s string, max int) string {
-	if len(s) <= max {
+func trim(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
-	if max <= 1 {
-		return s[:max]
+	if n <= 0 {
+		return ""
 	}
-	return s[:max-1] + "~"
+	r := []rune(s)
+	if n == 1 {
+		return string(r[:1])
+	}
+	return string(r[:n-1]) + "~"
 }
 
 func banUntil(b db.Ban) string {

@@ -1,10 +1,10 @@
 # AdGuard Shield CI - Pull Request Tests
-# Runs on every PR to master: format check, vet, build and tests.
+# Runs on every PR to main: format check, vet, build and tests.
 name: PR Tests
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 permissions: read-all
@@ -14,7 +14,7 @@ jobs:
     name: Format, Vet, Build & Test
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26.2-alpine
+      image: golang:1.26.9-alpine
 
     steps:
       - name: Install build dependencies

@@ -23,6 +23,23 @@ sudo systemctl restart adguard-shield
 sudo adguard-shield status
 ```
 
+`systemctl reload` wird nicht unterstützt: Ein `SIGHUP` beendet den Daemon nicht mehr, lädt die Konfiguration aber auch nicht neu, sondern schreibt nur einen Hinweis ins Log.
+
+## Prüfung beim Laden
+
+Ungültige Werte führen nicht zum Abbruch, damit der Schutz weiterläuft. Stattdessen wird der Standardwert verwendet und eine Warnung ausgegeben (im Daemon-Log bzw. bei CLI-Befehlen als `WARNUNG:` auf stderr). Geprüft wird unter anderem:
+
+| Prüfung | Beispiel |
+|---|---|
+| Unbekannte Schlüssel (Tippfehler) | `CHEK_INTERVAL=5` |
+| Nicht lesbare Zahlen oder Wahrheitswerte | `RATE_LIMIT_WINDOW=abc`, `GEOIP_ENABLED=vielleicht` |
+| Werte, die größer als `0` sein müssen | `CHECK_INTERVAL=0`, `RATE_LIMIT_WINDOW=0` |
+| Werte, die nicht negativ sein dürfen | `PROGRESSIVE_BAN_MAX_LEVEL=-1`, `BAN_HISTORY_RETENTION_DAYS=-5`, `BAN_DURATION=-1`, `GEOIP_CACHE_TTL=-1` |
+| Ungültige Ports | `BLOCKED_PORTS="53 abc 70000"` (ungültige Einträge werden ignoriert; ist kein Port gültig, gilt `53 443 853`) |
+| Ungültige Auswahlwerte | `GEOIP_MODE`, `FIREWALL_MODE`, `LOG_LEVEL`, `NOTIFY_TYPE`, `REPORT_FORMAT`, `REPORT_INTERVAL` |
+
+Veraltete Schlüssel der Shell-Version wie `BAN_HISTORY_FILE` werden ignoriert und mit einem eigenen Hinweis gemeldet.
+
 ## Automatische Migration
 
 Beim Installieren oder Aktualisieren wird eine vorhandene Konfiguration nicht überschrieben. Der Installer vergleicht vorhandene Schlüssel mit der aktuellen Standardkonfiguration.
@@ -57,6 +74,7 @@ sudo adguard-shield dry-run
 | `ADGUARD_URL` | `https://dns1.domain.com` | URL der AdGuard-Home-Weboberfläche/API |
 | `ADGUARD_USER` | `admin` | Benutzername für die API-Authentifizierung |
 | `ADGUARD_PASS` | `changeme` | Passwort für die API-Authentifizierung |
+| `ADGUARD_TLS_INSECURE` | `true` | TLS-Zertifikat der AdGuard-Home-API nicht prüfen (z.B. selbstsigniert) |
 
 ### Beispiel: Lokale Instanz
 
@@ -80,7 +98,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 /control/querylog?limit=<API_QUERY_LIMIT>&response_status=all
 ```
 
-**Hinweis:** Der HTTP-Client akzeptiert auch selbstsignierte TLS-Zertifikate. Das erleichtert lokale Setups, ersetzt aber keine saubere Absicherung der AdGuard-Home-Oberfläche.
+**Hinweis:** Mit `ADGUARD_TLS_INSECURE=true` (Standard) akzeptiert AdGuard Shield für die AdGuard-Home-API auch selbstsignierte TLS-Zertifikate. Das erleichtert lokale Setups, ersetzt aber keine saubere Absicherung der AdGuard-Home-Oberfläche. Hat AdGuard Home ein gültiges Zertifikat, sollte `ADGUARD_TLS_INSECURE=false` gesetzt werden. Benachrichtigungen prüfen Zertifikate standardmäßig; nur mit `NOTIFY_TLS_INSECURE=true` werden für das Benachrichtigungsziel auch selbstsignierte Zertifikate akzeptiert. AbuseIPDB, externe Listen und der MaxMind-Download prüfen Zertifikate immer.
 
 ---
 
@@ -89,7 +107,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 | Parameter | Standard | Beschreibung |
 |---|---:|---|
 | `CHECK_INTERVAL` | `10` | Abstand zwischen Querylog-Abfragen in Sekunden |
-| `API_QUERY_LIMIT` | `500` | Anzahl der Querylog-Einträge pro API-Abfrage (max. 5000) |
+| `API_QUERY_LIMIT` | `500` | Seitengröße der Querylog-Abfrage (max. 5000); ist eine Seite voll, werden ältere Seiten nachgeladen (max. 20 pro Poll) |
 
 ### Empfehlungen
 
@@ -97,7 +115,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 |---|---|
 | Normaler Betrieb | `CHECK_INTERVAL=10` ist ein guter Standard |
 | Hohes DNS-Aufkommen | `API_QUERY_LIMIT` auf 1000–2000 erhöhen |
-| `API_QUERY_LIMIT` zu niedrig | Spitzen im Querylog können zwischen zwei Polls verpasst werden |
+| `API_QUERY_LIMIT` zu niedrig | Mehr API-Abfragen pro Poll; ab 20 vollen Seiten werden ältere Einträge nicht mehr ausgewertet (Warnung im Log) |
 | Sehr kurze Intervalle | Erzeugen mehr API-Last auf AdGuard Home |
 
 ---
@@ -183,9 +201,9 @@ Wenn ein Client `login.microsoft.com` über das Rate-Limit bringt, wird sofort p
 
 | Parameter | Standard | Beschreibung |
 |---|---|---|
-| `BAN_DURATION` | `3600` | Basisdauer temporärer Monitor-Sperren in Sekunden (1 Stunde) |
+| `BAN_DURATION` | `3600` | Basisdauer temporärer Monitor-Sperren in Sekunden (1 Stunde, `0` = Monitor-Sperren sind permanent) |
 | `IPTABLES_CHAIN` | `ADGUARD_SHIELD` | Name der eigenen Firewall-Chain |
-| `BLOCKED_PORTS` | `53 443 853` | Ports, die für gesperrte Clients blockiert werden (Leerzeichen-getrennt) |
+| `BLOCKED_PORTS` | `53 443 853` | Ports oder Portbereiche (`a:b`), die für gesperrte Clients blockiert werden (Leerzeichen- oder Komma-getrennt) |
 | `FIREWALL_BACKEND` | `ipset` | Firewall-Backend (ipset + iptables) |
 | `FIREWALL_MODE` | `host` | Verkehrsweg der AdGuard-Home-Installation |
 | `DRY_RUN` | `false` | Konfigurationsweiter Testmodus ohne echte Sperren |
@@ -215,7 +233,7 @@ Details zu den Docker-Modi stehen in [Docker-Installationen](docker.md).
 
 | Parameter | Standard | Beschreibung |
 |---|---|---|
-| `WHITELIST` | `127.0.0.1,::1` | IPs, die nie gesperrt werden (kommagetrennt) |
+| `WHITELIST` | `127.0.0.1,::1` | IPs oder CIDR-Netze (z.B. `192.168.1.0/24`), die nie gesperrt werden (kommagetrennt) |
 
 ### Beispiel
 
@@ -276,6 +294,7 @@ sudo adguard-shield reset-offenses <IP>    # Eine IP zurücksetzen
 |---|---|---|
 | `LOG_FILE` | `/var/log/adguard-shield.log` | Datei für Daemon-Ereignisse |
 | `LOG_LEVEL` | `INFO` | Minimales Log-Level |
+| `LOG_MAX_SIZE_MB` | `50` | Ab dieser Größe wird `LOG_FILE` nach `LOG_FILE.1` rotiert (ein Backup); `0` = keine Rotation |
 
 ### Verfügbare Log-Level
 
@@ -304,6 +323,9 @@ sudo adguard-shield live
 |---|---|---|
 | `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für SQLite-Datenbank und Caches |
 | `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei für direkten Vordergrundlauf |
+| `BAN_HISTORY_RETENTION_DAYS` | `0` | Einträge der Ban-History und AbuseIPDB-Meldungen älter als X Tage werden täglich gelöscht; `0` = unbegrenzt aufbewahren |
+
+Abgelaufene GeoIP-Cache-Einträge (älter als `GEOIP_CACHE_TTL`) werden unabhängig davon regelmäßig entfernt.
 
 ### SQLite-Datei
 
@@ -332,6 +354,7 @@ ${STATE_DIR}/adguard-shield.db
 | `NOTIFY_ENABLED` | `false` | Benachrichtigungen aktivieren |
 | `NOTIFY_TYPE` | `ntfy` | Benachrichtigungskanal |
 | `NOTIFY_WEBHOOK_URL` | leer | Webhook-URL (nicht für ntfy) |
+| `NOTIFY_TLS_INSECURE` | `false` | TLS-Zertifikat des Benachrichtigungsziels nicht prüfen (nur für selbstsignierte/interne Server) |
 | `NTFY_SERVER_URL` | `https://ntfy.sh` | Ntfy-Server |
 | `NTFY_TOPIC` | leer | Ntfy-Topic |
 | `NTFY_TOKEN` | leer | Optionaler Ntfy-Access-Token |
@@ -463,6 +486,9 @@ EXTERNAL_WHITELIST_URLS="https://example.com/a.txt,https://example.net/b.txt"
 - Hostnamen werden per DNS aufgelöst und als IPs in SQLite gespeichert.
 - Aufgelöste IPs werden bei jedem Sync aktualisiert.
 - Bereits aktive Sperren werden aufgehoben, wenn die IP in der Whitelist auftaucht.
+- Zu breite Netze (`/0`, IPv4 kürzer als `/8`, IPv6 kürzer als `/16`, auch als IPv4-mapped IPv6 wie `::ffff:0:0/96`) werden mit Warnung ignoriert.
+- Sicherheitsbremse: Würde ein Sync mehr als 50 % der aktiven Sperren (und mehr als 100) aufheben, wird nur die Whitelist übernommen, die Freigabe aber mit einem ERROR-Logeintrag abgebrochen.
+- Ist der Whitelist-Worker deaktiviert, lädt der Daemon die Whitelist alle 5 Minuten aus der Datenbank neu (z.B. nach `adguard-shield whitelist-sync` über die CLI).
 - Kommentare (`#`) und Inline-Kommentare werden unterstützt.
 
 ---
@@ -565,7 +591,7 @@ ABUSEIPDB_CATEGORIES="4"
 | `GEOIP_SKIP_PRIVATE` | `true` | Private/lokale IPs überspringen |
 | `GEOIP_LICENSE_KEY` | leer | MaxMind-License-Key für automatischen Download |
 | `GEOIP_MMDB_PATH` | leer | Manueller Pfad zur MaxMind-MMDB-Datei (hat Vorrang) |
-| `GEOIP_CACHE_TTL` | `86400` | GeoIP-Cache-Dauer in Sekunden (Standard: 24 Stunden) |
+| `GEOIP_CACHE_TTL` | `86400` | GeoIP-Cache-Dauer in Sekunden (Standard: 24 Stunden, `0` = Einträge laufen nicht ab) |
 
 ### Modi
 

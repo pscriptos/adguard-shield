@@ -4,3 +4,4 @@
 /adguard-shield
 /adguard-shield.exe
 *.test
+/dist/

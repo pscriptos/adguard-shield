@@ -94,8 +94,10 @@ Gesteuert wird das über:
 
 ```bash
 CHECK_INTERVAL=10       # Abstand zwischen Abfragen in Sekunden
-API_QUERY_LIMIT=500     # Maximale Einträge pro API-Abfrage
+API_QUERY_LIMIT=500     # Einträge pro API-Abfrage (Seitengröße)
 ```
+
+Ist eine Seite voll, blättert der Daemon über `older_than` weiter zurück, bis bereits ausgewertete Einträge oder der Beginn des Analysefensters erreicht sind (maximal 20 Seiten pro Poll).
 
 Aus jedem Querylog-Eintrag werden diese Informationen extrahiert:
 
@@ -294,7 +296,7 @@ Der zentrale Zustand liegt standardmäßig hier:
 | Tabelle | Inhalt | Beschreibung |
 |---|---|---|
 | `active_bans` | Aktive Sperren | IP, Grund, Dauer, Quelle, Ablaufzeit, Offense-Level, GeoIP-Metadaten |
-| `ban_history` | Dauerhafte Historie | Zeitstempel, Aktion (BAN/UNBAN/DRY), Client-IP, Domain, Protokoll, Grund |
+| `ban_history` | Dauerhafte Historie | Zeitstempel, Aktion (BAN/UNBAN/DRY), Client-IP, Domain, Protokoll, Grund; optional begrenzt über `BAN_HISTORY_RETENTION_DAYS` |
 | `offense_tracking` | Progressive-Ban-Stufen | Client-IP, aktuelle Offense-Stufe, letzter Verstoß |
 | `whitelist_cache` | Externe Whitelist | Aufgelöste IPs aus externen Whitelist-URLs mit Quellzuordnung |
 | `geoip_cache` | GeoIP-Ergebnisse | IP, Ländercode, Zeitstempel der Abfrage, DB-Änderungszeitpunkt |
@@ -349,9 +351,11 @@ Es gibt in der Go-Version keine separaten Worker-Skripte mehr. Diese Aufgaben la
 | Externe Whitelist | `EXTERNAL_WHITELIST_ENABLED=true` | `EXTERNAL_WHITELIST_INTERVAL` | Lädt Listen, löst Hostnamen auf, aktualisiert Whitelist-Cache |
 | Externe Blocklist | `EXTERNAL_BLOCKLIST_ENABLED=true` | `EXTERNAL_BLOCKLIST_INTERVAL` | Lädt Listen, sperrt neue IPs, hebt entfernte IPs optional auf |
 | Offense-Cleanup | `PROGRESSIVE_BAN_ENABLED=true` | Stündlich | Entfernt abgelaufene Offense-Zähler |
+| Sperren-Ablauf | Immer | Minütlich | Hebt abgelaufene temporäre Sperren auf |
+| DB-Bereinigung | `BAN_HISTORY_RETENTION_DAYS>0` oder `GEOIP_CACHE_TTL>0` | Täglich | Löscht alte History-/AbuseIPDB-Einträge und abgelaufene GeoIP-Cache-Einträge |
 | GeoIP-Lookups | `GEOIP_ENABLED=true` | Mit jedem Poll | Prüft neue öffentliche Client-IPs gegen Länderregeln |
 
-Externe Whitelist und Blocklist laufen sofort beim Start einmalig und danach im jeweiligen Intervall. Die Sperren-Freigabe abgelaufener Bans wird bei jedem Querylog-Poll mit geprüft.
+Externe Whitelist und Blocklist laufen sofort beim Start einmalig und danach im jeweiligen Intervall. Abgelaufene Sperren werden zusätzlich beim Start (Reconcile) freigegeben.
 
 ## Whitelist-Logik
 
@@ -359,7 +363,7 @@ Vor jeder Sperre wird geprüft, ob die IP vertrauenswürdig ist.
 
 **Quellen (in Prüfreihenfolge):**
 
-1. Statische `WHITELIST` aus der Konfiguration (kommagetrennt)
+1. Statische `WHITELIST` aus der Konfiguration (kommagetrennt, IPs und CIDR-Netze)
 2. Aufgelöste IPs aus externen Whitelists (gespeichert in SQLite)
 
 **Verhalten:**
@@ -446,6 +450,8 @@ Es gibt zwei unterschiedliche Blickwinkel auf das Geschehen:
 | Live-Ansicht | Aktuelle Queries, Top-Clients, Sperren, Systemereignisse | `live` |
 
 **Wichtig:** Query-Inhalte werden nicht dauerhaft in die Logdatei geschrieben. Für aktuelle Queries ist die Live-Ansicht (`live`) gedacht.
+
+`LOG_FILE` wird ab `LOG_MAX_SIZE_MB` (Standard `50`) nach `LOG_FILE.1` rotiert; es wird genau ein Backup behalten.
 
 ### History-Gründe
 

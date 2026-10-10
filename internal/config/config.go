@@ -5,16 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Config struct {
 	Path string
+	// Warnings sammelt Konfigurationsprobleme, die beim Laden durch Standardwerte ersetzt wurden.
+	Warnings []string
 
-	AdGuardURL  string
-	AdGuardUser string
-	AdGuardPass string
+	AdGuardURL         string
+	AdGuardUser        string
+	AdGuardPass        string
+	AdGuardTLSInsecure bool
 
 	RateLimitMaxRequests int
 	RateLimitWindow      int
@@ -37,10 +42,13 @@ type Config struct {
 
 	Whitelist []string
 
-	LogFile  string
-	LogLevel string
-	StateDir string
-	PIDFile  string
+	LogFile      string
+	LogLevel     string
+	LogMaxSizeMB int
+	StateDir     string
+	PIDFile      string
+
+	HistoryRetentionDays int
 
 	NotifyEnabled bool
 	NotifyType    string
@@ -49,6 +57,8 @@ type Config struct {
 	NTFYTopic     string
 	NTFYToken     string
 	NTFYPriority  string
+	// NotifyTLSInsecure deaktiviert die Zertifikatsprüfung nur für Benachrichtigungen.
+	NotifyTLSInsecure bool
 
 	ReportEnabled         bool
 	ReportInterval        string
@@ -97,76 +107,107 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Config{Path: path}
-	c.AdGuardURL = stringVal(values, "ADGUARD_URL", "")
-	c.AdGuardUser = stringVal(values, "ADGUARD_USER", "")
-	c.AdGuardPass = stringVal(values, "ADGUARD_PASS", "")
-	c.RateLimitMaxRequests = intVal(values, "RATE_LIMIT_MAX_REQUESTS", 30)
-	c.RateLimitWindow = intVal(values, "RATE_LIMIT_WINDOW", 60)
-	c.CheckInterval = intVal(values, "CHECK_INTERVAL", 10)
-	c.APIQueryLimit = intVal(values, "API_QUERY_LIMIT", 500)
-	c.SubdomainFloodEnabled = boolVal(values, "SUBDOMAIN_FLOOD_ENABLED", true)
-	c.SubdomainFloodMaxUnique = intVal(values, "SUBDOMAIN_FLOOD_MAX_UNIQUE", 50)
-	c.SubdomainFloodWindow = intVal(values, "SUBDOMAIN_FLOOD_WINDOW", 60)
-	c.DNSFloodWatchlistEnabled = boolVal(values, "DNS_FLOOD_WATCHLIST_ENABLED", false)
-	c.DNSFloodWatchlist = csv(values["DNS_FLOOD_WATCHLIST"])
-	c.BanDuration = int64(intVal(values, "BAN_DURATION", 3600))
-	c.Chain = stringVal(values, "IPTABLES_CHAIN", "ADGUARD_SHIELD")
-	c.BlockedPorts = fields(stringVal(values, "BLOCKED_PORTS", "53 443 853"))
-	c.FirewallBackend = stringVal(values, "FIREWALL_BACKEND", "ipset")
-	c.FirewallMode = strings.ToLower(strings.TrimSpace(stringVal(values, "FIREWALL_MODE", "host")))
-	c.DryRun = boolVal(values, "DRY_RUN", false)
+	c, r := load(values)
+	c.Path = path
+	c.Warnings = append(r.warnings, r.unknownKeyWarnings()...)
+	return c, nil
+}
+
+// KnownKeys liefert alle Konfigurationsschlüssel, die Load auswertet.
+func KnownKeys() []string {
+	_, r := load(map[string]string{})
+	keys := make([]string, 0, len(r.used))
+	for k := range r.used {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func load(values map[string]string) (*Config, *reader) {
+	r := &reader{values: values, used: map[string]bool{}}
+	c := &Config{}
+	c.AdGuardURL = r.str("ADGUARD_URL", "")
+	c.AdGuardUser = r.str("ADGUARD_USER", "")
+	c.AdGuardPass = r.str("ADGUARD_PASS", "")
+	c.AdGuardTLSInsecure = r.bool("ADGUARD_TLS_INSECURE", true)
+	c.RateLimitMaxRequests = r.intMin("RATE_LIMIT_MAX_REQUESTS", 30, 1)
+	c.RateLimitWindow = r.intMin("RATE_LIMIT_WINDOW", 60, 1)
+	c.CheckInterval = r.intMin("CHECK_INTERVAL", 10, 1)
+	c.APIQueryLimit = r.intMin("API_QUERY_LIMIT", 500, 1)
+	c.SubdomainFloodEnabled = r.bool("SUBDOMAIN_FLOOD_ENABLED", true)
+	c.SubdomainFloodMaxUnique = r.intMin("SUBDOMAIN_FLOOD_MAX_UNIQUE", 50, 1)
+	c.SubdomainFloodWindow = r.intMin("SUBDOMAIN_FLOOD_WINDOW", 60, 1)
+	c.DNSFloodWatchlistEnabled = r.bool("DNS_FLOOD_WATCHLIST_ENABLED", false)
+	c.DNSFloodWatchlist = csv(r.str("DNS_FLOOD_WATCHLIST", ""))
+	c.BanDuration = int64(r.intMin("BAN_DURATION", 3600, 0))
+	c.Chain = r.str("IPTABLES_CHAIN", "ADGUARD_SHIELD")
+	c.BlockedPorts = r.ports("BLOCKED_PORTS", "53 443 853")
+	c.FirewallBackend = r.str("FIREWALL_BACKEND", "ipset")
+	c.FirewallMode = r.enum("FIREWALL_MODE", "host", strings.ToLower, firewallModes...)
+	c.DryRun = r.bool("DRY_RUN", false)
 	if strings.EqualFold(os.Getenv("DRY_RUN"), "true") || os.Getenv("DRY_RUN") == "1" {
 		c.DryRun = true
 	}
-	c.Whitelist = csv(values["WHITELIST"])
-	c.LogFile = stringVal(values, "LOG_FILE", "/var/log/adguard-shield.log")
-	c.LogLevel = stringVal(values, "LOG_LEVEL", "INFO")
-	c.StateDir = stringVal(values, "STATE_DIR", "/var/lib/adguard-shield")
-	c.PIDFile = stringVal(values, "PID_FILE", "/var/run/adguard-shield.pid")
-	c.NotifyEnabled = boolVal(values, "NOTIFY_ENABLED", false)
-	c.NotifyType = stringVal(values, "NOTIFY_TYPE", "ntfy")
-	c.NotifyWebhook = stringVal(values, "NOTIFY_WEBHOOK_URL", "")
-	c.NTFYServerURL = stringVal(values, "NTFY_SERVER_URL", "https://ntfy.sh")
-	c.NTFYTopic = stringVal(values, "NTFY_TOPIC", "")
-	c.NTFYToken = stringVal(values, "NTFY_TOKEN", "")
-	c.NTFYPriority = stringVal(values, "NTFY_PRIORITY", "4")
-	c.ReportEnabled = boolVal(values, "REPORT_ENABLED", false)
-	c.ReportInterval = stringVal(values, "REPORT_INTERVAL", "weekly")
-	c.ReportTime = stringVal(values, "REPORT_TIME", "08:00")
-	c.ReportEmailTo = stringVal(values, "REPORT_EMAIL_TO", "admin@example.com")
-	c.ReportEmailFrom = stringVal(values, "REPORT_EMAIL_FROM", "adguard-shield@example.com")
-	c.ReportFormat = strings.ToLower(stringVal(values, "REPORT_FORMAT", "html"))
-	c.ReportMailCmd = stringVal(values, "REPORT_MAIL_CMD", "msmtp")
-	c.ReportBusiestDayRange = intVal(values, "REPORT_BUSIEST_DAY_RANGE", 30)
-	c.ExternalWhitelistEnabled = boolVal(values, "EXTERNAL_WHITELIST_ENABLED", false)
-	c.ExternalWhitelistURLs = csv(values["EXTERNAL_WHITELIST_URLS"])
-	c.ExternalWhitelistInterval = intVal(values, "EXTERNAL_WHITELIST_INTERVAL", 300)
-	c.ExternalWhitelistCacheDir = stringVal(values, "EXTERNAL_WHITELIST_CACHE_DIR", filepath.Join(c.StateDir, "external-whitelist"))
-	c.ExternalBlocklistEnabled = boolVal(values, "EXTERNAL_BLOCKLIST_ENABLED", false)
-	c.ExternalBlocklistURLs = csv(values["EXTERNAL_BLOCKLIST_URLS"])
-	c.ExternalBlocklistInterval = intVal(values, "EXTERNAL_BLOCKLIST_INTERVAL", 300)
-	c.ExternalBlocklistCacheDir = stringVal(values, "EXTERNAL_BLOCKLIST_CACHE_DIR", filepath.Join(c.StateDir, "external-blocklist"))
-	c.ExternalBlocklistDuration = int64(intVal(values, "EXTERNAL_BLOCKLIST_BAN_DURATION", 0))
-	c.ExternalBlocklistAutoUnban = boolVal(values, "EXTERNAL_BLOCKLIST_AUTO_UNBAN", true)
-	c.ExternalBlocklistNotify = boolVal(values, "EXTERNAL_BLOCKLIST_NOTIFY", false)
-	c.ProgressiveBanEnabled = boolVal(values, "PROGRESSIVE_BAN_ENABLED", true)
-	c.ProgressiveBanMultiplier = intVal(values, "PROGRESSIVE_BAN_MULTIPLIER", 2)
-	c.ProgressiveBanMaxLevel = intVal(values, "PROGRESSIVE_BAN_MAX_LEVEL", 5)
-	c.ProgressiveBanResetAfter = int64(intVal(values, "PROGRESSIVE_BAN_RESET_AFTER", 86400))
-	c.AbuseIPDBEnabled = boolVal(values, "ABUSEIPDB_ENABLED", false)
-	c.AbuseIPDBAPIKey = stringVal(values, "ABUSEIPDB_API_KEY", "")
-	c.AbuseIPDBCategories = stringVal(values, "ABUSEIPDB_CATEGORIES", "4")
-	c.GeoIPEnabled = boolVal(values, "GEOIP_ENABLED", false)
-	c.GeoIPMode = strings.ToLower(stringVal(values, "GEOIP_MODE", "blocklist"))
-	c.GeoIPCountries = upperCSV(values["GEOIP_COUNTRIES"])
-	c.GeoIPNotify = boolVal(values, "GEOIP_NOTIFY", true)
-	c.GeoIPSkipPrivate = boolVal(values, "GEOIP_SKIP_PRIVATE", true)
-	c.GeoIPLicenseKey = stringVal(values, "GEOIP_LICENSE_KEY", "")
-	c.GeoIPMMDBPath = stringVal(values, "GEOIP_MMDB_PATH", "")
-	c.GeoIPCacheTTL = int64(intVal(values, "GEOIP_CACHE_TTL", 86400))
-	c.GeoIPCheckInterval = intVal(values, "GEOIP_CHECK_INTERVAL", 0)
-	return c, nil
+	c.Whitelist = csv(r.str("WHITELIST", ""))
+	c.LogFile = r.str("LOG_FILE", "/var/log/adguard-shield.log")
+	c.LogLevel = r.enum("LOG_LEVEL", "INFO", strings.ToUpper, "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "ERR")
+	c.LogMaxSizeMB = r.intMin("LOG_MAX_SIZE_MB", 50, 0)
+	c.StateDir = r.str("STATE_DIR", "/var/lib/adguard-shield")
+	c.PIDFile = r.str("PID_FILE", "/var/run/adguard-shield.pid")
+	c.HistoryRetentionDays = r.intMin("BAN_HISTORY_RETENTION_DAYS", 0, 0)
+	c.NotifyEnabled = r.bool("NOTIFY_ENABLED", false)
+	c.NotifyType = r.enum("NOTIFY_TYPE", "ntfy", strings.ToLower, "ntfy", "discord", "slack", "generic", "gotify")
+	c.NotifyWebhook = r.str("NOTIFY_WEBHOOK_URL", "")
+	c.NTFYServerURL = r.str("NTFY_SERVER_URL", "https://ntfy.sh")
+	c.NTFYTopic = r.str("NTFY_TOPIC", "")
+	c.NTFYToken = r.str("NTFY_TOKEN", "")
+	c.NTFYPriority = r.str("NTFY_PRIORITY", "4")
+	c.NotifyTLSInsecure = r.bool("NOTIFY_TLS_INSECURE", false)
+	c.ReportEnabled = r.bool("REPORT_ENABLED", false)
+	c.ReportInterval = r.enum("REPORT_INTERVAL", "weekly", strings.ToLower, "daily", "weekly", "biweekly", "monthly")
+	c.ReportTime = r.str("REPORT_TIME", "08:00")
+	c.ReportEmailTo = r.str("REPORT_EMAIL_TO", "admin@example.com")
+	c.ReportEmailFrom = r.str("REPORT_EMAIL_FROM", "adguard-shield@example.com")
+	c.ReportFormat = r.enum("REPORT_FORMAT", "html", strings.ToLower, "html", "txt")
+	c.ReportMailCmd = r.str("REPORT_MAIL_CMD", "msmtp")
+	c.ReportBusiestDayRange = r.intMin("REPORT_BUSIEST_DAY_RANGE", 30, 0)
+	c.ExternalWhitelistEnabled = r.bool("EXTERNAL_WHITELIST_ENABLED", false)
+	c.ExternalWhitelistURLs = csv(r.str("EXTERNAL_WHITELIST_URLS", ""))
+	c.ExternalWhitelistInterval = r.intMin("EXTERNAL_WHITELIST_INTERVAL", 300, 1)
+	c.ExternalWhitelistCacheDir = r.str("EXTERNAL_WHITELIST_CACHE_DIR", filepath.Join(c.StateDir, "external-whitelist"))
+	c.ExternalBlocklistEnabled = r.bool("EXTERNAL_BLOCKLIST_ENABLED", false)
+	c.ExternalBlocklistURLs = csv(r.str("EXTERNAL_BLOCKLIST_URLS", ""))
+	c.ExternalBlocklistInterval = r.intMin("EXTERNAL_BLOCKLIST_INTERVAL", 300, 1)
+	c.ExternalBlocklistCacheDir = r.str("EXTERNAL_BLOCKLIST_CACHE_DIR", filepath.Join(c.StateDir, "external-blocklist"))
+	c.ExternalBlocklistDuration = int64(r.intMin("EXTERNAL_BLOCKLIST_BAN_DURATION", 0, 0))
+	c.ExternalBlocklistAutoUnban = r.bool("EXTERNAL_BLOCKLIST_AUTO_UNBAN", true)
+	c.ExternalBlocklistNotify = r.bool("EXTERNAL_BLOCKLIST_NOTIFY", false)
+	c.ProgressiveBanEnabled = r.bool("PROGRESSIVE_BAN_ENABLED", true)
+	c.ProgressiveBanMultiplier = r.intMin("PROGRESSIVE_BAN_MULTIPLIER", 2, 1)
+	c.ProgressiveBanMaxLevel = r.intMin("PROGRESSIVE_BAN_MAX_LEVEL", 5, 0)
+	c.ProgressiveBanResetAfter = int64(r.intMin("PROGRESSIVE_BAN_RESET_AFTER", 86400, 0))
+	c.AbuseIPDBEnabled = r.bool("ABUSEIPDB_ENABLED", false)
+	c.AbuseIPDBAPIKey = r.str("ABUSEIPDB_API_KEY", "")
+	c.AbuseIPDBCategories = r.str("ABUSEIPDB_CATEGORIES", "4")
+	c.GeoIPEnabled = r.bool("GEOIP_ENABLED", false)
+	c.GeoIPMode = r.enum("GEOIP_MODE", "blocklist", strings.ToLower, "blocklist", "allowlist")
+	c.GeoIPCountries = upperCSV(r.str("GEOIP_COUNTRIES", ""))
+	c.GeoIPNotify = r.bool("GEOIP_NOTIFY", true)
+	c.GeoIPSkipPrivate = r.bool("GEOIP_SKIP_PRIVATE", true)
+	c.GeoIPLicenseKey = r.str("GEOIP_LICENSE_KEY", "")
+	c.GeoIPMMDBPath = r.str("GEOIP_MMDB_PATH", "")
+	c.GeoIPCacheTTL = int64(r.intMin("GEOIP_CACHE_TTL", 86400, 0))
+	c.GeoIPCheckInterval = r.intMin("GEOIP_CHECK_INTERVAL", 0, 0)
+	return c, r
+}
+
+// Muss zu firewall.normalizeMode passen.
+var firewallModes = []string{"host", "classic", "native", "docker-host", "docker", "docker-bridge", "docker-published", "published", "hybrid", "both"}
+
+// Schlüssel der Shell-Version, die die Go-Version bewusst ignoriert.
+var deprecatedKeys = map[string]string{
+	"BAN_HISTORY_FILE": "BAN_HISTORY_FILE wird ignoriert (History liegt in der SQLite-Datenbank)",
 }
 
 func DefaultPath() string {
@@ -179,8 +220,7 @@ func DefaultPath() string {
 	return filepath.Join(".", "adguard-shield.conf")
 }
 
-func (c *Config) DBPath() string                   { return filepath.Join(c.StateDir, "adguard-shield.db") }
-func (c *Config) GeoIPDir(scriptDir string) string { return filepath.Join(scriptDir, "geoip") }
+func (c *Config) DBPath() string { return filepath.Join(c.StateDir, "adguard-shield.db") }
 
 func parseFile(path string) (map[string]string, error) {
 	f, err := os.Open(path)
@@ -238,25 +278,48 @@ func unquote(s string) string {
 	return s
 }
 
-func stringVal(m map[string]string, k, def string) string {
-	if v, ok := m[k]; ok {
+type reader struct {
+	values   map[string]string
+	used     map[string]bool
+	warnings []string
+}
+
+func (r *reader) warnf(format string, args ...any) {
+	r.warnings = append(r.warnings, fmt.Sprintf(format, args...))
+}
+
+func (r *reader) lookup(k string) (string, bool) {
+	r.used[k] = true
+	v, ok := r.values[k]
+	return v, ok
+}
+
+func (r *reader) str(k, def string) string {
+	if v, ok := r.lookup(k); ok {
 		return v
 	}
 	return def
 }
-func intVal(m map[string]string, k string, def int) int {
-	v, ok := m[k]
+
+func (r *reader) intMin(k string, def, min int) int {
+	v, ok := r.lookup(k)
 	if !ok || strings.TrimSpace(v) == "" {
 		return def
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil {
+		r.warnf("%s=%q ist keine gültige Zahl, verwende Standardwert %d", k, v, def)
+		return def
+	}
+	if n < min {
+		r.warnf("%s=%d ist ungültig (Minimum %d), verwende Standardwert %d", k, n, min, def)
 		return def
 	}
 	return n
 }
-func boolVal(m map[string]string, k string, def bool) bool {
-	v, ok := m[k]
+
+func (r *reader) bool(k string, def bool) bool {
+	v, ok := r.lookup(k)
 	if !ok {
 		return def
 	}
@@ -266,9 +329,45 @@ func boolVal(m map[string]string, k string, def bool) bool {
 	case "false", "0", "no", "off":
 		return false
 	default:
+		r.warnf("%s=%q ist kein gültiger Wahrheitswert (true/false), verwende Standardwert %v", k, v, def)
 		return def
 	}
 }
+
+func (r *reader) enum(k, def string, norm func(string) string, allowed ...string) string {
+	v, ok := r.lookup(k)
+	v = norm(strings.TrimSpace(v))
+	if !ok || v == "" {
+		return def
+	}
+	for _, a := range allowed {
+		if v == a {
+			return v
+		}
+	}
+	r.warnf("%s=%q ist ungültig (erlaubt: %s), verwende Standardwert %s", k, v, strings.Join(allowed, ", "), def)
+	return def
+}
+
+func (r *reader) unknownKeyWarnings() []string {
+	var unknown []string
+	for k := range r.values {
+		if !r.used[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	sort.Strings(unknown)
+	out := make([]string, 0, len(unknown))
+	for _, k := range unknown {
+		if msg, ok := deprecatedKeys[k]; ok {
+			out = append(out, msg)
+			continue
+		}
+		out = append(out, fmt.Sprintf("Unbekannter Konfigurationsschlüssel %s wird ignoriert (Tippfehler?)", k))
+	}
+	return out
+}
+
 func csv(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {
@@ -286,10 +385,60 @@ func upperCSV(s string) []string {
 	}
 	return parts
 }
-func fields(s string) []string {
-	out := strings.Fields(s)
-	if len(out) == 0 {
+
+// ports liest eine Liste aus Ports bzw. Portbereichen (a:b), getrennt durch
+// Kommas oder Leerzeichen. Ungültige Einträge werden mit Warnung ignoriert; ist
+// kein Eintrag gültig, gilt der Standardwert.
+func (r *reader) ports(k, def string) []string {
+	v, ok := r.lookup(k)
+	if !ok {
+		return strings.Fields(def)
+	}
+	parts := strings.FieldsFunc(v, func(c rune) bool { return c == ',' || unicode.IsSpace(c) })
+	if len(parts) == 0 {
 		return []string{"53"}
 	}
+	var out, invalid []string
+	for _, p := range parts {
+		if n, ok := normalizePort(p); ok {
+			out = append(out, n)
+		} else {
+			invalid = append(invalid, p)
+		}
+	}
+	if len(out) == 0 {
+		r.warnf("%s=%q enthält keine gültigen Ports, verwende Standardwert %s", k, v, def)
+		return strings.Fields(def)
+	}
+	if len(invalid) > 0 {
+		r.warnf("%s: ungültige Ports %s werden ignoriert (erlaubt: 1-65535 oder Bereich a:b)", k, strings.Join(invalid, ", "))
+	}
 	return out
+}
+
+func normalizePort(s string) (string, bool) {
+	lo, hi, isRange := strings.Cut(s, ":")
+	a, ok := portNumber(lo)
+	if !ok {
+		return "", false
+	}
+	if !isRange {
+		return strconv.Itoa(a), true
+	}
+	b, ok := portNumber(hi)
+	if !ok || b < a {
+		return "", false
+	}
+	return strconv.Itoa(a) + ":" + strconv.Itoa(b), true
+}
+
+func portNumber(s string) (int, bool) {
+	if s == "" || strings.TrimLeft(s, "0123456789") != "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, false
+	}
+	return n, true
 }

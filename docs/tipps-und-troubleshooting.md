@@ -54,6 +54,8 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 | API nicht erreichbar | Erst AdGuard Home starten |
 | Alte Shell-Artefakte | Go-Installer meldet Konflikte, alte Version deinstallieren |
 | Unit manuell geändert | `sudo systemctl daemon-reload` ausführen |
+| Konfiguration geändert, aber ohne Wirkung | `sudo systemctl restart adguard-shield` ausführen; `systemctl reload` lädt die Konfiguration nicht neu |
+| Warnungen zur Konfiguration im Log | Tippfehler oder ungültige Werte; betroffene Parameter nutzen den Standardwert (siehe [Konfiguration](konfiguration.md#prüfung-beim-laden)) |
 
 ### Nützliche Prüfbefehle
 
@@ -118,7 +120,7 @@ sudo adguard-shield logs --level debug --limit 100
 |---|---|
 | `RATE_LIMIT_MAX_REQUESTS` zu hoch | Grenzwert senken oder `live` beobachten |
 | `RATE_LIMIT_WINDOW` zu kurz | Zeitfenster verlängern |
-| `API_QUERY_LIMIT` zu niedrig | Erhöhen, damit Spitzen nicht verpasst werden |
+| `API_QUERY_LIMIT` zu niedrig | Erhöhen, wenn das Log „Limit von 20 Seiten erreicht“ meldet |
 | Client steht in `WHITELIST` | Whitelist prüfen |
 | Externe Whitelist enthält die IP | `whitelist-status` prüfen |
 | Proxy/Forwarder maskiert echte Client-IPs | AdGuard Home sieht nur die Forwarder-IP; Forwarder whitelisten |
@@ -184,7 +186,7 @@ sudo adguard-shield firewall-status
 ### Direkte Prüfung mit Systembefehlen
 
 ```bash
-# ipsets anzeigen
+# ipsets anzeigen (temporäre Sperren mit timeout, permanente ohne)
 sudo ipset list adguard_shield_v4
 sudo ipset list adguard_shield_v6
 

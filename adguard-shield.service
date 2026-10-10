@@ -9,7 +9,6 @@ StartLimitIntervalSec=300
 [Service]
 Type=simple
 ExecStart=/opt/adguard-shield/adguard-shield -config /opt/adguard-shield/adguard-shield.conf run
-ExecReload=/bin/kill -HUP $MAINPID
 
 # Neustart-Verhalten
 Restart=on-failure
