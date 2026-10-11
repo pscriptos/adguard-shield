@@ -9,13 +9,16 @@ import (
 	"html"
 	"io/fs"
 	"mime"
+	"mime/quotedprintable"
 	"net/http"
+	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"adguard-shield/internal/appinfo"
 	"adguard-shield/internal/config"
@@ -27,7 +30,11 @@ var embeddedTemplates embed.FS
 
 type Store interface {
 	ReportStats(since, until, busiestSince int64, limit int) (db.ReportStats, error)
+	AbuseIPDBReportStats(since, until int64) (int, int64, error)
+	PeriodSummary(since, until int64) (db.ReportStats, error)
 }
+
+const topLimit = 10
 
 const cronPath = "/etc/cron.d/adguard-shield-report"
 
@@ -80,11 +87,14 @@ func Generate(c *config.Config, st Store, format string) (string, error) {
 	format = normalizeFormat(format, c.ReportFormat)
 	since, until, period := reportWindow(c.ReportInterval, time.Now())
 	busiestSince := busiestWindowStart(c, since)
-	stats, err := st.ReportStats(since, until, busiestSince, 20)
+	stats, err := st.ReportStats(since, until, busiestSince, topLimit)
 	if err != nil {
 		return "", err
 	}
-	stats.AbuseIPDBReports = countAbuseReports(c.LogFile, since, until)
+	stats.AbuseIPDBReports, err = abuseReports(c, st, since, until)
+	if err != nil {
+		return "", err
+	}
 
 	tpl, err := loadTemplate(c, format)
 	if err != nil {
@@ -94,10 +104,13 @@ func Generate(c *config.Config, st Store, format string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Ein einziger Durchlauf: Platzhalter in eingesetzten Werten (z. B. Domains)
+	// werden nicht erneut ersetzt, und das Ergebnis hängt nicht von der Map-Reihenfolge ab.
+	pairs := make([]string, 0, 2*len(values))
 	for key, value := range values {
-		tpl = strings.ReplaceAll(tpl, "{{"+key+"}}", value)
+		pairs = append(pairs, "{{"+key+"}}", value)
 	}
-	return tpl, nil
+	return strings.NewReplacer(pairs...).Replace(tpl), nil
 }
 
 func Send(ctx context.Context, c *config.Config, st Store) error {
@@ -120,6 +133,9 @@ func InstallCron(binary, configPath string, c *config.Config) error {
 	if !c.ReportEnabled {
 		return fmt.Errorf("Report ist deaktiviert (REPORT_ENABLED=false)")
 	}
+	if err := ValidateEmailConfig(c); err != nil {
+		return err
+	}
 	minute, hour, err := parseReportTime(c.ReportTime)
 	if err != nil {
 		return err
@@ -133,7 +149,8 @@ func InstallCron(binary, configPath string, c *config.Config) error {
 	}
 	command := shellQuote(binary) + " -config " + shellQuote(configPath) + " report-send"
 	if strings.EqualFold(c.ReportInterval, "biweekly") {
-		command = "[ $(( $(date +\\%V) \\% 2 )) -eq 1 ] && " + command
+		// expr statt $(( )): "08"/"09" wären in der Shell-Arithmetik ungültige Oktalzahlen.
+		command = "[ $(expr $(date +\\%V) \\% 2) -eq 1 ] && " + command
 	}
 	line := fmt.Sprintf(`# AdGuard Shield - Automatischer Report
 # Intervall: %s
@@ -157,6 +174,10 @@ func sendMail(ctx context.Context, c *config.Config, subject, body, format, xMai
 	if strings.TrimSpace(c.ReportEmailTo) == "" {
 		return fmt.Errorf("REPORT_EMAIL_TO ist leer")
 	}
+	msg, err := buildMessage(c.ReportEmailFrom, c.ReportEmailTo, subject, body, format, xMailer)
+	if err != nil {
+		return err
+	}
 	parts := strings.Fields(c.ReportMailCmd)
 	if len(parts) == 0 {
 		return fmt.Errorf("REPORT_MAIL_CMD ist leer")
@@ -164,27 +185,105 @@ func sendMail(ctx context.Context, c *config.Config, subject, body, format, xMai
 	if _, err := exec.LookPath(parts[0]); err != nil {
 		return fmt.Errorf("Mail-Befehl nicht gefunden: %s", parts[0])
 	}
-	contentType := "text/plain; charset=UTF-8"
-	if strings.EqualFold(format, "html") {
-		contentType = "text/html; charset=UTF-8"
-	}
-	msg := strings.Join([]string{
-		"From: " + c.ReportEmailFrom,
-		"To: " + c.ReportEmailTo,
-		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
-		"MIME-Version: 1.0",
-		"Content-Type: " + contentType,
-		"Content-Transfer-Encoding: 8bit",
-		"X-Mailer: " + xMailer,
-		"",
-		body,
-	}, "\n")
 	args := append(parts[1:], "-t")
 	cmd := exec.CommandContext(ctx, parts[0], args...)
 	cmd.Stdin = strings.NewReader(msg)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// ValidateEmailConfig prüft REPORT_EMAIL_FROM und REPORT_EMAIL_TO, damit eine
+// Fehlkonfiguration früh auffällt (z. B. beim Start oder bei report-install).
+// Erlaubt sind eine Absenderadresse und eine oder mehrere kommagetrennte
+// Empfängeradressen, jeweils auch in der Form "Name <adresse@example.com>".
+func ValidateEmailConfig(c *config.Config) error {
+	_, _, err := parseAddresses(c.ReportEmailFrom, c.ReportEmailTo)
+	return err
+}
+
+// parseAddresses validiert Absender und Empfänger und liefert die Header-Werte
+// aus den geparsten Adressen. Da sendmail mit -t läuft, würden per CR/LF
+// eingeschleuste Header (z. B. Bcc:) sonst zu echten Empfängern.
+func parseAddresses(from, to string) (string, string, error) {
+	if err := checkHeaderValue("REPORT_EMAIL_FROM", from); err != nil {
+		return "", "", err
+	}
+	if err := checkHeaderValue("REPORT_EMAIL_TO", to); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(from) == "" {
+		return "", "", fmt.Errorf("REPORT_EMAIL_FROM ist leer")
+	}
+	if strings.TrimSpace(to) == "" {
+		return "", "", fmt.Errorf("REPORT_EMAIL_TO ist leer")
+	}
+	fromAddr, err := mail.ParseAddress(from)
+	if err != nil {
+		return "", "", fmt.Errorf("REPORT_EMAIL_FROM ist keine gueltige E-Mail-Adresse (%q): %v", from, err)
+	}
+	toAddrs, err := mail.ParseAddressList(to)
+	if err != nil {
+		return "", "", fmt.Errorf("REPORT_EMAIL_TO enthaelt keine gueltige E-Mail-Adressliste (%q): %v", to, err)
+	}
+	if len(toAddrs) == 0 {
+		return "", "", fmt.Errorf("REPORT_EMAIL_TO ist leer")
+	}
+	list := make([]string, 0, len(toAddrs))
+	for _, a := range toAddrs {
+		list = append(list, a.String())
+	}
+	return fromAddr.String(), strings.Join(list, ", "), nil
+}
+
+// checkHeaderValue lehnt Steuerzeichen (insbesondere CR/LF) in Header-Werten ab.
+func checkHeaderValue(name, value string) error {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%s enthaelt unzulaessige Steuerzeichen (z. B. Zeilenumbruch): %q", name, value)
+		}
+	}
+	return nil
+}
+
+// buildMessage baut die Mail für "sendmail -t". Der Body wird quoted-printable
+// kodiert, da generierte Tabellen sonst Zeilen über 998 Zeichen erzeugen (RFC 5322).
+// Zeilenenden bleiben LF wie bei den Headern; der MTA wandelt sie in CRLF um.
+// Alle Header-Werte werden vorher validiert, damit keine Header eingeschleust werden können.
+func buildMessage(from, to, subject, body, format, xMailer string) (string, error) {
+	fromHeader, toHeader, err := parseAddresses(from, to)
+	if err != nil {
+		return "", err
+	}
+	if err := checkHeaderValue("Betreff", subject); err != nil {
+		return "", err
+	}
+	if err := checkHeaderValue("X-Mailer", xMailer); err != nil {
+		return "", err
+	}
+	contentType := "text/plain; charset=UTF-8"
+	if strings.EqualFold(format, "html") {
+		contentType = "text/html; charset=UTF-8"
+	}
+	var qp strings.Builder
+	w := quotedprintable.NewWriter(&qp)
+	if _, err := w.Write([]byte(body)); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	return strings.Join([]string{
+		"From: " + fromHeader,
+		"To: " + toHeader,
+		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
+		"MIME-Version: 1.0",
+		"Content-Type: " + contentType,
+		"Content-Transfer-Encoding: quoted-printable",
+		"X-Mailer: " + xMailer,
+		"",
+		strings.ReplaceAll(qp.String(), "\r\n", "\n"),
+	}, "\n"), nil
 }
 
 func templateValues(c *config.Config, st Store, stats db.ReportStats, period, format string) (map[string]string, error) {
@@ -216,6 +315,12 @@ func templateValues(c *config.Config, st Store, stats db.ReportStats, period, fo
 		"RATELIMIT_BANS":          strconv.Itoa(stats.RateLimitBans),
 		"SUBDOMAIN_FLOOD_BANS":    strconv.Itoa(stats.SubdomainFloodBans),
 		"EXTERNAL_BLOCKLIST_BANS": strconv.Itoa(stats.ExternalBlocklistBans),
+		"WATCHLIST_BANS":          strconv.Itoa(stats.WatchlistBans),
+		"GEOIP_BANS":              strconv.Itoa(stats.GeoIPBans),
+		"MANUAL_BANS":             strconv.Itoa(stats.ManualBans),
+		"OTHER_BANS":              strconv.Itoa(stats.OtherBans),
+		"ATTACK_TYPES_TABLE":      attackTypesHTML(stats),
+		"ATTACK_TYPES_TEXT":       attackTypesText(stats),
 		"BUSIEST_DAY":             busiestDay,
 		"BUSIEST_DAY_LABEL":       busiestLabel,
 		"TOP10_IPS_TABLE":         topCountsHTML(stats.TopClients, "IP-Adresse"),
@@ -237,6 +342,57 @@ func templateValues(c *config.Config, st Store, stats db.ReportStats, period, fo
 		values["PERIOD_OVERVIEW_TEXT"] = periodOverviewText(st)
 	}
 	return values, nil
+}
+
+type attackType struct {
+	Label string
+	Class string
+	Count int
+}
+
+func attackTypes(stats db.ReportStats) []attackType {
+	rows := []attackType{
+		{"Rate-Limit", "rate-limit", stats.RateLimitBans},
+		{"Subdomain-Flood", "subdomain-flood", stats.SubdomainFloodBans},
+		{"DNS-Flood Watchlist", "watchlist", stats.WatchlistBans},
+		{"Externe Blocklist", "external", stats.ExternalBlocklistBans},
+		{"GeoIP", "geoip", stats.GeoIPBans},
+		{"Manuell", "manual", stats.ManualBans},
+	}
+	if stats.OtherBans > 0 {
+		rows = append(rows, attackType{"Sonstige", "", stats.OtherBans})
+	}
+	return rows
+}
+
+func percent(count, total int) string {
+	if total <= 0 {
+		return "0,0 %"
+	}
+	return strings.Replace(strconv.FormatFloat(float64(count)*100/float64(total), 'f', 1, 64), ".", ",", 1) + " %"
+}
+
+func attackTypesHTML(stats db.ReportStats) string {
+	var b strings.Builder
+	b.WriteString("<table><tr><th>Angriffsart</th><th>Sperren</th><th>Anteil</th></tr>")
+	for _, r := range attackTypes(stats) {
+		fmt.Fprintf(&b, `<tr><td><span class="reason-badge %s">%s</span></td><td>%d</td><td>%s</td></tr>`, r.Class, html.EscapeString(r.Label), r.Count, percent(r.Count, stats.TotalBans))
+	}
+	fmt.Fprintf(&b, `<tr class="sum-row"><td><strong>Summe</strong></td><td><strong>%d</strong></td><td><strong>%s</strong></td></tr>`, stats.TotalBans, percent(stats.TotalBans, stats.TotalBans))
+	b.WriteString("</table>")
+	return b.String()
+}
+
+func attackTypesText(stats db.ReportStats) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %-24s %-9s %s\n", "Angriffsart", "Sperren", "Anteil")
+	fmt.Fprintf(&b, "  %-24s %-9s %s\n", strings.Repeat("-", 24), strings.Repeat("-", 9), "-------")
+	for _, r := range attackTypes(stats) {
+		fmt.Fprintf(&b, "  %-24s %-9d %s\n", r.Label, r.Count, percent(r.Count, stats.TotalBans))
+	}
+	fmt.Fprintf(&b, "  %-24s %-9s %s\n", strings.Repeat("-", 24), strings.Repeat("-", 9), "-------")
+	fmt.Fprintf(&b, "  %-24s %-9d %s", "Summe", stats.TotalBans, percent(stats.TotalBans, stats.TotalBans))
+	return b.String()
 }
 
 func topCountsHTML(rows []db.ReportCount, nameHeader string) string {
@@ -273,7 +429,7 @@ func protocolHTML(rows []db.ReportCount) string {
 	b.WriteString("<table><tr><th>Protokoll</th><th>Anzahl Sperren</th></tr>")
 	for _, r := range rows {
 		class := protocolClass(r.Name)
-		fmt.Fprintf(&b, `<tr><td><span class="protocol-badge %s">%s</span></td><td>%d</td></tr>`, class, html.EscapeString(r.Name), r.Count)
+		fmt.Fprintf(&b, `<tr><td><span class="protocol-badge %s">%s</span></td><td>%d</td></tr>`, class, html.EscapeString(protocolLabel(r.Name)), r.Count)
 	}
 	b.WriteString("</table>")
 	return b.String()
@@ -332,7 +488,7 @@ func protocolText(rows []db.ReportCount) string {
 	fmt.Fprintf(&b, "  %-20s %s\n", "Protokoll", "Anzahl")
 	fmt.Fprintf(&b, "  %-20s %s\n", strings.Repeat("-", 20), "------")
 	for _, r := range rows {
-		fmt.Fprintf(&b, "  %-20s %d\n", r.Name, r.Count)
+		fmt.Fprintf(&b, "  %-20s %d\n", protocolLabel(r.Name), r.Count)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -391,21 +547,21 @@ func periodOverviewRows(st Store) []overviewRow {
 			label string
 			since time.Time
 			until time.Time
-		}{"Letzte 7 Tage", today.AddDate(0, 0, -7), now},
+		}{"Letzte 7 Tage", today.AddDate(0, 0, -7), today.Add(-time.Second)},
 		struct {
 			label string
 			since time.Time
 			until time.Time
-		}{"Letzte 14 Tage", today.AddDate(0, 0, -14), now},
+		}{"Letzte 14 Tage", today.AddDate(0, 0, -14), today.Add(-time.Second)},
 		struct {
 			label string
 			since time.Time
 			until time.Time
-		}{"Letzte 30 Tage", today.AddDate(0, 0, -30), now},
+		}{"Letzte 30 Tage", today.AddDate(0, 0, -30), today.Add(-time.Second)},
 	)
 	rows := make([]overviewRow, 0, len(defs))
 	for _, d := range defs {
-		stats, err := st.ReportStats(d.since.Unix(), d.until.Unix(), d.since.Unix(), 0)
+		stats, err := st.PeriodSummary(d.since.Unix(), d.until.Unix())
 		if err != nil {
 			stats = db.ReportStats{}
 		}
@@ -498,6 +654,12 @@ func reportWindow(interval string, now time.Time) (int64, int64, string) {
 	}
 	start := today.AddDate(0, 0, -days)
 	end := today.Add(-time.Second)
+	if strings.EqualFold(interval, "monthly") {
+		// Immer der vollständige Vormonat, unabhängig von dessen Länge.
+		monthStart := time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, today.Location())
+		start = monthStart.AddDate(0, -1, 0)
+		end = monthStart.Add(-time.Second)
+	}
 	if strings.EqualFold(interval, "daily") {
 		return start.Unix(), end.Unix(), label + ": " + start.Format("02.01.2006")
 	}
@@ -516,6 +678,23 @@ func midnight(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
+// abuseReports zählt Meldungen aus der Datenbank. Für den Zeitraum vor der
+// ersten gespeicherten Meldung (ältere Versionen) wird auf das Log zurückgegriffen.
+func abuseReports(c *config.Config, st Store, since, until int64) (int, error) {
+	count, first, err := st.AbuseIPDBReportStats(since, until)
+	if err != nil {
+		return 0, err
+	}
+	logUntil := until
+	if first > 0 && first-1 < logUntil {
+		logUntil = first - 1
+	}
+	if since <= logUntil {
+		count += countAbuseReports(c.LogFile, since, logUntil)
+	}
+	return count, nil
+}
+
 func countAbuseReports(path string, since, until int64) int {
 	f, err := os.Open(path)
 	if err != nil {
@@ -526,16 +705,31 @@ func countAbuseReports(path string, since, until int64) int {
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
-		if !strings.Contains(line, "AbuseIPDB:") || !strings.Contains(line, "erfolgreich gemeldet") || len(line) < 21 {
+		if !strings.Contains(line, "AbuseIPDB:") || !strings.Contains(line, "erfolgreich gemeldet") {
 			continue
 		}
-		ts := strings.TrimPrefix(line[:20], "[")
-		t, err := time.ParseInLocation("2006-01-02 15:04:05", ts, time.Local)
-		if err == nil && t.Unix() >= since && t.Unix() <= until {
+		t, ok := logLineTime(line)
+		if ok && t.Unix() >= since && t.Unix() <= until {
 			count++
 		}
 	}
 	return count
+}
+
+// logLineTime liest den Zeitstempel einer Logzeile. Unterstützt werden das
+// Go-Format "2006/01/02 15:04:05 ..." und das alte Bash-Format "[2006-01-02 15:04:05] ...".
+func logLineTime(line string) (time.Time, bool) {
+	var value, layout string
+	switch {
+	case strings.HasPrefix(line, "[") && len(line) >= 20:
+		value, layout = line[1:20], "2006-01-02 15:04:05"
+	case len(line) >= 19:
+		value, layout = line[:19], "2006/01/02 15:04:05"
+	default:
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation(layout, value, time.Local)
+	return t, err == nil
 }
 
 func checkForUpdate() (string, string) {
@@ -639,6 +833,25 @@ func shortTime(value string) string {
 	return value
 }
 
+func protocolLabel(proto string) string {
+	switch strings.ToLower(proto) {
+	case "dns":
+		return "DNS"
+	case "doh":
+		return "DoH"
+	case "dot":
+		return "DoT"
+	case "doq":
+		return "DoQ"
+	case "dnscrypt":
+		return "DNSCrypt"
+	case "n/a":
+		return "ohne Protokoll"
+	default:
+		return proto
+	}
+}
+
 func protocolClass(proto string) string {
 	s := strings.ToLower(proto)
 	switch {
@@ -658,10 +871,16 @@ func protocolClass(proto string) string {
 func reasonClass(reason string) string {
 	s := strings.ToLower(reason)
 	switch {
+	case strings.Contains(s, "watchlist"):
+		return "watchlist"
 	case strings.Contains(s, "subdomain"):
 		return "subdomain-flood"
 	case strings.Contains(s, "external"):
 		return "external"
+	case strings.HasPrefix(s, "geoip"):
+		return "geoip"
+	case s == "manual":
+		return "manual"
 	default:
 		return "rate-limit"
 	}

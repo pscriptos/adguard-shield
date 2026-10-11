@@ -66,7 +66,7 @@ Die benötigten Pakete werden vom Installer auf Ubuntu/Debian automatisch instal
 ```bash
 # Release-Archiv herunterladen und entpacken
 curl -fL -o adguard-shield-linux-amd64.tar.gz \
-  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.1.3/adguard-shield-linux-amd64.tar.gz
+  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.2.0/adguard-shield-linux-amd64.tar.gz
 tar -xzf adguard-shield-linux-amd64.tar.gz
 chmod +x ./adguard-shield
 ```
@@ -79,12 +79,14 @@ cd adguard-shield
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o adguard-shield ./cmd/adguard-shieldd
 ```
 
+Benötigt wird Go 1.26.9 oder neuer (ältere 1.26.x-Patchversionen enthalten bekannte Sicherheitslücken in der Standardbibliothek). `go.mod` gibt `toolchain go1.26.9` vor; bei älterem lokalem Go lädt `go` diese Toolchain automatisch nach, sofern `GOTOOLCHAIN` nicht auf `local` steht.
+
 ### Variante C: Ohne lokales Go per Docker bauen
 
 ```bash
 git clone https://git.techniverse.net/scriptos/adguard-shield.git
 cd adguard-shield
-docker run --rm -v "$PWD":/src -w /src -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=0 golang:1.22 \
+docker run --rm -v "$PWD":/src -w /src -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=0 golang:1.26.9 \
   go build -o adguard-shield ./cmd/adguard-shieldd
 ```
 
@@ -172,7 +174,7 @@ sudo adguard-shield <befehl>
 
 | Befehl | Beschreibung |
 |---|---|
-| `ban <IP>` | IP-Adresse manuell permanent sperren |
+| `ban <IP>` | IP-Adresse oder CIDR-Netz manuell permanent sperren |
 | `unban <IP>` | Sperre für eine IP-Adresse aufheben |
 | `flush` | Alle aktiven Sperren aufheben |
 
@@ -257,7 +259,7 @@ sudo systemctl restart adguard-shield
 | `CHECK_INTERVAL` | `10` | Abstand zwischen Querylog-Abfragen in Sekunden |
 | `BAN_DURATION` | `3600` | Basis-Sperrdauer in Sekunden (1 Stunde) |
 | `FIREWALL_MODE` | `host` | `host`, `docker-host`, `docker-bridge` oder `hybrid` |
-| `WHITELIST` | `127.0.0.1,::1` | IPs, die nie gesperrt werden (kommagetrennt) |
+| `WHITELIST` | `127.0.0.1,::1` | IPs oder CIDR-Netze, die nie gesperrt werden (kommagetrennt) |
 | `DRY_RUN` | `false` | Testmodus: nur loggen, nicht sperren |
 
 ### Optionale Module
@@ -327,6 +329,7 @@ DNS-relevante Ports (53, 443, 853) werden für gesperrte Clients blockiert
 | Docker-Installationen | [docs/docker.md](docs/docker.md) | Firewall-Modi für klassische Installation, Docker Host Network und Docker Bridge |
 | Benachrichtigungen | [docs/benachrichtigungen.md](docs/benachrichtigungen.md) | Einrichtung von Ntfy, Discord, Slack, Gotify und Generic Webhooks |
 | E-Mail Report | [docs/report.md](docs/report.md) | Report-Inhalte, Mailversand, Cron-Job und manuelle Tests |
+| Web-Statusseite | [docs/webinterface.md](docs/webinterface.md) | Optionale, schreibgeschützte Statusseite mit Live-Ansicht, Basic Auth und Reverse-Proxy-Beispielen |
 | Updates | [docs/update.md](docs/update.md) | Update-Ablauf, Konfigurationsmigration und Migration von der Shell-Version |
 | Tipps & Troubleshooting | [docs/tipps-und-troubleshooting.md](docs/tipps-und-troubleshooting.md) | Diagnosewege für API, Firewall, GeoIP, Reports, Listen und falsche Sperren |
 

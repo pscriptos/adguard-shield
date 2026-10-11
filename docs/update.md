@@ -26,6 +26,46 @@ sudo journalctl -u adguard-shield --no-pager -n 50
 
 ---
 
+## Update von v1.1.x auf v1.2.0
+
+Das Update läuft wie gewohnt über `sudo ./adguard-shield update`. Datenbank, Sperren und Konfiguration werden übernommen. Vorher solltest du trotzdem ein Backup anlegen:
+
+```bash
+sudo systemctl stop adguard-shield
+sudo mkdir -p /root/adguard-shield-backup
+sudo cp -a /opt/adguard-shield/adguard-shield /opt/adguard-shield/adguard-shield.conf* /root/adguard-shield-backup/
+sudo cp -a /var/lib/adguard-shield/adguard-shield.db* /root/adguard-shield-backup/
+```
+
+Was automatisch passiert:
+
+| Bereich | Änderung |
+|---|---|
+| Datenbank | Schema-Migration auf Version 2 (nur zusätzliche Indizes). v1.1.3 kann die Datenbank weiterhin lesen. |
+| Konfiguration | Neue Parameter `ADGUARD_TLS_INSECURE`, `NOTIFY_TLS_INSECURE`, `LOG_MAX_SIZE_MB`, `BAN_HISTORY_RETENTION_DAYS`, `ALLOW_INSECURE_LIST_URLS` und die `WEB_*`-Parameter der optionalen [Web-Statusseite](webinterface.md) (standardmäßig aus) werden ergänzt (sofern noch nicht vorhanden), vorhandene Werte bleiben unverändert. Die bisherige Datei liegt danach als `adguard-shield.conf.old` vor (eine ältere `.old` wird dabei ersetzt). |
+| systemd-Unit | Wird neu geschrieben, `ExecReload` entfällt. Die Unit ist deutlich restriktiver: `NoNewPrivileges=true`, Capabilities nur noch `CAP_NET_ADMIN`, `CAP_NET_RAW` und `CAP_NET_BIND_SERVICE` sowie weitere Sandbox-Optionen (siehe [Rechte des systemd-Service](architektur.md#rechte-des-systemd-service)). Bestehende Installationen erhalten die neue Unit nur über `update` bzw. `install`; ein reines Austauschen des Binarys reicht nicht. |
+| Firewall | Beim Start werden alle Sperren aus der Datenbank per `ipset restore` übernommen. Permanente Sperren, die durch einen Fehler in älteren Versionen nach `BAN_DURATION` aus dem ipset gefallen waren, sind danach wieder aktiv. |
+
+Was du prüfen solltest:
+
+| Thema | Hinweis |
+|---|---|
+| TLS-Zertifikate | Benachrichtigungen (ntfy, Gotify, Webhooks) und externe Listen prüfen jetzt das TLS-Zertifikat. Nutzt du einen eigenen Server mit selbstsigniertem Zertifikat, schlagen Benachrichtigungen fehl (`Benachrichtigung fehlgeschlagen` im Log). Abhilfe: gültiges Zertifikat oder `NOTIFY_TLS_INSECURE=true`. Für externe Listen gibt es keine Ausnahme – bei Fehlern bleibt die bisherige Whitelist erhalten bzw. der Cache wird genutzt. |
+| AdGuard-API-Zertifikat | Auch das TLS-Zertifikat der AdGuard-Home-API wird jetzt geprüft (`ADGUARD_TLS_INSECURE=false`, wird beim Update ergänzt). Bis v1.1.x wurde es nie geprüft. Bei selbstsigniertem Zertifikat schlägt die Abfrage fehl (`sudo adguard-shield test` meldet einen Zertifikatsfehler). Abhilfe: gültiges Zertifikat, `ADGUARD_URL` auf `http://127.0.0.1:<port>` umstellen oder bewusst `ADGUARD_TLS_INSECURE=true` setzen. |
+| Externe Listen über http:// | Externe White- und Blocklisten werden nur noch per `https://` geladen. `http://`-URLs werden beim Start als `WARNUNG` gemeldet und beim Abruf abgelehnt (die Whitelist bleibt unverändert, Auto-Unban der Blocklist wird ausgesetzt). Weiterleitungen von https auf http werden ebenfalls abgelehnt. Abhilfe: URL auf `https://` umstellen oder bewusst `ALLOW_INSECURE_LIST_URLS=true` setzen. Listen über 50 MB werden verworfen, stattdessen wird der Cache genutzt (siehe [Externe Listen: Transport und Größe](konfiguration.md#externe-listen-transport-und-größe)). |
+| Konfigurations-Warnungen | Ungültige, unbekannte oder veraltete Parameter werden beim Start und bei jedem CLI-Befehl als `WARNUNG` gemeldet (z. B. `BAN_HISTORY_FILE` aus der alten Shell-Version). Ungültige Werte werden durch den Standardwert ersetzt. Veraltete Zeilen kannst du aus der Konfiguration löschen. |
+| Eigene Pfade / Dateirechte | Der Service darf Dateirechte nicht mehr übergehen (kein `CAP_DAC_OVERRIDE`). Liegen `LOG_FILE`, `STATE_DIR`, Cache-Verzeichnisse oder `PID_FILE` an eigenen Orten, müssen sie root gehören bzw. für root beschreibbar sein. `PID_FILE` darf kein Symlink sein. Prüfen nach dem Neustart: `sudo journalctl -u adguard-shield -n 50`. |
+| Logrotation | `LOG_MAX_SIZE_MB` (Standard 50) wird jetzt ausgewertet: Das Log wird nach `adguard-shield.log.1` rotiert. |
+| `BLOCKED_PORTS` | Kommas sind jetzt erlaubt, ungültige Ports werden mit Warnung ignoriert. Port-Namen wie `domain` werden nicht mehr akzeptiert – bitte Portnummern verwenden. |
+| `systemctl reload` | Wird nicht mehr unterstützt; nach Änderungen an der Konfiguration `systemctl restart adguard-shield` verwenden. |
+| Subdomain-Flood | Die Basisdomain wird jetzt über die Public Suffix List bestimmt. Hosts unter Plattform-Suffixen wie `github.io` oder `cloudfront.net` zählen als eigene Basisdomains und lösen dadurch seltener Subdomain-Flood-Sperren aus. |
+| Whitelist-Netze | Zu breite Netze (`/0`, IPv4 kürzer als `/8`, IPv6 kürzer als `/16`) werden in `WHITELIST` und externen Whitelists ignoriert und mit Warnung gemeldet. |
+| Benachrichtigungen | Werden im Daemon jetzt asynchron über eine Warteschlange (256 Einträge) versendet; bei Überlauf werden einzelne Nachrichten verworfen (WARN im Log). |
+
+Rollback: Dienst stoppen, Binary und Datenbank aus dem Backup zurückkopieren (`-wal`/`-shm` der neuen Version vorher löschen), `systemctl daemon-reload`, Dienst starten.
+
+---
+
 ## Neues Binary beziehen
 
 Du brauchst ein fertiges Linux-Binary. Das kann aus einem Release, aus CI oder aus einem lokalen Build kommen.
@@ -34,7 +74,7 @@ Du brauchst ein fertiges Linux-Binary. Das kann aus einem Release, aus CI oder a
 
 ```bash
 curl -fL -o adguard-shield-linux-amd64.tar.gz \
-  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.1.3/adguard-shield-linux-amd64.tar.gz
+  https://git.techniverse.net/scriptos/adguard-shield/releases/download/v1.2.0/adguard-shield-linux-amd64.tar.gz
 tar -xzf adguard-shield-linux-amd64.tar.gz
 chmod +x ./adguard-shield
 ```
@@ -50,7 +90,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o adguard-shield ./cmd/adguard-s
 ```bash
 docker run --rm -v "$PWD":/src -w /src \
   -e GOOS=linux -e GOARCH=amd64 -e CGO_ENABLED=0 \
-  golang:1.22 go build -o adguard-shield ./cmd/adguard-shieldd
+  golang:1.26.9 go build -o adguard-shield ./cmd/adguard-shieldd
 ```
 
 Auf dem Zielserver muss Go nicht installiert sein, wenn dort nur das fertige Binary ausgeführt wird.

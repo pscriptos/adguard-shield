@@ -42,6 +42,10 @@
         .reason-badge.rate-limit { background: #fcf8e3; color: #8a6d3b; }
         .reason-badge.subdomain-flood { background: #f2dede; color: #a94442; }
         .reason-badge.external { background: #d9edf7; color: #31708f; }
+        .reason-badge.watchlist { background: #f5e1f7; color: #7b2d86; }
+        .reason-badge.geoip { background: #dff0d8; color: #3c763d; }
+        .reason-badge.manual { background: #e8ecf1; color: #495057; }
+        .sum-row td { background: #f8f9fc; border-top: 2px solid #e8ecf1; }
         .no-data { text-align: center; padding: 30px; color: #adb5bd; font-style: italic; }
         .footer { background: #f8f9fc; padding: 24px 35px; text-align: center; font-size: 12px; color: #6c757d; border-top: 1px solid #e8ecf1; }
         .footer a { color: #0f3460; text-decoration: none; font-weight: 600; }
@@ -77,10 +81,8 @@
                 <div class="stat-card info"><div class="stat-value">{{ABUSEIPDB_REPORTS}}</div><div class="stat-label">AbuseIPDB Reports</div></div>
             </div>
             <h2>Angriffsarten</h2>
+            {{ATTACK_TYPES_TABLE}}
             <div class="stats-grid">
-                <div class="stat-card warning"><div class="stat-value">{{RATELIMIT_BANS}}</div><div class="stat-label">Rate-Limit Sperren</div></div>
-                <div class="stat-card danger"><div class="stat-value">{{SUBDOMAIN_FLOOD_BANS}}</div><div class="stat-label">Subdomain-Flood Sperren</div></div>
-                <div class="stat-card"><div class="stat-value">{{EXTERNAL_BLOCKLIST_BANS}}</div><div class="stat-label">Externe Blocklist</div></div>
                 <div class="stat-card success"><div class="stat-value">{{BUSIEST_DAY}}</div><div class="stat-label">{{BUSIEST_DAY_LABEL}}</div></div>
             </div>
             <h2>Top 10 - Auffaelligste IPs</h2>

@@ -1,8 +1,11 @@
 package report
 
 import (
+	"io"
+	"mime/quotedprintable"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +69,7 @@ func TestGenerateUsesTemplatesAndFullStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"AdGuard Shield", "example.com", "1.2.3.4", "DoH", "Subdomain-Flood Sperren", "AbuseIPDB Reports"} {
+	for _, want := range []string{"AdGuard Shield", "example.com", "1.2.3.4", "DoH", "Subdomain-Flood", "AbuseIPDB Reports", "Summe"} {
 		if !strings.Contains(htmlReport, want) {
 			t.Fatalf("HTML report missing %q\n%s", want, htmlReport)
 		}
@@ -79,7 +82,7 @@ func TestGenerateUsesTemplatesAndFullStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Sperren gesamt:          3", "Entsperrungen:           1", "Permanente Sperren:      2", "block.example"} {
+	for _, want := range []string{"Sperren gesamt:          3", "Entsperrungen:           1", "Permanente Sperren:      2", "AbuseIPDB Reports:       1", "block.example"} {
 		if !strings.Contains(txtReport, want) {
 			t.Fatalf("TXT report missing %q\n%s", want, txtReport)
 		}
@@ -105,4 +108,326 @@ func TestVersionGreater(t *testing.T) {
 func writeTestLog(path string, when time.Time) error {
 	line := "[" + when.Format("2006-01-02 15:04:05") + "] [INFO] AbuseIPDB: 5.6.7.8 erfolgreich gemeldet\n"
 	return os.WriteFile(path, []byte(line), 0644)
+}
+
+func TestReportWindowMonthlyCoversPreviousCalendarMonth(t *testing.T) {
+	loc := time.Local
+	tests := []struct {
+		now        time.Time
+		start, end string
+	}{
+		{time.Date(2026, 9, 1, 8, 0, 0, 0, loc), "2026-08-01 00:00:00", "2026-08-31 23:59:59"},
+		{time.Date(2026, 10, 1, 8, 0, 0, 0, loc), "2026-09-01 00:00:00", "2026-09-30 23:59:59"},
+		{time.Date(2026, 3, 1, 8, 0, 0, 0, loc), "2026-02-01 00:00:00", "2026-02-28 23:59:59"},
+		{time.Date(2028, 3, 1, 8, 0, 0, 0, loc), "2028-02-01 00:00:00", "2028-02-29 23:59:59"},
+		{time.Date(2027, 1, 1, 8, 0, 0, 0, loc), "2026-12-01 00:00:00", "2026-12-31 23:59:59"},
+		{time.Date(2026, 10, 9, 15, 30, 0, 0, loc), "2026-09-01 00:00:00", "2026-09-30 23:59:59"},
+	}
+	for _, tt := range tests {
+		since, until, label := reportWindow("monthly", tt.now)
+		gotStart := time.Unix(since, 0).In(loc).Format("2006-01-02 15:04:05")
+		gotEnd := time.Unix(until, 0).In(loc).Format("2006-01-02 15:04:05")
+		if gotStart != tt.start || gotEnd != tt.end {
+			t.Fatalf("monthly %s: got %s - %s, want %s - %s", tt.now.Format("2006-01-02"), gotStart, gotEnd, tt.start, tt.end)
+		}
+		if !strings.HasPrefix(label, "Monatsbericht: ") {
+			t.Fatalf("unexpected label %q", label)
+		}
+	}
+}
+
+func TestReportWindowOtherIntervalsEndYesterday(t *testing.T) {
+	loc := time.Local
+	now := time.Date(2026, 10, 5, 8, 0, 0, 0, loc) // Montag
+	tests := map[string]string{
+		"daily":    "2026-10-04 00:00:00",
+		"weekly":   "2026-09-28 00:00:00",
+		"biweekly": "2026-09-21 00:00:00",
+	}
+	for interval, wantStart := range tests {
+		since, until, _ := reportWindow(interval, now)
+		if got := time.Unix(since, 0).In(loc).Format("2006-01-02 15:04:05"); got != wantStart {
+			t.Fatalf("%s start = %s, want %s", interval, got, wantStart)
+		}
+		if got := time.Unix(until, 0).In(loc).Format("2006-01-02 15:04:05"); got != "2026-10-04 23:59:59" {
+			t.Fatalf("%s end = %s", interval, got)
+		}
+	}
+}
+
+func TestCountAbuseReportsParsesGoAndLegacyLogFormat(t *testing.T) {
+	day := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
+	lines := strings.Join([]string{
+		day.Add(10*time.Hour).Format("2006/01/02 15:04:05") + " [INFO] [ADGUARD-SHIELDD] AbuseIPDB: 192.0.2.1 erfolgreich gemeldet",
+		"[" + day.Add(11*time.Hour).Format("2006-01-02 15:04:05") + "] [INFO] AbuseIPDB: 192.0.2.2 erfolgreich gemeldet",
+		day.Add(12*time.Hour).Format("2006/01/02 15:04:05") + " [WARN] [ADGUARD-SHIELDD] AbuseIPDB: HTTP 429 für 192.0.2.3",
+		day.AddDate(0, 0, -1).Format("2006/01/02 15:04:05") + " [INFO] [ADGUARD-SHIELDD] AbuseIPDB: 192.0.2.4 erfolgreich gemeldet",
+		"kaputt AbuseIPDB: erfolgreich gemeldet",
+	}, "\n") + "\n"
+	path := filepath.Join(t.TempDir(), "shield.log")
+	if err := os.WriteFile(path, []byte(lines), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := countAbuseReports(path, day.Unix(), day.AddDate(0, 0, 1).Unix()-1); got != 2 {
+		t.Fatalf("countAbuseReports = %d, want 2", got)
+	}
+}
+
+func TestAbuseReportsUsesDatabaseAndLogOnlyBeforeFirstDBEntry(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "report.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	day := time.Date(2026, 9, 15, 0, 0, 0, 0, time.Local)
+	// Log: 08:00 liegt vor der ersten DB-Meldung, 14:00 ist bereits in der DB und darf nicht doppelt zählen.
+	logLines := day.Add(8*time.Hour).Format("2006/01/02 15:04:05") + " [INFO] [ADGUARD-SHIELDD] AbuseIPDB: 192.0.2.1 erfolgreich gemeldet\n" +
+		day.Add(14*time.Hour).Format("2006/01/02 15:04:05") + " [INFO] [ADGUARD-SHIELDD] AbuseIPDB: 192.0.2.2 erfolgreich gemeldet\n"
+	logPath := filepath.Join(t.TempDir(), "shield.log")
+	if err := os.WriteFile(logPath, []byte(logLines), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []int{14, 16} {
+		ts := day.Add(time.Duration(h) * time.Hour)
+		if _, err := store.DB.Exec(`INSERT INTO abuseipdb_reports (timestamp_epoch, timestamp_text, client_ip) VALUES (?, ?, '192.0.2.2')`, ts.Unix(), ts.Format("2006-01-02 15:04:05")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{LogFile: logPath}
+	got, err := abuseReports(cfg, store, day.Unix(), day.AddDate(0, 0, 1).Unix()-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
+		t.Fatalf("abuseReports = %d, want 3", got)
+	}
+}
+
+func TestGenerateLimitsTopListsAndSumsAttackTypes(t *testing.T) {
+	t.Setenv("ADGUARD_SHIELD_SKIP_UPDATE_CHECK", "true")
+	store, err := db.Open(filepath.Join(t.TempDir(), "report.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	yesterday := midnight(time.Now()).AddDate(0, 0, -1).Add(time.Hour)
+	insert := func(ip, domain, proto, reason string) {
+		t.Helper()
+		if _, err := store.DB.Exec(`INSERT INTO ban_history (timestamp_epoch, timestamp_text, action, client_ip, domain, count, duration, protocol, reason) VALUES (?, ?, 'BAN', ?, ?, '1', 'permanent', ?, ?)`,
+			yesterday.Unix(), yesterday.Format("2006-01-02 15:04:05"), ip, domain, proto, reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 15; i++ {
+		insert("192.0.2."+strconv.Itoa(i), "d"+strconv.Itoa(i)+".example", "dns", "rate-limit")
+	}
+	for i := 0; i < 5; i++ {
+		insert("198.51.100."+strconv.Itoa(i), "GeoIP:CN", "-", "geoip")
+	}
+	insert("203.0.113.1", "manual", "-", "manual")
+	cfg := &config.Config{ReportInterval: "weekly", ReportBusiestDayRange: 30, LogFile: filepath.Join(t.TempDir(), "none.log")}
+
+	txt, err := Generate(cfg, store, "txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Sperren gesamt:          21",
+		"Rate-Limit               15        71,4 %",
+		"GeoIP                    5         23,8 %",
+		"Manuell                  1         4,8 %",
+		"Summe                    21        100,0 %",
+		"ohne Protokoll       6",
+		"DNS                  15",
+		"  10.  ",
+	} {
+		if !strings.Contains(txt, want) {
+			t.Fatalf("TXT report missing %q\n%s", want, txt)
+		}
+	}
+	for _, unwanted := range []string{"Sonstige", "  11.  "} {
+		if strings.Contains(txt, unwanted) {
+			t.Fatalf("TXT report contains %q\n%s", unwanted, txt)
+		}
+	}
+	domains := txt[strings.Index(txt, "MEISTBETROFFENE DOMAINS"):strings.Index(txt, "PROTOKOLL-VERTEILUNG")]
+	if strings.Contains(domains, "GeoIP:") || strings.Contains(domains, "manual") {
+		t.Fatalf("top domains contain placeholder entries\n%s", domains)
+	}
+
+	htmlReport, err := Generate(cfg, store, "html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(htmlReport, "{{") || !strings.Contains(htmlReport, "reason-badge geoip") || strings.Contains(htmlReport, ">11</span>") {
+		t.Fatalf("unexpected HTML report\n%s", htmlReport)
+	}
+}
+
+func TestPeriodOverviewUsesFullDaysUntilYesterday(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "report.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	today := midnight(time.Now())
+	for _, ts := range []time.Time{today.Add(time.Second), today.AddDate(0, 0, -1).Add(time.Hour), today.AddDate(0, 0, -7), today.AddDate(0, 0, -8).Add(23 * time.Hour)} {
+		if _, err := store.DB.Exec(`INSERT INTO ban_history (timestamp_epoch, timestamp_text, action, client_ip, domain, count, duration, protocol, reason) VALUES (?, ?, 'BAN', '192.0.2.1', 'a.example', '1', '600s', 'dns', 'rate-limit')`,
+			ts.Unix(), ts.Format("2006-01-02 15:04:05")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	byLabel := map[string]int{}
+	for _, r := range periodOverviewRows(store) {
+		byLabel[r.Label] = r.TotalBans
+	}
+	if byLabel["Gestern"] != 1 || byLabel["Letzte 7 Tage"] != 2 || byLabel["Letzte 14 Tage"] != 3 || byLabel["Letzte 30 Tage"] != 3 {
+		t.Fatalf("unexpected overview: %#v", byLabel)
+	}
+}
+
+func TestBuildMessageQuotedPrintable(t *testing.T) {
+	body := "<html><body>" + strings.Repeat(`<tr><td class="ip-cell">192.0.2.1</td><td>Größe = 100 %</td></tr>`, 60) + "</body></html>\nZeile mit Leerzeichen am Ende   \nletzte Zeile"
+	for _, format := range []string{"html", "txt"} {
+		msg, err := buildMessage("shield@example.test", "admin@example.test", "AdGuard Shield Wochenbericht – Test", body, format, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		header, encoded, ok := strings.Cut(msg, "\n\n")
+		if !ok {
+			t.Fatalf("no header/body separator\n%s", msg)
+		}
+		if !strings.Contains(header, "\nContent-Transfer-Encoding: quoted-printable\n") || strings.Contains(header, "8bit") {
+			t.Fatalf("missing quoted-printable header\n%s", header)
+		}
+		wantType := "text/plain; charset=UTF-8"
+		if format == "html" {
+			wantType = "text/html; charset=UTF-8"
+		}
+		if !strings.Contains(header, "Content-Type: "+wantType) {
+			t.Fatalf("unexpected content type\n%s", header)
+		}
+		for i, line := range strings.Split(msg, "\n") {
+			if len(line) > 998 {
+				t.Fatalf("line %d has %d chars", i+1, len(line))
+			}
+			if strings.HasSuffix(line, "\r") {
+				t.Fatalf("line %d has CRLF, want LF only", i+1)
+			}
+		}
+		decoded, err := io.ReadAll(quotedprintable.NewReader(strings.NewReader(encoded)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(decoded) != body {
+			t.Fatalf("decoded body differs\n got: %q\nwant: %q", decoded, body)
+		}
+	}
+}
+
+func TestGenerateDoesNotReplacePlaceholdersInValues(t *testing.T) {
+	t.Setenv("ADGUARD_SHIELD_SKIP_UPDATE_CHECK", "true")
+	store, err := db.Open(filepath.Join(t.TempDir(), "report.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ts := midnight(time.Now()).AddDate(0, 0, -1).Add(time.Hour)
+	if _, err := store.DB.Exec(`INSERT INTO ban_history (timestamp_epoch, timestamp_text, action, client_ip, domain, count, duration, protocol, reason) VALUES (?, ?, 'BAN', '192.0.2.1', '{{HOSTNAME}}.example', '1', '600s', 'dns', 'rate-limit')`,
+		ts.Unix(), ts.Format("2006-01-02 15:04:05")); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ReportInterval: "weekly", LogFile: filepath.Join(t.TempDir(), "none.log")}
+	txt, err := Generate(cfg, store, "txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(txt, "{{HOSTNAME}}.example") {
+		t.Fatalf("placeholder inside value was replaced\n%s", txt)
+	}
+}
+
+func TestBuildMessageRejectsHeaderInjection(t *testing.T) {
+	const (
+		from    = "shield@example.test"
+		to      = "admin@example.test"
+		subject = "AdGuard Shield Test"
+		mailer  = "test"
+	)
+	tests := []struct {
+		name                       string
+		from, to, subject, xMailer string
+		wantErr                    string
+	}{
+		{"From mit LF und Bcc", "shield@example.test\nBcc: evil@example.org", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mit CRLF", "shield@example.test\r\nBcc: evil@example.org", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mit CR", "shield@example.test\rTo: evil@example.org", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mit NUL", "shield@example.test\x00", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From ungueltig", "kein-at-zeichen", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mehrere Adressen", "a@example.test, b@example.test", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From leer", "  ", to, subject, mailer, "REPORT_EMAIL_FROM ist leer"},
+		{"To mit LF und Bcc", from, "admin@example.test\nBcc: evil@example.org", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To mit CRLF und To", from, "admin@example.test\r\nTo: evil@example.org", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To mit Tab", from, "admin@example.test\tx", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To ungueltig", from, "admin@", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To leer", from, "", subject, mailer, "REPORT_EMAIL_TO ist leer"},
+		{"Betreff mit LF", from, to, "Report\nBcc: evil@example.org", mailer, "Betreff"},
+		{"Betreff mit CRLF", from, to, "Report\r\nBcc: evil@example.org", mailer, "Betreff"},
+		{"X-Mailer mit LF", from, to, subject, "test\nBcc: evil@example.org", "X-Mailer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := buildMessage(tt.from, tt.to, tt.subject, "body", "txt", tt.xMailer)
+			if err == nil {
+				t.Fatalf("expected error, got message\n%s", msg)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error %q does not mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBuildMessageValidAddresses(t *testing.T) {
+	tests := []struct {
+		name, from, to   string
+		wantFrom, wantTo string
+	}{
+		{"einzelner Empfaenger", "shield@example.test", "admin@example.test", "<shield@example.test>", "<admin@example.test>"},
+		{"mehrere Empfaenger", "shield@example.test", "admin@example.test, ops@example.test,noc@example.test", "<shield@example.test>", "<admin@example.test>, <ops@example.test>, <noc@example.test>"},
+		{"Anzeigename", "AdGuard Shield <shield@example.test>", `"Admin, Team" <admin@example.test>, Ops <ops@example.test>`, `"AdGuard Shield" <shield@example.test>`, `"Admin, Team" <admin@example.test>, "Ops" <ops@example.test>`},
+		{"Anzeigename mit Umlaut", "Schutzschild Größe <shield@example.test>", "admin@example.test", "=?utf-8?q?Schutzschild_Gr=C3=B6=C3=9Fe?= <shield@example.test>", "<admin@example.test>"},
+		{"Leerzeichen am Rand", "  shield@example.test ", " admin@example.test ", "<shield@example.test>", "<admin@example.test>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := buildMessage(tt.from, tt.to, "AdGuard Shield Wochenbericht – Test", "body", "txt", "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			header, _, _ := strings.Cut(msg, "\n\n")
+			lines := strings.Split(header, "\n")
+			if lines[0] != "From: "+tt.wantFrom {
+				t.Fatalf("From header = %q, want %q", lines[0], "From: "+tt.wantFrom)
+			}
+			if lines[1] != "To: "+tt.wantTo {
+				t.Fatalf("To header = %q, want %q", lines[1], "To: "+tt.wantTo)
+			}
+			if !strings.HasPrefix(lines[2], "Subject: =?utf-8?q?") {
+				t.Fatalf("subject not Q-encoded: %q", lines[2])
+			}
+			if len(lines) != 7 {
+				t.Fatalf("expected 7 header lines, got %d\n%s", len(lines), header)
+			}
+		})
+	}
+}
+
+func TestValidateEmailConfig(t *testing.T) {
+	if err := ValidateEmailConfig(&config.Config{ReportEmailFrom: "shield@example.test", ReportEmailTo: "a@example.test, b@example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEmailConfig(&config.Config{ReportEmailFrom: "shield@example.test", ReportEmailTo: "a@example.test\nBcc: evil@example.org"}); err == nil {
+		t.Fatal("expected error for injected Bcc header")
+	}
 }

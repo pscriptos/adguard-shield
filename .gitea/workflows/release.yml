@@ -19,7 +19,7 @@ jobs:
     name: Build & Upload Linux Binary
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26.2-alpine
+      image: golang:1.26.9-alpine
 
     steps:
       - name: Install build dependencies

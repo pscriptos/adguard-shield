@@ -39,6 +39,21 @@ Nach Änderungen:
 sudo systemctl restart adguard-shield
 ```
 
+### Zustellung im Hintergrund
+
+Im Daemon werden Benachrichtigungen asynchron über eine Warteschlange versendet. Ein langsamer oder nicht erreichbarer Benachrichtigungsdienst bremst dadurch weder das Querylog-Polling noch das Setzen von Sperren.
+
+| Aspekt | Verhalten |
+|---|---|
+| Warteschlange | Bis zu 256 ausstehende Nachrichten |
+| Überlauf | Weitere Nachrichten werden verworfen; im Log erscheint `Benachrichtigungs-Warteschlange voll, verwerfe ...` (WARN) |
+| Zeitlimit pro Nachricht | 30 Sekunden (inklusive PTR-Lookup für den Hostnamen) |
+| Beenden des Dienstes | Ausstehende Nachrichten werden noch bis zu 10 Sekunden lang abgearbeitet; danach wird „Service gestoppt“ gesendet |
+| Start des Dienstes | „Service gestartet“ wird direkt beim Start gesendet, noch bevor die Warteschlange läuft |
+| CLI-Befehle | `ban`, `unban`, `flush`, `geoip-flush`, `blocklist-flush`, `blocklist-sync` usw. senden synchron, der Befehl wartet also auf den Versand |
+
+Bei einem Dauerangriff mit sehr vielen neuen Sperren können deshalb einzelne Benachrichtigungen fehlen. Maßgeblich bleiben History (`history`) und Log.
+
 ---
 
 ## Ntfy
@@ -77,6 +92,7 @@ NTFY_TOKEN="tk_geheimer_token"
 ### Hinweise
 
 - Bei `NOTIFY_TYPE="ntfy"` wird `NOTIFY_WEBHOOK_URL` nicht verwendet.
+- Selbst gehostete Instanz mit selbstsigniertem Zertifikat: siehe `NOTIFY_TLS_INSECURE` unter [TLS-Zertifikate](#tls-zertifikate).
 - Bei privaten Topics oder eigener Instanz ist ein Token empfehlenswert.
 - Der Topic-Name sollte nicht öffentlich erratbar sein, um Fremdzugriff zu verhindern.
 
@@ -198,6 +214,8 @@ EXTERNAL_BLOCKLIST_NOTIFY=false
 | Große Listen (>100 IPs) | `EXTERNAL_BLOCKLIST_NOTIFY=false` (Standard) |
 | Kleine, kuratierte Listen (<50 IPs) | `EXTERNAL_BLOCKLIST_NOTIFY=true` möglich |
 
+Bringt ein Sync-Lauf mehr als 5 neue Sperren, wird statt Einzelnachrichten eine Zusammenfassung mit Anzahl, Sperrdauer und bis zu 5 Beispiel-IPs gesendet.
+
 ### GeoIP
 
 ```bash
@@ -250,13 +268,13 @@ ABUSEIPDB_API_KEY="..."
 ### Service gestartet
 
 ```text
-AdGuard Shield v1.1.3 wurde auf dns1 gestartet.
+AdGuard Shield v1.2.0 wurde auf dns1 gestartet.
 ```
 
 ### Service gestoppt
 
 ```text
-AdGuard Shield v1.1.3 wurde auf dns1 gestoppt.
+AdGuard Shield v1.2.0 wurde auf dns1 gestoppt.
 ```
 
 ### Rate-Limit-Sperre
@@ -339,10 +357,24 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 | Ziel | Webhook-URL oder Ntfy-Topic gesetzt? |
 | Token | Token gültig und nicht abgelaufen? |
 | Netzwerk | Server kann ausgehende HTTPS-Verbindungen aufbauen? |
+| Zertifikat | Gültiges TLS-Zertifikat am Ziel? Sonst `NOTIFY_TLS_INSECURE=true` (siehe unten) |
 | Firewall | Keine Firewall blockiert ausgehende Verbindungen? |
 | Modul-Schalter | `EXTERNAL_BLOCKLIST_NOTIFY` oder `GEOIP_NOTIFY` separat deaktiviert? |
+| Warteschlange | Meldet das Log `Benachrichtigungs-Warteschlange voll`? Dann kamen mehr als 256 Nachrichten auf einmal (siehe [Zustellung im Hintergrund](#zustellung-im-hintergrund)) |
+
+Fehlgeschlagene Zustellungen erscheinen als WARN mit `Benachrichtigung fehlgeschlagen (<Typ>/<Aktion>): ...` im Log, z.B. mit `HTTP 401` bei ungültigem Token oder `x509: certificate signed by unknown authority` bei selbstsigniertem Zertifikat.
 
 Bei `generic` kannst du testweise einen lokalen HTTP-Empfänger oder einen Request-Inspector verwenden, um den gesendeten Payload zu sehen.
+
+### TLS-Zertifikate
+
+Benachrichtigungen prüfen TLS-Zertifikate standardmäßig. Nutzt ein selbst gehosteter Dienst (ntfy, Gotify, eigener Webhook) ein selbstsigniertes Zertifikat, schlägt der Versand mit einem Zertifikatsfehler im Log fehl. Für solche internen Ziele kann die Prüfung gezielt abgeschaltet werden:
+
+```bash
+NOTIFY_TLS_INSECURE=true   # Standard: false
+```
+
+Die Einstellung gilt nur für Benachrichtigungen (ntfy, Discord, Slack, Gotify, generic). AbuseIPDB und externe Listen prüfen Zertifikate immer.
 
 ---
 

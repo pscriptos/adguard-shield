@@ -27,9 +27,8 @@
   ANGRIFFSARTEN
 ----------------------------------------------------------------
 
-  Rate-Limit Sperren:      {{RATELIMIT_BANS}}
-  Subdomain-Flood Sperren: {{SUBDOMAIN_FLOOD_BANS}}
-  Externe Blocklist:       {{EXTERNAL_BLOCKLIST_BANS}}
+{{ATTACK_TYPES_TEXT}}
+
   {{BUSIEST_DAY_LABEL}}: {{BUSIEST_DAY}}
 
 ----------------------------------------------------------------

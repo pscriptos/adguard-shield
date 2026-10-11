@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>AdGuard Shield Status</title>
+<link rel="icon" type="image/svg+xml" href="{{.Base}}static/icon.svg?v={{.Version}}">
+<link rel="stylesheet" href="{{.Base}}static/app.css?v={{.Version}}">
+<script src="{{.Base}}static/app.js?v={{.Version}}"></script>
+</head>
+<body data-base="{{.Base}}">
+<header class="top">
+  <div class="brand">
+    <img src="{{.Base}}static/icon.svg?v={{.Version}}" alt="" width="36" height="36">
+    <div>
+      <h1>AdGuard Shield</h1>
+      <p class="meta"><span id="version">{{.Version}}</span> · <span id="hostname">{{.Hostname}}</span> · Laufzeit <span id="uptime">–</span></p>
+    </div>
+  </div>
+  <div class="top-right">
+    <span id="dryrun" class="pill warn" hidden>Dry-Run</span>
+    <span class="updated">zuletzt aktualisiert: <span id="updated">–</span></span>
+    <button id="theme" class="theme" type="button" title="Hell/Dunkel umschalten" aria-label="Hell/Dunkel umschalten">◐</button>
+  </div>
+</header>
+
+<div id="error" class="banner" role="alert" hidden>
+  <strong>Verbindung fehlgeschlagen.</strong> Die Anzeige ist nicht aktuell. <span id="error-detail"></span>
+</div>
+
+<main>
+  <section class="tiles" aria-label="Übersicht">
+    <div class="tile"><span class="label">Aktive Sperren</span><span class="value" id="t-active">–</span></div>
+    <div class="tile"><span class="label">davon permanent</span><span class="value" id="t-permanent">–</span></div>
+    <div class="tile"><span class="label">Sperren heute</span><span class="value" id="t-today">–</span></div>
+    <div class="tile"><span class="label">Sperren 7 Tage</span><span class="value" id="t-week">–</span></div>
+    <div class="tile"><span class="label">Offense-Zähler</span><span class="value" id="t-offenses">–</span></div>
+    <div class="tile"><span class="label">Whitelist-Einträge</span><span class="value" id="t-whitelist">–</span></div>
+    <div class="tile wide"><span class="label">Letzter Querylog-Poll</span><span class="value small" id="t-poll">–</span><span class="sub" id="t-poll-sub"></span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Module</h2>
+    <div id="modules" class="modules"></div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2>Top Client/Domain <small id="top-hint"></small></h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Anfragen</th><th>Client</th><th>Domain</th><th>Protokoll</th></tr></thead>
+        <tbody id="top"></tbody>
+      </table></div>
+    </div>
+    <div class="panel" id="sub-panel">
+      <h2>Subdomain-Flood-Kandidaten <small id="sub-hint"></small></h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Subdomains</th><th>Client</th><th>Basisdomain</th><th>Protokoll</th></tr></thead>
+        <tbody id="subdomains"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Letzte Queries <small id="recent-hint"></small></h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Zeit</th><th>Client</th><th>Protokoll</th><th>Domain</th></tr></thead>
+      <tbody id="recent"></tbody>
+    </table></div>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2>Neueste Sperren</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>IP</th><th>Quelle</th><th>Grund</th><th>Domain</th><th>Land</th><th>Ablauf</th></tr></thead>
+        <tbody id="bans"></tbody>
+      </table></div>
+    </div>
+    <div class="panel">
+      <h2>Letzte Ereignisse</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Zeit</th><th>Aktion</th><th>IP</th><th>Domain</th><th>Grund</th><th>Dauer</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Systemereignisse</h2>
+    <ol id="logs" class="logs"></ol>
+  </section>
+</main>
+
+<footer>AdGuard Shield · Statusseite (nur Anzeige) · Aktualisierung alle 5 Sekunden</footer>
+</body>
+</html>

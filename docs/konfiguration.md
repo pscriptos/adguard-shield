@@ -23,6 +23,25 @@ sudo systemctl restart adguard-shield
 sudo adguard-shield status
 ```
 
+`systemctl reload` wird nicht unterstützt: Ein `SIGHUP` beendet den Daemon nicht mehr, lädt die Konfiguration aber auch nicht neu, sondern schreibt nur einen Hinweis ins Log.
+
+## Prüfung beim Laden
+
+Ungültige Werte führen nicht zum Abbruch, damit der Schutz weiterläuft. Stattdessen wird der Standardwert verwendet und eine Warnung ausgegeben (im Daemon-Log bzw. bei CLI-Befehlen als `WARNUNG:` auf stderr). Geprüft wird unter anderem:
+
+| Prüfung | Beispiel |
+|---|---|
+| Unbekannte Schlüssel (Tippfehler) | `CHEK_INTERVAL=5` |
+| Nicht lesbare Zahlen oder Wahrheitswerte | `RATE_LIMIT_WINDOW=abc`, `GEOIP_ENABLED=vielleicht` |
+| Werte, die größer als `0` sein müssen | `CHECK_INTERVAL=0`, `RATE_LIMIT_WINDOW=0` |
+| Werte, die nicht negativ sein dürfen | `PROGRESSIVE_BAN_MAX_LEVEL=-1`, `BAN_HISTORY_RETENTION_DAYS=-5`, `BAN_DURATION=-1`, `GEOIP_CACHE_TTL=-1` |
+| Ungültige Ports | `BLOCKED_PORTS="53 abc 70000"` (ungültige Einträge werden ignoriert; ist kein Port gültig, gilt `53 443 853`) |
+| Ungültige Auswahlwerte | `GEOIP_MODE`, `FIREWALL_MODE`, `LOG_LEVEL`, `NOTIFY_TYPE`, `REPORT_FORMAT`, `REPORT_INTERVAL` |
+| Ungültige Web-Adresse/-Pfade | `WEB_LISTEN="8443"`, `WEB_BASE_PATH="/../x"`, nur `WEB_TLS_CERT` ohne `WEB_TLS_KEY` |
+| Listen-URLs ohne `https://` | `EXTERNAL_BLOCKLIST_URLS="http://..."` oder `file://...` (die Quelle wird nicht geladen, siehe [Externe Listen: Transport und Größe](#externe-listen-transport-und-größe)) |
+
+Veraltete Schlüssel der Shell-Version wie `BAN_HISTORY_FILE` werden ignoriert und mit einem eigenen Hinweis gemeldet.
+
 ## Automatische Migration
 
 Beim Installieren oder Aktualisieren wird eine vorhandene Konfiguration nicht überschrieben. Der Installer vergleicht vorhandene Schlüssel mit der aktuellen Standardkonfiguration.
@@ -57,6 +76,7 @@ sudo adguard-shield dry-run
 | `ADGUARD_URL` | `https://dns1.domain.com` | URL der AdGuard-Home-Weboberfläche/API |
 | `ADGUARD_USER` | `admin` | Benutzername für die API-Authentifizierung |
 | `ADGUARD_PASS` | `changeme` | Passwort für die API-Authentifizierung |
+| `ADGUARD_TLS_INSECURE` | `false` | `true` = TLS-Zertifikat der AdGuard-Home-API nicht prüfen (nur selbstsigniert/intern) |
 
 ### Beispiel: Lokale Instanz
 
@@ -80,7 +100,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 /control/querylog?limit=<API_QUERY_LIMIT>&response_status=all
 ```
 
-**Hinweis:** Der HTTP-Client akzeptiert auch selbstsignierte TLS-Zertifikate. Das erleichtert lokale Setups, ersetzt aber keine saubere Absicherung der AdGuard-Home-Oberfläche.
+**Hinweis:** Standardmäßig (`ADGUARD_TLS_INSECURE=false`) prüft AdGuard Shield das TLS-Zertifikat der AdGuard-Home-API. Nutzt AdGuard Home ein selbstsigniertes Zertifikat, schlägt die Verbindung fehl. Abhilfe: gültiges Zertifikat, die API lokal per `http://127.0.0.1:<port>` ansprechen oder `ADGUARD_TLS_INSECURE=true` setzen. Letzteres erlaubt Man-in-the-Middle-Angriffe auf die API-Verbindung (Zugangsdaten und Querylog) und sollte nur in vertrauenswürdigen Netzen genutzt werden. Benachrichtigungen prüfen Zertifikate standardmäßig; nur mit `NOTIFY_TLS_INSECURE=true` werden für das Benachrichtigungsziel auch selbstsignierte Zertifikate akzeptiert. AbuseIPDB, externe Listen und der MaxMind-Download prüfen Zertifikate immer. Externe Listen werden außerdem nur per `https://` geladen (siehe [Externe Listen: Transport und Größe](#externe-listen-transport-und-größe)).
 
 ---
 
@@ -89,7 +109,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 | Parameter | Standard | Beschreibung |
 |---|---:|---|
 | `CHECK_INTERVAL` | `10` | Abstand zwischen Querylog-Abfragen in Sekunden |
-| `API_QUERY_LIMIT` | `500` | Anzahl der Querylog-Einträge pro API-Abfrage (max. 5000) |
+| `API_QUERY_LIMIT` | `500` | Seitengröße der Querylog-Abfrage (max. 5000); ist eine Seite voll, werden ältere Seiten nachgeladen (max. 20 pro Poll) |
 
 ### Empfehlungen
 
@@ -97,7 +117,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 |---|---|
 | Normaler Betrieb | `CHECK_INTERVAL=10` ist ein guter Standard |
 | Hohes DNS-Aufkommen | `API_QUERY_LIMIT` auf 1000–2000 erhöhen |
-| `API_QUERY_LIMIT` zu niedrig | Spitzen im Querylog können zwischen zwei Polls verpasst werden |
+| `API_QUERY_LIMIT` zu niedrig | Mehr API-Abfragen pro Poll; ab 20 vollen Seiten werden ältere Einträge nicht mehr ausgewertet (Warnung im Log) |
 | Sehr kurze Intervalle | Erzeugen mehr API-Last auf AdGuard Home |
 
 ---
@@ -143,7 +163,8 @@ Dabei zählt AdGuard Shield nicht die Gesamtzahl der Anfragen, sondern die Anzah
 
 ### Hinweise
 
-- Multi-Part-TLDs wie `.co.uk` werden korrekt als Basisdomain erkannt.
+- Die Basisdomain wird über die [Public Suffix List](https://publicsuffix.org/) bestimmt. Multi-Part-TLDs wie `.co.uk` werden korrekt als Basisdomain erkannt.
+- Auch private Suffixe wie `github.io` oder `cloudfront.net` gelten als Suffix: `nutzer.github.io` und `d111111abcdef8.cloudfront.net` sind jeweils eigene Basisdomains. Viele verschiedene Hosts solcher Plattformen werden daher nicht als Subdomain-Flood auf `github.io` bzw. `cloudfront.net` gewertet.
 - CDNs und manche Apps nutzen legitim viele Subdomains. Betroffene Clients whitelisten oder Grenzwert erhöhen.
 
 ---
@@ -183,9 +204,9 @@ Wenn ein Client `login.microsoft.com` über das Rate-Limit bringt, wird sofort p
 
 | Parameter | Standard | Beschreibung |
 |---|---|---|
-| `BAN_DURATION` | `3600` | Basisdauer temporärer Monitor-Sperren in Sekunden (1 Stunde) |
+| `BAN_DURATION` | `3600` | Basisdauer temporärer Monitor-Sperren in Sekunden (1 Stunde, `0` = Monitor-Sperren sind permanent) |
 | `IPTABLES_CHAIN` | `ADGUARD_SHIELD` | Name der eigenen Firewall-Chain |
-| `BLOCKED_PORTS` | `53 443 853` | Ports, die für gesperrte Clients blockiert werden (Leerzeichen-getrennt) |
+| `BLOCKED_PORTS` | `53 443 853` | Ports oder Portbereiche (`a:b`), die für gesperrte Clients blockiert werden (Leerzeichen- oder Komma-getrennt) |
 | `FIREWALL_BACKEND` | `ipset` | Firewall-Backend (ipset + iptables) |
 | `FIREWALL_MODE` | `host` | Verkehrsweg der AdGuard-Home-Installation |
 | `DRY_RUN` | `false` | Konfigurationsweiter Testmodus ohne echte Sperren |
@@ -215,7 +236,7 @@ Details zu den Docker-Modi stehen in [Docker-Installationen](docker.md).
 
 | Parameter | Standard | Beschreibung |
 |---|---|---|
-| `WHITELIST` | `127.0.0.1,::1` | IPs, die nie gesperrt werden (kommagetrennt) |
+| `WHITELIST` | `127.0.0.1,::1` | IPs oder CIDR-Netze (z.B. `192.168.1.0/24`), die nie gesperrt werden (kommagetrennt) |
 
 ### Beispiel
 
@@ -235,6 +256,8 @@ WHITELIST="127.0.0.1,::1,192.168.1.1,192.168.1.10,fd00::1"
 | VPN-Endpunkte | VPN-IP | Bündeln DNS-Anfragen vieler Nutzer |
 
 **Wichtig:** Die Whitelist wird vor jeder Sperre geprüft. Das gilt für automatische, manuelle, GeoIP- und externe Blocklist-Sperren.
+
+Zu breite Netze werden aus Sicherheitsgründen ignoriert und beim Start mit einer Warnung im Log gemeldet: `/0`, IPv4-Netze kürzer als `/8` und IPv6-Netze kürzer als `/16` (z.B. `0.0.0.0/0` oder `10.0.0.0/7`).
 
 ---
 
@@ -276,6 +299,7 @@ sudo adguard-shield reset-offenses <IP>    # Eine IP zurücksetzen
 |---|---|---|
 | `LOG_FILE` | `/var/log/adguard-shield.log` | Datei für Daemon-Ereignisse |
 | `LOG_LEVEL` | `INFO` | Minimales Log-Level |
+| `LOG_MAX_SIZE_MB` | `50` | Ab dieser Größe wird `LOG_FILE` nach `LOG_FILE.1` rotiert (ein Backup); `0` = keine Rotation |
 
 ### Verfügbare Log-Level
 
@@ -304,6 +328,9 @@ sudo adguard-shield live
 |---|---|---|
 | `STATE_DIR` | `/var/lib/adguard-shield` | Verzeichnis für SQLite-Datenbank und Caches |
 | `PID_FILE` | `/var/run/adguard-shield.pid` | PID-Datei für direkten Vordergrundlauf |
+| `BAN_HISTORY_RETENTION_DAYS` | `0` | Einträge der Ban-History und AbuseIPDB-Meldungen älter als X Tage werden täglich gelöscht; `0` = unbegrenzt aufbewahren |
+
+Abgelaufene GeoIP-Cache-Einträge (älter als `GEOIP_CACHE_TTL`) werden unabhängig davon täglich entfernt, sofern `GEOIP_CACHE_TTL` größer als `0` ist.
 
 ### SQLite-Datei
 
@@ -332,6 +359,7 @@ ${STATE_DIR}/adguard-shield.db
 | `NOTIFY_ENABLED` | `false` | Benachrichtigungen aktivieren |
 | `NOTIFY_TYPE` | `ntfy` | Benachrichtigungskanal |
 | `NOTIFY_WEBHOOK_URL` | leer | Webhook-URL (nicht für ntfy) |
+| `NOTIFY_TLS_INSECURE` | `false` | TLS-Zertifikat des Benachrichtigungsziels nicht prüfen (nur für selbstsignierte/interne Server) |
 | `NTFY_SERVER_URL` | `https://ntfy.sh` | Ntfy-Server |
 | `NTFY_TOPIC` | leer | Ntfy-Topic |
 | `NTFY_TOKEN` | leer | Optionaler Ntfy-Access-Token |
@@ -463,7 +491,11 @@ EXTERNAL_WHITELIST_URLS="https://example.com/a.txt,https://example.net/b.txt"
 - Hostnamen werden per DNS aufgelöst und als IPs in SQLite gespeichert.
 - Aufgelöste IPs werden bei jedem Sync aktualisiert.
 - Bereits aktive Sperren werden aufgehoben, wenn die IP in der Whitelist auftaucht.
-- Kommentare (`#`) und Inline-Kommentare werden unterstützt.
+- Ist eine Quelle nicht erreichbar, wird die zuletzt heruntergeladene Fassung aus dem Cache-Verzeichnis verwendet. Gibt es auch keinen Cache, wird der Sync abgebrochen und die bisherige Whitelist bleibt vollständig erhalten.
+- Zu breite Netze (`/0`, IPv4 kürzer als `/8`, IPv6 kürzer als `/16`, auch als IPv4-mapped IPv6 wie `::ffff:0:0/96`) werden mit Warnung ignoriert.
+- Sicherheitsbremse: Würde ein Sync mehr als 50 % der aktiven Sperren (und mehr als 100) aufheben, wird nur die Whitelist übernommen, die Freigabe aber mit einem ERROR-Logeintrag abgebrochen.
+- Ist der Whitelist-Worker deaktiviert, lädt der Daemon die Whitelist alle 5 Minuten aus der Datenbank neu (z.B. nach `adguard-shield whitelist-sync` über die CLI).
+- Kommentare (`#`) und Inline-Kommentare (`#` oder `;`) werden unterstützt.
 
 ---
 
@@ -510,19 +542,57 @@ EXTERNAL_BLOCKLIST_NOTIFY=false
 - Hostnamen ohne Punkt oder mit ungültigen Zeichen
 - Nicht auflösbare Hostnamen
 - Blocking-Antworten wie `0.0.0.0` oder `::`
+- Loopback-Adressen (`127.0.0.0/8`, `::1`) und Netze mit `/0` (Warnung im Log)
 
 ### Hinweise
 
 - Große Listen können viele Sperren erzeugen. `EXTERNAL_BLOCKLIST_NOTIFY=false` ist deshalb der sichere Standard.
 - Hostnamen mit mehreren IPs: Alle aufgelösten IPs werden verarbeitet.
-- IPs aus der Whitelist werden nicht gesperrt.
+- IPs aus der Whitelist werden nicht gesperrt. Netze, die sich mit einer gewhitelisteten IP oder einem gewhitelisteten Netz überschneiden, werden ebenfalls nicht gesperrt (Warnung im Log).
 - Bei `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` werden entfernte Einträge automatisch wieder freigegeben.
+- Ist eine Quelle nicht erreichbar, wird ihr Cache verwendet. Gibt es keinen Cache, werden die übrigen Listen trotzdem verarbeitet, der Auto-Unban wird in diesem Lauf aber übersprungen. So werden bei einem Download-Fehler keine Sperren versehentlich aufgehoben.
 
 ### Dateiformat-Empfehlungen
 
 - UTF-8 ohne BOM
 - Unix-Zeilenenden (`LF`)
 - IP-Listen und Hostname-Listen möglichst getrennt pflegen
+
+---
+
+## Externe Listen: Transport und Größe
+
+Die externe Whitelist und die externe Blocklist fließen direkt in Firewall-Entscheidungen ein. Deshalb gelten für beide dieselben Regeln beim Download:
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `ALLOW_INSECURE_LIST_URLS` | `false` | `true` = Listen auch unverschlüsselt per `http://` laden (unsicher) |
+
+- Erlaubt sind nur `https://`-URLs mit Host. `http://` wird nur mit `ALLOW_INSECURE_LIST_URLS=true` akzeptiert, andere Schemata wie `file://` oder `ftp://` nie.
+- Eine abgelehnte URL meldet schon beim Start eine Konfigurationswarnung und bei jedem Sync eine Download-Warnung. Sie zählt als fehlgeschlagene Quelle: Die externe Whitelist bleibt dann unverändert, der Auto-Unban der Blocklist wird übersprungen. Ein vorhandener Cache dieser Quelle wird bewusst nicht genutzt, da er aus einem unverschlüsselten Download stammen kann.
+- Mit `ALLOW_INSECURE_LIST_URLS=true` wird für jede `http://`-Quelle beim Start und beim ersten Download eine Warnung geschrieben.
+- Weiterleitungen müssen dieselben Regeln erfüllen. Eine Weiterleitung von `https://` auf `http://` wird ohne `ALLOW_INSECURE_LIST_URLS=true` abgelehnt; dann wird wie bei anderen Download-Fehlern der Cache der Quelle verwendet.
+- Eine Liste darf höchstens 50 MB groß sein. Größere Downloads werden verworfen statt abgeschnitten: Der Cache bleibt unverändert und wird verwendet (Warnung im Log); ohne Cache gilt die Quelle als fehlgeschlagen.
+
+**Hinweis für Updates:** Bis v1.1.x wurden `http://`-Listen ohne Rückfrage geladen. Nach dem Update werden sie abgelehnt, im Log steht z.B. `blocklist Download Warnung Quelle #1 (http://example.com): unverschlüsseltes http:// ist nicht erlaubt ...`. Abhilfe: die URL in `EXTERNAL_WHITELIST_URLS` bzw. `EXTERNAL_BLOCKLIST_URLS` auf `https://` umstellen (die meisten Anbieter unterstützen das) und den Dienst neu starten. Nur wenn die Quelle kein HTTPS anbietet und das Netz vertrauenswürdig ist, bewusst `ALLOW_INSECURE_LIST_URLS=true` setzen. Ein Angreifer im Netzwerkpfad kann sonst beliebige IPs auf die Blocklist setzen oder die Whitelist verändern.
+
+---
+
+## Web-Statusseite
+
+Optionale, schreibgeschützte Statusseite mit Live-Ansicht. Einrichtung, Absicherung und Reverse-Proxy-Beispiele: [Web-Statusseite](webinterface.md).
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `WEB_ENABLED` | `false` | Schreibgeschützte Web-Statusseite aktivieren |
+| `WEB_LISTEN` | `127.0.0.1:8443` | Adresse und Port (`host:port`); Standard nur lokal (Loopback), z. B. für einen SSH-Tunnel |
+| `WEB_BASE_PATH` | `/` | Basispfad, z. B. `/adguard-shield/` hinter einem Reverse-Proxy |
+| `WEB_USER` | `admin` | Benutzername für HTTP Basic Auth |
+| `WEB_PASSWORD` | *(leer)* | Passwort für HTTP Basic Auth; leer = Statusseite ohne Anmeldung |
+| `WEB_TLS_CERT` | *(leer)* | TLS-Zertifikat (PEM); zusammen mit `WEB_TLS_KEY` = HTTPS |
+| `WEB_TLS_KEY` | *(leer)* | Privater TLS-Schlüssel (PEM) |
+
+> Ohne `WEB_PASSWORD` ist die Seite ohne Anmeldung erreichbar. Bindest du sie nicht an `127.0.0.1`, warnt der Daemon beim Start. Ohne TLS wird ein gesetztes Passwort im Klartext übertragen – außerhalb von Loopback/SSH-Tunnel daher TLS verwenden.
 
 ---
 
@@ -565,7 +635,7 @@ ABUSEIPDB_CATEGORIES="4"
 | `GEOIP_SKIP_PRIVATE` | `true` | Private/lokale IPs überspringen |
 | `GEOIP_LICENSE_KEY` | leer | MaxMind-License-Key für automatischen Download |
 | `GEOIP_MMDB_PATH` | leer | Manueller Pfad zur MaxMind-MMDB-Datei (hat Vorrang) |
-| `GEOIP_CACHE_TTL` | `86400` | GeoIP-Cache-Dauer in Sekunden (Standard: 24 Stunden) |
+| `GEOIP_CACHE_TTL` | `86400` | GeoIP-Cache-Dauer in Sekunden (Standard: 24 Stunden, `0` = Einträge laufen nicht ab) |
 
 ### Modi
 
@@ -637,7 +707,9 @@ Damit werden folgende Adressbereiche übersprungen:
 GEOIP_LICENSE_KEY="dein_maxmind_license_key"
 ```
 
-Die Datenbank wird unter `/opt/adguard-shield/geoip/` gespeichert und nach 24 Stunden automatisch erneuert.
+Die Datenbank wird unter `/opt/adguard-shield/geoip/` gespeichert und nach 24 Stunden automatisch erneuert. Der Worker `geoip-refresh` prüft das täglich im laufenden Betrieb, lädt bei Bedarf eine neue Datenbank herunter und tauscht sie ohne Neustart aus. Schlägt der Download fehl, wird die vorhandene ältere Datenbank weiterverwendet und der Fehler geloggt; der License-Key erscheint dabei nicht im Log.
+
+Mit `GEOIP_MMDB_PATH` wird nichts heruntergeladen. Wird die Datei dort extern aktualisiert (z.B. per `geoipupdate`), übernimmt der Daemon sie beim nächsten täglichen Refresh ebenfalls ohne Neustart.
 
 ### GeoIP-Befehle
 

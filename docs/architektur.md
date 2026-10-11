@@ -77,10 +77,12 @@ Beim Start passiert in dieser Reihenfolge:
 | 6 | Whitelist-Cache laden | Liest aufgelöste externe Whitelist-IPs aus SQLite |
 | 7 | GeoIP-Reconcile | Prüft bestehende GeoIP-Sperren gegen aktuelle Konfiguration |
 | 8 | Firewall-Reconcile | Überträgt aktive Sperren aus SQLite wieder in die Firewall |
-| 9 | Hintergrundjobs starten | Startet Goroutines für externe Listen und Offense-Cleanup |
+| 9 | Hintergrundjobs starten | Startet die Worker als Goroutines (siehe [Hintergrundjobs im Daemon](#hintergrundjobs-im-daemon)) |
 | 10 | Querylog-Poller starten | Beginnt mit der regelmäßigen Auswertung des Querylogs |
 
-Das Reconcile beim Start ist besonders wichtig: Wenn der Server neu startet oder `iptables`-Regeln verloren gehen (z.B. durch einen Reboot), bleiben die Sperren in SQLite erhalten und werden beim nächsten Start wieder in die Firewall übertragen.
+Das Reconcile beim Start ist besonders wichtig: Wenn der Server neu startet oder `iptables`-Regeln verloren gehen (z.B. durch einen Reboot), bleiben die Sperren in SQLite erhalten und werden beim nächsten Start wieder in die Firewall übertragen. Zuvor werden bereits abgelaufene temporäre Sperren freigegeben. Die übrigen Sperren werden per `ipset restore -exist` in Blöcken von bis zu 5000 Einträgen geschrieben; schlägt ein Block fehl, werden seine Einträge einzeln per `ipset add` gesetzt, damit ein fehlerhafter Eintrag die anderen nicht verhindert.
+
+Ist `NOTIFY_ENABLED=true`, sendet der Daemon noch vor dem Firewall-Setup die Benachrichtigung „Service gestartet“ und startet danach die Benachrichtigungs-Warteschlange (siehe [Benachrichtigungen](benachrichtigungen.md#zustellung-im-hintergrund)).
 
 ## Querylog-Poller
 
@@ -94,8 +96,10 @@ Gesteuert wird das über:
 
 ```bash
 CHECK_INTERVAL=10       # Abstand zwischen Abfragen in Sekunden
-API_QUERY_LIMIT=500     # Maximale Einträge pro API-Abfrage
+API_QUERY_LIMIT=500     # Einträge pro API-Abfrage (Seitengröße)
 ```
+
+Ist eine Seite voll, blättert der Daemon über `older_than` weiter zurück, bis bereits ausgewertete Einträge oder der Beginn des Analysefensters erreicht sind (maximal 20 Seiten pro Poll).
 
 Aus jedem Querylog-Eintrag werden diese Informationen extrahiert:
 
@@ -146,6 +150,8 @@ m7q2.example.com
 
 AdGuard Shield extrahiert daraus die Basisdomain `example.com` und zählt pro Client, wie viele **unterschiedliche** Subdomains im Fenster vorkommen. Direkte Anfragen an `example.com` selbst werden bei dieser Erkennung nicht mitgezählt.
 
+Die Basisdomain wird über die [Public Suffix List](https://publicsuffix.org/) bestimmt (registrierbare Domain, eTLD+1). Dabei zählen auch private Suffixe wie `github.io` oder `cloudfront.net` als Suffix: `nutzer.github.io` ist eine eigene Basisdomain, und viele verschiedene GitHub-Pages- oder CloudFront-Hosts werden nicht zu einem einzigen Subdomain-Flood auf `github.io` bzw. `cloudfront.net` zusammengezählt.
+
 **Konfiguration:**
 
 ```bash
@@ -165,6 +171,7 @@ SUBDOMAIN_FLOOD_WINDOW=60        # Zeitfenster in Sekunden
 
 - Multi-Part-TLDs wie `.co.uk` werden korrekt als Basisdomain erkannt.
 - CDNs und manche Apps erzeugen legitim viele Subdomains. In solchen Fällen den Grenzwert erhöhen oder den Client whitelisten.
+- Domains, die selbst ein öffentlicher Suffix sind oder sich nicht zuordnen lassen, werden bei dieser Erkennung übersprungen.
 
 ### DNS-Flood-Watchlist
 
@@ -258,6 +265,19 @@ ADGUARD_SHIELD
 
 Bei Docker Bridge mit veröffentlichten Ports ersetzt `DOCKER-USER` die `INPUT`-Chain. Docker leitet solche Pakete nach DNAT über `FORWARD`; die `INPUT`-Chain sieht sie dort nicht zuverlässig.
 
+Beim Firewall-Setup entfernt AdGuard Shield eigene Sprungregeln, die nicht mehr zu `FIREWALL_MODE` oder `BLOCKED_PORTS` passen (z.B. nach einem Moduswechsel oder entfernten Ports). Fremde Regeln bleiben unberührt.
+
+### Timeouts im ipset
+
+Die ipsets werden mit Timeout-Unterstützung angelegt. Wie ein Eintrag gesetzt wird, hängt von der Sperre ab:
+
+| Sperre | Eintrag im ipset |
+|---|---|
+| Temporär | Mit `timeout` (Restlaufzeit in Sekunden); der Kernel entfernt den Eintrag selbstständig |
+| Permanent | Ohne `timeout`; der Eintrag bleibt bis zur Freigabe bestehen |
+
+Temporäre Sperren, die länger dauern als der größte von ipset akzeptierte Timeout (2147483 Sekunden, rund 24,8 Tage), werden ohne ipset-Timeout eingetragen. Maßgeblich ist die Ablaufzeit in SQLite: Der minütliche Ablauf-Job hebt abgelaufene Sperren auf, und beim Reconcile (Dienststart) wird jede noch aktive Sperre mit ihrer Restlaufzeit neu ins ipset geschrieben.
+
 ### Blockierte Ports
 
 Die Ports werden über `BLOCKED_PORTS` konfiguriert:
@@ -294,12 +314,34 @@ Der zentrale Zustand liegt standardmäßig hier:
 | Tabelle | Inhalt | Beschreibung |
 |---|---|---|
 | `active_bans` | Aktive Sperren | IP, Grund, Dauer, Quelle, Ablaufzeit, Offense-Level, GeoIP-Metadaten |
-| `ban_history` | Dauerhafte Historie | Zeitstempel, Aktion (BAN/UNBAN/DRY), Client-IP, Domain, Protokoll, Grund |
+| `ban_history` | Dauerhafte Historie | Zeitstempel, Aktion (BAN/UNBAN/DRY), Client-IP, Domain, Protokoll, Grund; optional begrenzt über `BAN_HISTORY_RETENTION_DAYS` |
 | `offense_tracking` | Progressive-Ban-Stufen | Client-IP, aktuelle Offense-Stufe, letzter Verstoß |
 | `whitelist_cache` | Externe Whitelist | Aufgelöste IPs aus externen Whitelist-URLs mit Quellzuordnung |
 | `geoip_cache` | GeoIP-Ergebnisse | IP, Ländercode, Zeitstempel der Abfrage, DB-Änderungszeitpunkt |
+| `abuseipdb_reports` | AbuseIPDB-Meldungen | Zeitstempel und Client-IP erfolgreicher Meldungen (Grundlage für den Report) |
+| `schema_version` | Schema-Versionen | Angewendete Schema-Versionen mit Zeitpunkt |
 
 Die Datenbank nutzt WAL-Modus (Write-Ahead Logging) und einen Busy-Timeout, damit Daemon und CLI-Befehle gleichzeitig lesen und schreiben können, ohne sich gegenseitig zu blockieren.
+
+### Schema-Versionen und Migrationen
+
+Beim Öffnen legt AdGuard Shield fehlende Tabellen und Indizes an (Schema-Version 1) und wendet danach ausstehende Migrationen der Reihe nach an. Jede Migration läuft in einer eigenen Transaktion und wird in `schema_version` vermerkt, damit sie nur einmal ausgeführt wird, auch wenn Daemon und CLI gleichzeitig starten.
+
+| Version | Inhalt |
+|---:|---|
+| 1 | Basisschema (Tabellen und Grundindizes) |
+| 2 | Zusätzliche Indizes für Sortierung aktiver Sperren (`created_at`) und History-Auswertungen (`action`, `timestamp_epoch`) |
+
+Migration 2 legt nur Indizes an. Eine ältere Version (z.B. v1.1.3) kann die Datenbank deshalb weiterhin lesen.
+
+### Bereinigung
+
+| Daten | Bereinigung |
+|---|---|
+| `ban_history`, `abuseipdb_reports` | Täglich, wenn `BAN_HISTORY_RETENTION_DAYS>0`: Einträge älter als X Tage werden gelöscht |
+| `geoip_cache` | Täglich, wenn `GEOIP_CACHE_TTL>0`: Einträge älter als die TTL werden gelöscht |
+| `offense_tracking` | Stündlich bei aktiven progressiven Sperren: Zähler älter als `PROGRESSIVE_BAN_RESET_AFTER` |
+| `active_bans` | Minütlich: abgelaufene temporäre Sperren werden aufgehoben |
 
 ### History-Aktionen
 
@@ -339,19 +381,44 @@ Nach einer Standardinstallation sieht die Struktur so aus:
 └── adguard-shield-report          # Cron-Job für Reports (optional)
 ```
 
+### Rechte des systemd-Service
+
+Der Daemon läuft als root, die Unit beschränkt die Capabilities aber auf das, was er tatsächlich braucht:
+
+| Capability | Wofür |
+|---|---|
+| `CAP_NET_ADMIN` | `iptables`, `ip6tables`, `ipset` (Chain, Regeln, Sets) |
+| `CAP_NET_RAW` | `iptables-legacy` öffnet einen Raw-Socket |
+| `CAP_NET_BIND_SERVICE` | nur nötig, wenn `WEB_LISTEN` einen Port unter 1024 nutzt |
+
+Alles andere (u. a. `CAP_DAC_OVERRIDE`, `CAP_SETUID`, `CAP_KILL`) ist entfernt. Zusätzlich gelten `NoNewPrivileges=true`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime`, `ProtectClock`, `ProtectControlGroups`, `ProtectKernelLogs` und `SystemCallArchitectures=native`. `ProtectKernelTunables` und `ProtectKernelModules` sind bewusst nicht gesetzt, damit iptables/ipset Netfilter-Einstellungen und -Module wie bisher nutzen können.
+
+Ein Betrieb als eigener Benutzer (`User=`) ist nicht vorgesehen: Firewall-Befehle, `/var/run`, `/var/log` und die Installation unter `/opt` setzen root voraus, und eine Umstellung würde bestehende Dateirechte ändern.
+
+Folgen für die Praxis:
+
+- **Dateirechte:** Ohne `CAP_DAC_OVERRIDE` gelten auch für root die normalen Dateirechte. Alle Pfade, die der Daemon schreibt (`LOG_FILE`, `STATE_DIR`, Listen-Caches, `geoip/`, `PID_FILE`), müssen root gehören oder für root beschreibbar sein; gelesene Dateien (Konfiguration, `GEOIP_MMDB_PATH`) müssen für root lesbar sein. Bei der Standardinstallation ist das der Fall.
+- **E-Mail-Reports:** Reports werden nicht vom Service, sondern per Cron (`report-send`) bzw. per CLI versendet und unterliegen diesen Einschränkungen nicht. `NoNewPrivileges` würde z. B. den setgid-Helfer `postdrop` von Postfix ausbremsen – das betrifft den Report-Versand daher nicht.
+
 ## Hintergrundjobs im Daemon
 
 Es gibt in der Go-Version keine separaten Worker-Skripte mehr. Diese Aufgaben laufen als Goroutines im Daemon:
 
-| Aufgabe | Wann aktiv | Intervall | Zweck |
+| Aufgabe (Name im Log) | Wann aktiv | Intervall | Zweck |
 |---|---|---|---|
 | Querylog-Poller | Immer | `CHECK_INTERVAL` | Liest und analysiert AdGuard-Home-Querylogs |
-| Externe Whitelist | `EXTERNAL_WHITELIST_ENABLED=true` | `EXTERNAL_WHITELIST_INTERVAL` | Lädt Listen, löst Hostnamen auf, aktualisiert Whitelist-Cache |
-| Externe Blocklist | `EXTERNAL_BLOCKLIST_ENABLED=true` | `EXTERNAL_BLOCKLIST_INTERVAL` | Lädt Listen, sperrt neue IPs, hebt entfernte IPs optional auf |
-| Offense-Cleanup | `PROGRESSIVE_BAN_ENABLED=true` | Stündlich | Entfernt abgelaufene Offense-Zähler |
-| GeoIP-Lookups | `GEOIP_ENABLED=true` | Mit jedem Poll | Prüft neue öffentliche Client-IPs gegen Länderregeln |
+| Externe Whitelist (`external-whitelist`) | `EXTERNAL_WHITELIST_ENABLED=true` | `EXTERNAL_WHITELIST_INTERVAL` | Lädt Listen, löst Hostnamen auf, aktualisiert Whitelist-Cache |
+| Whitelist-Reload (`whitelist-reload`) | `EXTERNAL_WHITELIST_ENABLED=false` | Alle 5 Minuten | Lädt die Whitelist aus SQLite neu, damit per CLI (`whitelist-sync`, `whitelist-flush`) geänderte Einträge auch ohne Neustart wirken |
+| Externe Blocklist (`external-blocklist`) | `EXTERNAL_BLOCKLIST_ENABLED=true` | `EXTERNAL_BLOCKLIST_INTERVAL` | Lädt Listen, sperrt neue IPs, hebt entfernte IPs optional auf |
+| GeoIP-Refresh (`geoip-refresh`) | `GEOIP_ENABLED=true` | Täglich | Lädt bei automatischem Download eine neue GeoLite2-Datenbank, sobald die lokale Datei älter als 24 Stunden ist, und tauscht eine geänderte Datenbankdatei ohne Neustart aus |
+| Offense-Cleanup (`offense-cleanup`) | `PROGRESSIVE_BAN_ENABLED=true` | Stündlich | Entfernt abgelaufene Offense-Zähler |
+| Sperren-Ablauf (`ban-expiry`) | Immer | Minütlich | Hebt abgelaufene temporäre Sperren auf |
+| DB-Bereinigung (`db-retention`) | `BAN_HISTORY_RETENTION_DAYS>0` oder `GEOIP_CACHE_TTL>0` | Täglich | Löscht alte History-/AbuseIPDB-Einträge und abgelaufene GeoIP-Cache-Einträge |
+| GeoIP-Lookups | `GEOIP_ENABLED=true` | Mit jedem Poll | Prüft neue öffentliche Client-IPs gegen Länderregeln (bis zu 4 parallel, je IP höchstens einmal pro `GEOIP_CHECK_INTERVAL`) |
 
-Externe Whitelist und Blocklist laufen sofort beim Start einmalig und danach im jeweiligen Intervall. Die Sperren-Freigabe abgelaufener Bans wird bei jedem Querylog-Poll mit geprüft.
+Externe Whitelist, externe Blocklist, Sperren-Ablauf, Offense-Cleanup und DB-Bereinigung laufen sofort beim Start einmalig und danach im jeweiligen Intervall. Whitelist-Reload und GeoIP-Refresh laufen erst nach Ablauf ihres ersten Intervalls, da beim Start ohnehin frisch geladen wird. Abgelaufene Sperren werden zusätzlich beim Start (Reconcile) freigegeben.
+
+Beim GeoIP-Refresh wird die Datenbank im laufenden Betrieb ausgetauscht; der GeoIP-Cache im Speicher wird dabei geleert. Schlägt ein fälliger Download fehl, nutzt der Daemon die vorhandene ältere Datenbank weiter und protokolliert den Fehler. Bei `GEOIP_MMDB_PATH` wird nichts heruntergeladen, aber eine extern aktualisierte Datei (geänderter Änderungszeitpunkt) wird ebenfalls übernommen.
 
 ## Whitelist-Logik
 
@@ -359,7 +426,7 @@ Vor jeder Sperre wird geprüft, ob die IP vertrauenswürdig ist.
 
 **Quellen (in Prüfreihenfolge):**
 
-1. Statische `WHITELIST` aus der Konfiguration (kommagetrennt)
+1. Statische `WHITELIST` aus der Konfiguration (kommagetrennt, IPs und CIDR-Netze)
 2. Aufgelöste IPs aus externen Whitelists (gespeichert in SQLite)
 
 **Verhalten:**
@@ -367,6 +434,10 @@ Vor jeder Sperre wird geprüft, ob die IP vertrauenswürdig ist.
 - Eine gewhitelistete IP wird nie gesperrt, unabhängig von der Sperrquelle.
 - Dies gilt für automatische Sperren, manuelle Sperren, GeoIP-Sperren und externe Blocklist-Sperren.
 - Wenn eine externe Whitelist später eine bereits gesperrte IP enthält, hebt der Daemon diese Sperre automatisch auf.
+- Netze werden als Bereich geprüft: Eine IP ist gewhitelistet, wenn sie in einem gewhitelisteten Netz liegt. Ein zu sperrendes Netz (z.B. aus einer Blocklist) gilt als gewhitelistet, sobald es sich mit einem gewhitelisteten Netz oder einer gewhitelisteten IP überschneidet.
+- Zu breite Netze werden in beiden Quellen ignoriert und mit Warnung gemeldet: `/0`, IPv4 kürzer als `/8` und IPv6 kürzer als `/16`.
+- Die Whitelist liegt als Snapshot im Speicher. Bei einzelnen IPs fragt der Daemon vor einer Sperre zusätzlich SQLite ab, damit per CLI eingetragene Adressen sofort wirken. Ohne aktive externe Whitelist lädt der Worker `whitelist-reload` den Snapshot alle 5 Minuten neu.
+- Sicherheitsbremse: Würde eine Whitelist-Synchronisation mehr als 50 % der aktiven Sperren und mehr als 100 Sperren auf einmal aufheben, wird die Freigabe abgebrochen und ein ERROR geloggt. Die neue Whitelist ist trotzdem aktiv und verhindert neue Sperren.
 
 ## GeoIP-Logik
 
@@ -399,6 +470,8 @@ Die Ländercodes folgen dem Standard ISO 3166-1 Alpha-2 (siehe [ISO-3166-1-Kodie
 | 3 | Legacy-Fallback | `geoiplookup` / `geoiplookup6` (Systembefehle) |
 
 **GeoIP-Sperren sind permanent**, werden aber beim Start gegen die aktuelle Konfiguration geprüft. Wenn GeoIP deaktiviert wird, der Modus wechselt oder ein Land nicht mehr blockiert werden müsste, wird die Sperre automatisch aufgehoben.
+
+Die GeoLite2-Datenbank wird vom Worker `geoip-refresh` täglich geprüft und bei Bedarf ohne Neustart ausgetauscht (siehe [Hintergrundjobs im Daemon](#hintergrundjobs-im-daemon)).
 
 ## AbuseIPDB-Reporting
 
@@ -447,6 +520,8 @@ Es gibt zwei unterschiedliche Blickwinkel auf das Geschehen:
 
 **Wichtig:** Query-Inhalte werden nicht dauerhaft in die Logdatei geschrieben. Für aktuelle Queries ist die Live-Ansicht (`live`) gedacht.
 
+`LOG_FILE` wird ab `LOG_MAX_SIZE_MB` (Standard `50`) nach `LOG_FILE.1` rotiert; es wird genau ein Backup behalten.
+
 ### History-Gründe
 
 | Grund | Bedeutung |
@@ -460,6 +535,10 @@ Es gibt zwei unterschiedliche Blickwinkel auf das Geschehen:
 | `manual-flush` | Freigabe aller Sperren durch `flush` |
 | `expired` | Temporäre Sperre ist abgelaufen |
 | `external-whitelist` | Freigabe durch externe Whitelist |
+| `external-blocklist-removed` | Freigabe, weil die IP nicht mehr in der externen Blocklist steht (Auto-Unban) |
+| `geoip-auto-unban` | Freigabe einer GeoIP-Sperre nach Konfigurationsänderung |
+| `geoip-flush` | Freigabe aller GeoIP-Sperren durch `geoip-flush` |
+| `external-blocklist-flush` | Freigabe aller Blocklist-Sperren durch `blocklist-flush` |
 
 ## Unterschied zur alten Shell-Architektur
 

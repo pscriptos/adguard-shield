@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -335,8 +336,42 @@ func TestBaseDomain(t *testing.T) {
 	if got := baseDomain("a.b.example.com"); got != "example.com" {
 		t.Fatalf("unexpected base domain: %s", got)
 	}
-	if got := baseDomain("a.b.example.co.uk"); got != "example.co.uk" {
-		t.Fatalf("unexpected multipart base domain: %s", got)
+	cases := map[string]string{
+		"a.b.example.co.uk":       "example.co.uk",
+		"x.y.example.com.au":      "example.com.au",
+		"cdn1.foo.github.io":      "foo.github.io",
+		"abc.cloudfront.net":      "abc.cloudfront.net",
+		"x.abc.cloudfront.net":    "abc.cloudfront.net",
+		"Sub.Example.ORG.":        "example.org",
+		"host.lan":                "host.lan",
+		"a.b.c.example.de":        "example.de",
+		"example.com":             "example.com",
+		"com":                     "",
+		"co.uk":                   "",
+		"localhost":               "",
+		"":                        "",
+		"bad..example.com":        "",
+		"1.0.0.10.in-addr.arpa":   "10.in-addr.arpa",
+		"very.deep.a.example.net": "example.net",
+	}
+	for in, want := range cases {
+		if got := baseDomain(in); got != want {
+			t.Errorf("baseDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSubdomainAnalysisSkipsPrivateSuffixAndBaseDomain(t *testing.T) {
+	now := time.Now()
+	var events []queryEvent
+	for i := 0; i < 20; i++ {
+		events = append(events, queryEvent{At: now, Client: "203.0.113.9", Domain: fmt.Sprintf("u%d.github.io", i)})
+		events = append(events, queryEvent{At: now, Client: "203.0.113.9", Domain: fmt.Sprintf("r%d.flood.example", i)})
+	}
+	events = append(events, queryEvent{At: now, Client: "203.0.113.9", Domain: "flood.example"})
+	groups := topSubdomainGroups(events, 60, 10)
+	if len(groups) != 1 || groups[0].Domain != "flood.example" || groups[0].Count != 20 {
+		t.Fatalf("unexpected groups: %+v", groups)
 	}
 }
 
@@ -350,9 +385,8 @@ func TestDryRunDoesNotInsertActiveBan(t *testing.T) {
 		Config: &config.Config{DryRun: true, BanDuration: 60},
 		Store:  store,
 		FW:     firewall.New(firewall.OSExecutor{}, "ADGUARD_SHIELD", []string{"53"}, "host", true),
-		wl:     map[string]bool{},
 	}
-	if err := d.Ban(context.Background(), "1.2.3.4", "example.com", 99, "dns", "rate-limit", "monitor", "", false); err != nil {
+	if err := d.Ban(context.Background(), BanRequest{IP: "1.2.3.4", Domain: "example.com", Count: 99, Protocol: "dns", Reason: "rate-limit", Source: "monitor"}); err != nil {
 		t.Fatal(err)
 	}
 	ok, err := store.BanExists("1.2.3.4")
@@ -395,5 +429,64 @@ func TestGeoIPCheckGateFallsBackToPollInterval(t *testing.T) {
 	}
 	if !d.shouldCheckGeoIP("203.0.113.7", now.Add(10*time.Second)) {
 		t.Fatal("GeoIP check after poll interval should be allowed")
+	}
+}
+
+type statusRoundTripper struct {
+	status int
+	hosts  chan string
+}
+
+func (rt statusRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	rt.hosts <- r.URL.Host
+	return &http.Response{StatusCode: rt.status, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+}
+
+func TestReportAbuseIPDBRecordsOnlySuccessfulReports(t *testing.T) {
+	store, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, tt := range []struct {
+		ip     string
+		status int
+		want   int
+	}{
+		{"203.0.113.7", http.StatusOK, 1},
+		{"203.0.113.8", http.StatusTooManyRequests, 1},
+	} {
+		hosts := make(chan string, 1)
+		d := &Daemon{
+			Config: &config.Config{AbuseIPDBAPIKey: "test", AbuseIPDBCategories: "4"},
+			Store:  store,
+			Client: &http.Client{Transport: statusRoundTripper{status: tt.status, hosts: hosts}},
+		}
+		d.reportAbuseIPDB(context.Background(), db.Ban{IP: tt.ip, Domain: "example.com", Count: 100})
+		select {
+		case host := <-hosts:
+			if host != "api.abuseipdb.com" {
+				t.Fatalf("unexpected host %q", host)
+			}
+		case <-time.After(4 * time.Second):
+			t.Fatal("AbuseIPDB request was not sent")
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		count := 0
+		for time.Now().Before(deadline) {
+			count, _, err = store.AbuseIPDBReportStats(0, time.Now().Unix()+1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count >= tt.want {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond)
+		count, _, _ = store.AbuseIPDBReportStats(0, time.Now().Unix()+1)
+		if count != tt.want {
+			t.Fatalf("after %s (HTTP %d): stored reports = %d, want %d", tt.ip, tt.status, count, tt.want)
+		}
 	}
 }

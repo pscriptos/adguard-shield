@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -57,7 +58,11 @@ type ReportStats struct {
 	AbuseIPDBReports      int
 	RateLimitBans         int
 	SubdomainFloodBans    int
+	WatchlistBans         int
 	ExternalBlocklistBans int
+	GeoIPBans             int
+	ManualBans            int
+	OtherBans             int
 	BusiestDay            string
 	BusiestDayCount       int
 	TopClients            []ReportCount
@@ -119,6 +124,7 @@ CREATE TABLE IF NOT EXISTS ban_history (
  action TEXT NOT NULL, client_ip TEXT NOT NULL, domain TEXT, count TEXT, duration TEXT, protocol TEXT, reason TEXT);
 CREATE TABLE IF NOT EXISTS whitelist_cache (ip_address TEXT PRIMARY KEY, source TEXT, resolved_at TEXT DEFAULT (datetime('now', 'localtime')));
 CREATE TABLE IF NOT EXISTS geoip_cache (ip TEXT PRIMARY KEY, country_code TEXT NOT NULL, looked_up_at_epoch INTEGER NOT NULL, db_mtime INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS abuseipdb_reports (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp_epoch INTEGER NOT NULL, timestamp_text TEXT NOT NULL, client_ip TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_bans_until ON active_bans(ban_until_epoch);
 CREATE INDEX IF NOT EXISTS idx_bans_source ON active_bans(source);
 CREATE INDEX IF NOT EXISTS idx_bans_reason ON active_bans(reason);
@@ -127,9 +133,68 @@ CREATE INDEX IF NOT EXISTS idx_history_action ON ban_history(action);
 CREATE INDEX IF NOT EXISTS idx_history_ip ON ban_history(client_ip);
 CREATE INDEX IF NOT EXISTS idx_offenses_last ON offense_tracking(last_offense_epoch);
 CREATE INDEX IF NOT EXISTS idx_geoip_cache_age ON geoip_cache(looked_up_at_epoch);
+CREATE INDEX IF NOT EXISTS idx_abuseipdb_timestamp ON abuseipdb_reports(timestamp_epoch);
 INSERT OR IGNORE INTO schema_version (version) VALUES (1);`
-	_, err := s.DB.Exec(schema)
-	return err
+	if _, err := s.DB.Exec(schema); err != nil {
+		return err
+	}
+	return s.migrate()
+}
+
+type migration struct {
+	version int
+	sql     string
+}
+
+// migrations werden aufsteigend nach Version angewendet; Version 1 ist das
+// Basisschema aus Init. Einträge dürfen nachträglich nicht geändert werden.
+var migrations = []migration{
+	{2, `CREATE INDEX IF NOT EXISTS idx_bans_created ON active_bans(created_at);
+CREATE INDEX IF NOT EXISTS idx_history_action_timestamp ON ban_history(action, timestamp_epoch);`},
+}
+
+func (s *Store) migrate() error {
+	current, err := s.SchemaVersion()
+	if err != nil {
+		return err
+	}
+	for _, m := range migrations {
+		if m.version <= current {
+			continue
+		}
+		if err := s.applyMigration(m); err != nil {
+			return fmt.Errorf("Migration %d: %w", m.version, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) applyMigration(m migration) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Version zuerst eintragen: Das sichert die Schreibsperre, und ein
+	// parallel startender Prozess überspringt die bereits angewendete Migration.
+	res, err := tx.Exec(`INSERT OR IGNORE INTO schema_version (version) VALUES (?)`, m.version)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return err
+	}
+	if _, err := tx.Exec(m.sql); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SchemaVersion liefert die höchste angewendete Schema-Version.
+func (s *Store) SchemaVersion() (int, error) {
+	var v int
+	err := s.DB.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v)
+	return v, err
 }
 
 func (s *Store) BanExists(ip string) (bool, error) {
@@ -141,34 +206,79 @@ func (s *Store) BanExists(ip string) (bool, error) {
 	return err == nil, err
 }
 
-func (s *Store) BanByIP(ip string) (Ban, bool, error) {
-	row := s.DB.QueryRow(`SELECT client_ip, COALESCE(domain,''), COALESCE(count,0), COALESCE(ban_until_epoch,0),
+const banColumns = `client_ip, COALESCE(domain,''), COALESCE(count,0), COALESCE(ban_until_epoch,0),
 COALESCE(ban_duration,0), COALESCE(offense_level,0), COALESCE(is_permanent,0), COALESCE(reason,''), COALESCE(protocol,''),
-COALESCE(source,''), COALESCE(geoip_country,''), COALESCE(geoip_mode,'') FROM active_bans WHERE client_ip=? LIMIT 1`, ip)
+COALESCE(source,''), COALESCE(geoip_country,''), COALESCE(geoip_mode,'')`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanBan(r rowScanner) (Ban, error) {
 	var b Ban
 	var perm int
-	if err := row.Scan(&b.IP, &b.Domain, &b.Count, &b.BanUntil, &b.Duration, &b.OffenseLevel, &perm, &b.Reason, &b.Protocol, &b.Source, &b.GeoIPCountry, &b.GeoIPMode); err != nil {
-		if err == sql.ErrNoRows {
-			return Ban{}, false, nil
-		}
-		return Ban{}, false, err
+	if err := r.Scan(&b.IP, &b.Domain, &b.Count, &b.BanUntil, &b.Duration, &b.OffenseLevel, &perm, &b.Reason, &b.Protocol, &b.Source, &b.GeoIPCountry, &b.GeoIPMode); err != nil {
+		return Ban{}, err
 	}
 	b.Permanent = perm == 1
+	return b, nil
+}
+
+// queryBans liest Sperren aus active_bans; tail enthält WHERE/ORDER BY.
+func (s *Store) queryBans(tail string, args ...any) ([]Ban, error) {
+	rows, err := s.DB.Query(`SELECT `+banColumns+` FROM active_bans `+tail, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Ban
+	for rows.Next() {
+		b, err := scanBan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) BanByIP(ip string) (Ban, bool, error) {
+	b, err := scanBan(s.DB.QueryRow(`SELECT `+banColumns+` FROM active_bans WHERE client_ip=? LIMIT 1`, ip))
+	if err == sql.ErrNoRows {
+		return Ban{}, false, nil
+	}
+	if err != nil {
+		return Ban{}, false, err
+	}
 	return b, true, nil
 }
 
 func (s *Store) InsertBan(b Ban) error {
-	now := time.Now()
+	_, err := s.insertBan(`INSERT OR REPLACE INTO`, ``, b)
+	return err
+}
+
+// InsertBanIfAbsent legt die Sperre nur an, wenn für die IP noch keine aktive
+// Sperre existiert. true bedeutet, dass diese Sperre neu eingetragen wurde.
+func (s *Store) InsertBanIfAbsent(b Ban) (bool, error) {
+	res, err := s.insertBan(`INSERT INTO`, ` ON CONFLICT(client_ip) DO NOTHING`, b)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) insertBan(verb, conflict string, b Ban) (sql.Result, error) {
 	perm := 0
 	if b.Permanent {
 		perm = 1
 	}
-	_, err := s.DB.Exec(`INSERT OR REPLACE INTO active_bans
+	return s.DB.Exec(verb+` active_bans
 (client_ip, domain, count, ban_time, ban_until_epoch, ban_duration, offense_level, is_permanent, reason, protocol, source, geoip_country, geoip_mode)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		b.IP, b.Domain, b.Count, now.Format("2006-01-02 15:04:05"), b.BanUntil, b.Duration, b.OffenseLevel, perm,
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`+conflict,
+		b.IP, b.Domain, b.Count, time.Now().Format("2006-01-02 15:04:05"), b.BanUntil, b.Duration, b.OffenseLevel, perm,
 		b.Reason, b.Protocol, b.Source, b.GeoIPCountry, b.GeoIPMode)
-	return err
 }
 
 func (s *Store) DeleteBan(ip string) error {
@@ -177,66 +287,39 @@ func (s *Store) DeleteBan(ip string) error {
 }
 
 func (s *Store) ActiveBans() ([]Ban, error) {
-	rows, err := s.DB.Query(`SELECT client_ip, COALESCE(domain,''), COALESCE(count,0), COALESCE(ban_until_epoch,0),
-COALESCE(ban_duration,0), COALESCE(offense_level,0), COALESCE(is_permanent,0), COALESCE(reason,''), COALESCE(protocol,''),
-COALESCE(source,''), COALESCE(geoip_country,''), COALESCE(geoip_mode,'') FROM active_bans ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Ban
-	for rows.Next() {
-		var b Ban
-		var perm int
-		if err := rows.Scan(&b.IP, &b.Domain, &b.Count, &b.BanUntil, &b.Duration, &b.OffenseLevel, &perm, &b.Reason, &b.Protocol, &b.Source, &b.GeoIPCountry, &b.GeoIPMode); err != nil {
-			return nil, err
-		}
-		b.Permanent = perm == 1
-		out = append(out, b)
-	}
-	return out, rows.Err()
+	return s.queryBans(`ORDER BY created_at DESC`)
+}
+
+// RecentActiveBans liefert die neuesten aktiven Sperren (wie ActiveBans sortiert).
+func (s *Store) RecentActiveBans(limit int) ([]Ban, error) {
+	return s.queryBans(`ORDER BY created_at DESC LIMIT ?`, limit)
+}
+
+func (s *Store) CountActiveBans() (int, error) {
+	var count int
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM active_bans`).Scan(&count)
+	return count, err
+}
+
+// CountPermanentActiveBans zählt Sperren ohne Ablauf (wie banUntil in der Anzeige).
+func (s *Store) CountPermanentActiveBans() (int, error) {
+	var count int
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM active_bans WHERE COALESCE(is_permanent,0) <> 0 OR COALESCE(ban_until_epoch,0) <= 0`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountWhitelist() (int, error) {
+	var count int
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM whitelist_cache`).Scan(&count)
+	return count, err
 }
 
 func (s *Store) BansBySource(source string) ([]Ban, error) {
-	rows, err := s.DB.Query(`SELECT client_ip, COALESCE(domain,''), COALESCE(count,0), COALESCE(ban_until_epoch,0),
-COALESCE(ban_duration,0), COALESCE(offense_level,0), COALESCE(is_permanent,0), COALESCE(reason,''), COALESCE(protocol,''),
-COALESCE(source,''), COALESCE(geoip_country,''), COALESCE(geoip_mode,'') FROM active_bans WHERE source=?`, source)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Ban
-	for rows.Next() {
-		var b Ban
-		var perm int
-		if err := rows.Scan(&b.IP, &b.Domain, &b.Count, &b.BanUntil, &b.Duration, &b.OffenseLevel, &perm, &b.Reason, &b.Protocol, &b.Source, &b.GeoIPCountry, &b.GeoIPMode); err != nil {
-			return nil, err
-		}
-		b.Permanent = perm == 1
-		out = append(out, b)
-	}
-	return out, rows.Err()
+	return s.queryBans(`WHERE source=?`, source)
 }
 
 func (s *Store) BansByReason(reason string) ([]Ban, error) {
-	rows, err := s.DB.Query(`SELECT client_ip, COALESCE(domain,''), COALESCE(count,0), COALESCE(ban_until_epoch,0),
-COALESCE(ban_duration,0), COALESCE(offense_level,0), COALESCE(is_permanent,0), COALESCE(reason,''), COALESCE(protocol,''),
-COALESCE(source,''), COALESCE(geoip_country,''), COALESCE(geoip_mode,'') FROM active_bans WHERE reason=?`, reason)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Ban
-	for rows.Next() {
-		var b Ban
-		var perm int
-		if err := rows.Scan(&b.IP, &b.Domain, &b.Count, &b.BanUntil, &b.Duration, &b.OffenseLevel, &perm, &b.Reason, &b.Protocol, &b.Source, &b.GeoIPCountry, &b.GeoIPMode); err != nil {
-			return nil, err
-		}
-		b.Permanent = perm == 1
-		out = append(out, b)
-	}
-	return out, rows.Err()
+	return s.queryBans(`WHERE reason=?`, reason)
 }
 
 func (s *Store) CountBySource(source string) (int, error) {
@@ -348,21 +431,22 @@ func (s *Store) AllWhitelist() (map[string]bool, error) {
 }
 
 func (s *Store) IncrementOffense(ip string, resetAfter int64) (int, error) {
-	now := time.Now()
+	return s.incrementOffenseAt(ip, resetAfter, time.Now())
+}
+
+// incrementOffenseAt erhöht die Stufe in einer einzigen Anweisung, damit
+// parallele Aufrufe keine Erhöhung verlieren. Im SET beziehen sich alle
+// Spaltennamen auf die Werte vor dem Update.
+func (s *Store) incrementOffenseAt(ip string, resetAfter int64, now time.Time) (int, error) {
+	ts := now.Format("2006-01-02 15:04:05")
 	var level int
-	var last int64
-	var first string
-	err := s.DB.QueryRow(`SELECT offense_level, COALESCE(last_offense_epoch,0), COALESCE(first_offense,'') FROM offense_tracking WHERE client_ip=?`, ip).Scan(&level, &last, &first)
-	if err != nil && err != sql.ErrNoRows {
-		return 0, err
-	}
-	if err == sql.ErrNoRows || (last > 0 && now.Unix()-last > resetAfter) {
-		level = 0
-		first = now.Format("2006-01-02 15:04:05")
-	}
-	level++
-	_, err = s.DB.Exec(`INSERT OR REPLACE INTO offense_tracking (client_ip, offense_level, last_offense_epoch, last_offense, first_offense, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)`, ip, level, now.Unix(), now.Format("2006-01-02 15:04:05"), first, now.Format("2006-01-02 15:04:05"))
+	err := s.DB.QueryRow(`INSERT INTO offense_tracking (client_ip, offense_level, last_offense_epoch, last_offense, first_offense, updated_at)
+VALUES (?1, 1, ?2, ?3, ?3, ?3)
+ON CONFLICT(client_ip) DO UPDATE SET
+ offense_level = CASE WHEN COALESCE(last_offense_epoch,0) > 0 AND ?2 - last_offense_epoch > ?4 THEN 1 ELSE COALESCE(offense_level,0) + 1 END,
+ first_offense = CASE WHEN COALESCE(last_offense_epoch,0) > 0 AND ?2 - last_offense_epoch > ?4 THEN ?3 ELSE COALESCE(first_offense,'') END,
+ last_offense_epoch = ?2, last_offense = ?3, updated_at = ?3
+RETURNING offense_level`, ip, now.Unix(), ts, resetAfter).Scan(&level)
 	return level, err
 }
 
@@ -410,8 +494,13 @@ FROM offense_tracking WHERE client_ip=? LIMIT 1`, ip).Scan(&o.IP, &o.Level, &o.L
 	return o, true, nil
 }
 
+// LoadGeoIPCache liefert die Cache-Einträge der letzten ttl Sekunden (ttl <= 0: alle).
 func (s *Store) LoadGeoIPCache(ttl, dbMtime int64) (map[string]string, error) {
-	rows, err := s.DB.Query(`SELECT ip, country_code FROM geoip_cache WHERE looked_up_at_epoch >= ? AND (db_mtime=? OR db_mtime=0)`, time.Now().Unix()-ttl, dbMtime)
+	since := int64(math.MinInt64)
+	if ttl > 0 {
+		since = time.Now().Unix() - ttl
+	}
+	rows, err := s.DB.Query(`SELECT ip, country_code FROM geoip_cache WHERE looked_up_at_epoch >= ? AND (db_mtime=? OR db_mtime=0)`, since, dbMtime)
 	if err != nil {
 		return nil, err
 	}
@@ -452,6 +541,53 @@ func (s *Store) ClearGeoIPCache() (int64, error) {
 	return res.RowsAffected()
 }
 
+// PruneHistory löscht ban_history- und abuseipdb_reports-Einträge, die älter als
+// before (Unix-Zeit) sind, und liefert die Gesamtzahl gelöschter Zeilen.
+func (s *Store) PruneHistory(before int64) (int64, error) {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var total int64
+	for _, q := range []string{
+		`DELETE FROM ban_history WHERE timestamp_epoch < ?`,
+		`DELETE FROM abuseipdb_reports WHERE timestamp_epoch < ?`,
+	} {
+		res, err := tx.Exec(q, before)
+		if err != nil {
+			return 0, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, tx.Commit()
+}
+
+// PruneGeoIPCache löscht GeoIP-Cache-Einträge, die vor before nachgeschlagen wurden.
+func (s *Store) PruneGeoIPCache(before int64) (int64, error) {
+	res, err := s.DB.Exec(`DELETE FROM geoip_cache WHERE looked_up_at_epoch < ?`, before)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PeriodSummary liefert nur TotalBans, TotalUnbans, UniqueIPs und PermanentBans
+// (Werte identisch zu ReportStats) mit einer einzigen Abfrage.
+func (s *Store) PeriodSummary(since, until int64) (ReportStats, error) {
+	st := ReportStats{Since: since, Until: until}
+	err := s.DB.QueryRow(`SELECT COALESCE(SUM(action='BAN'),0), COALESCE(SUM(action='UNBAN'),0),
+COUNT(DISTINCT CASE WHEN action='BAN' THEN client_ip END),
+COALESCE(SUM(action='BAN' AND LOWER(COALESCE(duration,'')) LIKE '%permanent%'),0)
+FROM ban_history WHERE action IN ('BAN','UNBAN') AND timestamp_epoch BETWEEN ? AND ?`, since, until).
+		Scan(&st.TotalBans, &st.TotalUnbans, &st.UniqueIPs, &st.PermanentBans)
+	return st, err
+}
+
 func (s *Store) ReportStats(since, until, busiestSince int64, limit int) (ReportStats, error) {
 	st := ReportStats{Since: since, Until: until}
 	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ?`, since, until).Scan(&st.TotalBans); err != nil {
@@ -469,13 +605,7 @@ func (s *Store) ReportStats(since, until, busiestSince int64, limit int) (Report
 	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM active_bans`).Scan(&st.ActiveBans); err != nil {
 		return st, err
 	}
-	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(reason,'')) LIKE '%rate%limit%'`, since, until).Scan(&st.RateLimitBans); err != nil {
-		return st, err
-	}
-	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(reason,'')) LIKE '%subdomain%flood%'`, since, until).Scan(&st.SubdomainFloodBans); err != nil {
-		return st, err
-	}
-	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND LOWER(COALESCE(reason,'')) LIKE '%external%blocklist%'`, since, until).Scan(&st.ExternalBlocklistBans); err != nil {
+	if err := s.reportAttackTypes(&st, since, until); err != nil {
 		return st, err
 	}
 	if busiestSince <= 0 {
@@ -489,11 +619,16 @@ func (s *Store) ReportStats(since, until, busiestSince int64, limit int) (Report
 	if err != nil {
 		return st, err
 	}
-	st.TopDomains, err = s.reportCounts(`SELECT domain, COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? AND COALESCE(domain,'') NOT IN ('', '-') GROUP BY domain ORDER BY COUNT(*) DESC, domain LIMIT ?`, since, until, limit)
+	// GeoIP-, Blocklist- und manuelle Sperren tragen Platzhalter statt echter Domains.
+	st.TopDomains, err = s.reportCounts(`SELECT domain, COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ?
+AND COALESCE(domain,'') NOT IN ('', '-') AND domain NOT LIKE 'GeoIP:%'
+AND LOWER(COALESCE(reason,'')) NOT IN ('geoip', 'manual', 'external-blocklist')
+GROUP BY domain ORDER BY COUNT(*) DESC, domain LIMIT ?`, since, until, limit)
 	if err != nil {
 		return st, err
 	}
-	st.Protocols, err = s.reportCounts(`SELECT COALESCE(NULLIF(protocol,''), 'unbekannt'), COUNT(*) FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ? GROUP BY COALESCE(NULLIF(protocol,''), 'unbekannt') ORDER BY COUNT(*) DESC LIMIT ?`, since, until, limit)
+	st.Protocols, err = s.reportCounts(`SELECT p, COUNT(*) FROM (SELECT CASE WHEN TRIM(COALESCE(protocol,'')) IN ('', '-') THEN 'n/a' ELSE LOWER(TRIM(protocol)) END AS p
+FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ?) GROUP BY p ORDER BY COUNT(*) DESC, p LIMIT ?`, since, until, limit)
 	if err != nil {
 		return st, err
 	}
@@ -501,7 +636,7 @@ func (s *Store) ReportStats(since, until, busiestSince int64, limit int) (Report
 	if err != nil {
 		return st, err
 	}
-	st.Sources, err = s.reportCounts(`SELECT COALESCE(NULLIF(source,''), 'unknown'), COUNT(*) FROM active_bans GROUP BY COALESCE(NULLIF(source,''), 'unknown') ORDER BY COUNT(*) DESC LIMIT ?`, 0, 0, limit)
+	st.Sources, err = s.reportCounts(`SELECT COALESCE(NULLIF(source,''), 'unknown'), COUNT(*) FROM active_bans GROUP BY COALESCE(NULLIF(source,''), 'unknown') ORDER BY COUNT(*) DESC LIMIT ?`, limit)
 	if err != nil {
 		return st, err
 	}
@@ -513,14 +648,73 @@ func (s *Store) ReportStats(since, until, busiestSince int64, limit int) (Report
 	return st, err
 }
 
-func (s *Store) reportCounts(query string, since, until int64, limit int) ([]ReportCount, error) {
-	var rows *sql.Rows
-	var err error
-	if since == 0 && until == 0 {
-		rows, err = s.DB.Query(query, limit)
-	} else {
-		rows, err = s.DB.Query(query, since, until, limit)
+// reportAttackTypes ordnet jede Sperre genau einer Kategorie zu, damit die
+// Summe der Angriffsarten immer der Gesamtzahl der Sperren entspricht.
+func (s *Store) reportAttackTypes(st *ReportStats, since, until int64) error {
+	rows, err := s.DB.Query(`SELECT CASE
+ WHEN r LIKE '%watchlist%' THEN 'watchlist'
+ WHEN r LIKE '%subdomain%flood%' THEN 'subdomain-flood'
+ WHEN r LIKE '%rate%limit%' THEN 'rate-limit'
+ WHEN r LIKE '%external%blocklist%' THEN 'external-blocklist'
+ WHEN r LIKE 'geoip%' THEN 'geoip'
+ WHEN r = 'manual' THEN 'manual'
+ ELSE 'other' END AS kind, COUNT(*)
+FROM (SELECT LOWER(COALESCE(reason,'')) AS r FROM ban_history WHERE action='BAN' AND timestamp_epoch BETWEEN ? AND ?)
+GROUP BY kind`, since, until)
+	if err != nil {
+		return err
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var count int
+		if err := rows.Scan(&kind, &count); err != nil {
+			return err
+		}
+		switch kind {
+		case "rate-limit":
+			st.RateLimitBans = count
+		case "subdomain-flood":
+			st.SubdomainFloodBans = count
+		case "watchlist":
+			st.WatchlistBans = count
+		case "external-blocklist":
+			st.ExternalBlocklistBans = count
+		case "geoip":
+			st.GeoIPBans = count
+		case "manual":
+			st.ManualBans = count
+		default:
+			st.OtherBans = count
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Store) RecordAbuseIPDBReport(ip string) error {
+	now := time.Now()
+	_, err := s.DB.Exec(`INSERT INTO abuseipdb_reports (timestamp_epoch, timestamp_text, client_ip) VALUES (?, ?, ?)`, now.Unix(), now.Format("2006-01-02 15:04:05"), ip)
+	return err
+}
+
+// AbuseIPDBReportStats liefert die Anzahl gespeicherter Meldungen im Zeitraum und
+// den Zeitpunkt der ältesten gespeicherten Meldung (0, wenn keine existiert).
+func (s *Store) AbuseIPDBReportStats(since, until int64) (int, int64, error) {
+	var count int
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM abuseipdb_reports WHERE timestamp_epoch BETWEEN ? AND ?`, since, until).Scan(&count); err != nil {
+		return 0, 0, err
+	}
+	var first int64
+	if err := s.DB.QueryRow(`SELECT COALESCE(MIN(timestamp_epoch), 0) FROM abuseipdb_reports`).Scan(&first); err != nil {
+		return 0, 0, err
+	}
+	return count, first, nil
+}
+
+// reportCounts führt eine Abfrage mit den Spalten (Name, Anzahl) aus; die
+// Argumente werden unverändert an die Abfrage übergeben.
+func (s *Store) reportCounts(query string, args ...any) ([]ReportCount, error) {
+	rows, err := s.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -26,6 +26,12 @@ Wenn du eine andere Konfigurationsdatei verwenden möchtest, muss `-config` dire
 sudo adguard-shield -config /pfad/zur/adguard-shield.conf status
 ```
 
+Enthält die Konfiguration unbekannte, veraltete oder ungültige Werte, geben alle CLI-Befehle vorab je eine Zeile `WARNUNG: ...` auf stderr aus; ungültige Werte werden dabei durch den Standardwert ersetzt (siehe [Prüfung beim Laden](konfiguration.md#prüfung-beim-laden)). Fehler werden als `FEHLER: ...` auf stderr ausgegeben, der Befehl endet dann mit Exit-Code 1.
+
+```text
+WARNUNG: CHECK_INTERVAL=0 ist ungültig (Minimum 1), verwende Standardwert 10
+```
+
 ### Standardpfade
 
 | Datei | Pfad |
@@ -359,9 +365,23 @@ Zeigt eine Übersicht des aktuellen Zustands:
 - GeoIP-Aktivierung, Modus und Länderliste
 - Externe Blocklist (aktiv/inaktiv, Anzahl URLs)
 - Externe Whitelist (aktiv/inaktiv, Anzahl URLs)
-- Aktive Sperren mit IP, Quelle, Grund und Ablaufzeit
+- Gesamtzahl aktiver Sperren und die Sperren mit IP, Quelle, Grund und Ablaufzeit
 
-Bei sehr vielen aktiven Sperren werden nur die ersten 50 angezeigt. Für Details zu einer konkreten Adresse nutze `ip-status <IP>`, für Ereignisse `history`.
+**Beispielausgabe:**
+
+```text
+AdGuard Shield Daemon Status
+Config: /opt/adguard-shield/adguard-shield.conf
+Firewall: ipset/host (Chain: ADGUARD_SHIELD)
+GeoIP: false (blocklist [])
+Externe Blocklist: false (0 URLs)
+Externe Whitelist: false (0 URLs)
+Aktive Sperren: 2
+  203.0.113.50 | monitor | rate-limit | 2026-10-10 14:32:10
+  198.51.100.7 | manual | manual | permanent
+```
+
+Angezeigt werden höchstens die 50 neuesten Sperren. Gibt es mehr, folgt eine Zeile `... N weitere Sperren. Details mit: adguard-shield ip-status <IP> oder history.` Für Details zu einer konkreten Adresse nutze `ip-status <IP>`, für Ereignisse `history`.
 
 ---
 
@@ -378,7 +398,30 @@ Zeigt den Status einer einzelnen IP-Adresse:
 - statische oder externe Whitelist-Treffer
 - Offense-Zähler für progressive Sperren
 - GeoIP-Cache-Eintrag
-- letzte History-Einträge für diese IP
+- letzte History-Einträge für diese IP (bis zu 5)
+
+Erwartet wird eine einzelne IP-Adresse; Netze (CIDR) werden mit `FEHLER: ungültige IP "..."` abgelehnt.
+
+**Whitelist-Zeile:**
+
+| Ausgabe | Bedeutung |
+|---|---|
+| `Whitelist: nein` | Kein Whitelist-Treffer |
+| `Whitelist: ja (statisch)` | Die IP steht wörtlich in `WHITELIST` |
+| `Whitelist: ja (external, aufgeloest <Zeit>)` | Die IP steht im Cache der externen Whitelist |
+| `Whitelist: ja (Netzbereich)` | Die IP liegt in einem gewhitelisteten CIDR-Netz (statisch oder extern) |
+
+**Beispielausgabe:**
+
+```text
+IP Status
+IP: 192.168.1.100
+Sperre: nein
+Whitelist: ja (Netzbereich)
+Offense-Zaehler: keiner
+GeoIP-Cache: kein Eintrag
+History: keine Eintraege
+```
 
 Der Befehl ist besonders hilfreich, wenn eine IP nicht in der gekürzten `status`-Übersicht auftaucht oder du prüfen möchtest, warum ein Client gesperrt, nicht gesperrt oder nicht erneut eskaliert wurde.
 
@@ -462,7 +505,9 @@ Zeit | Aktion | Client-IP | Domain | Anzahl | Dauer | Protokoll | Grund
 | `expired` | Temporäre Sperre abgelaufen |
 | `external-whitelist` | Freigabe durch externe Whitelist |
 | `geoip-flush` | Freigabe aller GeoIP-Sperren |
+| `geoip-auto-unban` | Freigabe einer GeoIP-Sperre nach Konfigurationsänderung |
 | `external-blocklist-flush` | Freigabe aller Blocklist-Sperren |
+| `external-blocklist-removed` | Freigabe, weil die IP nicht mehr in der externen Blocklist steht |
 
 ---
 
@@ -473,6 +518,8 @@ AdGuard Shield schreibt Daemon-Ereignisse in `LOG_FILE`, standardmäßig:
 ```text
 /var/log/adguard-shield.log
 ```
+
+Ab `LOG_MAX_SIZE_MB` (Standard `50`) wird die Datei nach `adguard-shield.log.1` rotiert (ein Backup).
 
 ### CLI-Befehle
 
@@ -518,7 +565,14 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 sudo adguard-shield ban 192.168.1.100
 ```
 
-Legt eine manuelle permanente Sperre an. Die IP wird sofort in die Firewall eingetragen.
+Legt eine manuelle permanente Sperre an. Die IP wird sofort in die Firewall eingetragen. Statt einer einzelnen IP kann auch ein CIDR-Netz angegeben werden (z.B. `203.0.113.0/24`). Ist die IP bereits gesperrt, passiert nichts.
+
+**Mögliche Fehlermeldungen:**
+
+| Ausgabe | Ursache |
+|---|---|
+| `FEHLER: ungültige IP-Adresse oder ungültiges Netz: "..."` | Keine gültige IP bzw. kein gültiges Netz, oder ein `/0`-Netz |
+| `FEHLER: <IP> steht auf der Whitelist und wird nicht gesperrt` | Die IP bzw. das Netz liegt in `WHITELIST` oder in der externen Whitelist (bei Netzen genügt eine Überschneidung) |
 
 ### IP entsperren
 
@@ -666,7 +720,9 @@ sudo adguard-shield whitelist-flush
 - Eine gewhitelistete IP wird nicht gesperrt.
 - Wird eine bereits gesperrte IP später gewhitelistet, wird sie automatisch freigegeben.
 - Die dauerhafte Synchronisation läuft im Daemon im konfigurierten Intervall.
-- `whitelist-sync` erzwingt nur einen einzelnen, sofortigen Lauf.
+- `whitelist-sync` erzwingt nur einen einzelnen, sofortigen Lauf. Ist eine Quelle nicht erreichbar und auch nicht im Cache, bricht der Lauf mit Fehler ab und die bisherige Whitelist bleibt unverändert.
+- Würde ein Lauf mehr als 50 % der aktiven Sperren (und mehr als 100) freigeben, greift die Sicherheitsbremse: Die Whitelist wird übernommen, die Freigaben werden aber abgebrochen (ERROR im Log).
+- Ist `EXTERNAL_WHITELIST_ENABLED=false`, übernimmt ein laufender Daemon Änderungen durch `whitelist-sync` oder `whitelist-flush` spätestens nach 5 Minuten (einzelne IPs aus `whitelist-sync` wirken sofort). Bei aktiver externer Whitelist überschreibt der nächste reguläre Sync den Stand von `whitelist-flush` wieder.
 
 ---
 
@@ -684,6 +740,8 @@ sudo adguard-shield blocklist-status
 sudo adguard-shield blocklist-sync
 ```
 
+Ist eine Quelle nicht erreichbar, werden die übrigen Quellen (bzw. der Cache der betroffenen Quelle) trotzdem verarbeitet; der Befehl meldet dann aber `FEHLER: <n> von <m> Quellen fehlgeschlagen (Cache genutzt bzw. übersprungen)` und endet mit Exit-Code 1.
+
 ### Alle Sperren aus externer Blocklist aufheben
 
 ```bash
@@ -694,8 +752,9 @@ sudo adguard-shield blocklist-flush
 
 - Die externe Blocklist kann IPs, CIDR-Netze und Hostnamen enthalten.
 - Hostnamen werden per DNS aufgelöst.
-- IPs aus der Whitelist werden übersprungen.
-- Bei `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` hebt der Daemon Blocklist-Sperren automatisch auf, sobald sie nicht mehr in der externen Liste vorkommen.
+- IPs aus der Whitelist werden übersprungen, ebenso Netze, die sich mit der Whitelist überschneiden.
+- `0.0.0.0`, Loopback-Adressen und `/0`-Netze werden nie gesperrt.
+- Bei `EXTERNAL_BLOCKLIST_AUTO_UNBAN=true` hebt der Daemon Blocklist-Sperren automatisch auf, sobald sie nicht mehr in der externen Liste vorkommen. Ist eine Quelle nicht erreichbar (und nicht im Cache), wird der Auto-Unban in diesem Lauf übersprungen.
 
 ---
 
@@ -812,8 +871,8 @@ Der Dry-Run ist der sicherste Weg, neue Konfigurationen zu prüfen, bevor sie pr
 |---|---|
 | Querylogs werden normal gelesen | Keine aktiven Bans werden angelegt |
 | Rate-Limit, Subdomain-Flood, Watchlist werden ausgewertet | Keine Firewall-Regeln werden gesetzt |
-| GeoIP und externe Blocklist werden geprüft | Keine Benachrichtigungen werden gesendet |
-| Mögliche Sperren werden als `DRY` in die History geschrieben | |
+| GeoIP und externe Blocklist werden geprüft | Keine Sperr-Benachrichtigungen (Start/Stopp des Dienstes wird weiterhin gemeldet) |
+| Mögliche Sperren werden als `DRY` in die History geschrieben | Keine AbuseIPDB-Meldungen |
 
 ### Typischer Ablauf nach größeren Änderungen
 
@@ -946,7 +1005,7 @@ Die Beispielzahlen liegen bewusst nahe an den Standardlimits `RATE_LIMIT_MAX_REQ
 ## Eingebaute Hilfe
 
 ```bash
-adguard-shield --help
+sudo adguard-shield --help
 ```
 
-Bei unbekannten Befehlen gibt das Binary die Usage-Ausgabe aus.
+Bei unbekannten Befehlen gibt das Binary die Usage-Ausgabe aus. Da dabei zuerst die Konfiguration geladen wird (`chmod 600`), ist `sudo` nötig; ohne lesbare Konfiguration endet der Aufruf mit `FEHLER: open config ...`.
