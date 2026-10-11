@@ -37,10 +37,10 @@ Ungültige Werte führen nicht zum Abbruch, damit der Schutz weiterläuft. Statt
 | Werte, die nicht negativ sein dürfen | `PROGRESSIVE_BAN_MAX_LEVEL=-1`, `BAN_HISTORY_RETENTION_DAYS=-5`, `BAN_DURATION=-1`, `GEOIP_CACHE_TTL=-1` |
 | Ungültige Ports | `BLOCKED_PORTS="53 abc 70000"` (ungültige Einträge werden ignoriert; ist kein Port gültig, gilt `53 443 853`) |
 | Ungültige Auswahlwerte | `GEOIP_MODE`, `FIREWALL_MODE`, `LOG_LEVEL`, `NOTIFY_TYPE`, `REPORT_FORMAT`, `REPORT_INTERVAL` |
-| Ungültige Web-Adresse/-Pfade | `WEB_LISTEN="8443"`, `WEB_BASE_PATH="/../x"`, nur `WEB_TLS_CERT` ohne `WEB_TLS_KEY` |
+| Ungültiger Web-Port/-Pfad | `WEB_PORT=70000`, `WEB_BASE_PATH="/../x"` |
 | Listen-URLs ohne `https://` | `EXTERNAL_BLOCKLIST_URLS="http://..."` oder `file://...` (die Quelle wird nicht geladen, siehe [Externe Listen: Transport und Größe](#externe-listen-transport-und-größe)) |
 
-Veraltete Schlüssel der Shell-Version wie `BAN_HISTORY_FILE` werden ignoriert und mit einem eigenen Hinweis gemeldet.
+Veraltete Schlüssel wie `BAN_HISTORY_FILE` (Shell-Version) oder `WEB_LISTEN`, `WEB_TLS_CERT` und `WEB_TLS_KEY` (bis v1.2.0) werden ignoriert und mit einem eigenen Hinweis gemeldet.
 
 ## Automatische Migration
 
@@ -580,19 +580,17 @@ Die externe Whitelist und die externe Blocklist fließen direkt in Firewall-Ents
 
 ## Web-Statusseite
 
-Optionale, schreibgeschützte Statusseite mit Live-Ansicht. Einrichtung, Absicherung und Reverse-Proxy-Beispiele: [Web-Statusseite](webinterface.md).
+Optionale, schreibgeschützte Statusseite mit Live-Ansicht. Der eingebaute Webserver spricht nur HTTP und lauscht auf allen Schnittstellen; HTTPS übernimmt ein Reverse-Proxy. Einrichtung, Absicherung und Reverse-Proxy-Beispiele: [Web-Statusseite](webinterface.md).
 
 | Parameter | Standard | Beschreibung |
 |---|---|---|
 | `WEB_ENABLED` | `false` | Schreibgeschützte Web-Statusseite aktivieren |
-| `WEB_LISTEN` | `127.0.0.1:8443` | Adresse und Port (`host:port`); Standard nur lokal (Loopback), z. B. für einen SSH-Tunnel |
-| `WEB_BASE_PATH` | `/` | Basispfad, z. B. `/adguard-shield/` hinter einem Reverse-Proxy |
+| `WEB_PORT` | `8080` | HTTP-Port der Statusseite (1–65535) |
+| `WEB_BASE_PATH` | `/` | Basispfad, z. B. `/adguard-shield/`, wenn der Reverse-Proxy die Seite in einem Unterordner ausliefert |
 | `WEB_USER` | `admin` | Benutzername für HTTP Basic Auth |
 | `WEB_PASSWORD` | *(leer)* | Passwort für HTTP Basic Auth; leer = Statusseite ohne Anmeldung |
-| `WEB_TLS_CERT` | *(leer)* | TLS-Zertifikat (PEM); zusammen mit `WEB_TLS_KEY` = HTTPS |
-| `WEB_TLS_KEY` | *(leer)* | Privater TLS-Schlüssel (PEM) |
 
-> Ohne `WEB_PASSWORD` ist die Seite ohne Anmeldung erreichbar. Bindest du sie nicht an `127.0.0.1`, warnt der Daemon beim Start. Ohne TLS wird ein gesetztes Passwort im Klartext übertragen – außerhalb von Loopback/SSH-Tunnel daher TLS verwenden.
+> Der Port ist auf allen Schnittstellen offen. Ohne `WEB_PASSWORD` ist die Seite ohne Anmeldung erreichbar, der Daemon warnt dann beim Start. Den Port per Firewall auf den Reverse-Proxy beschränken und von außen nur über HTTPS zugreifen, sonst läuft ein gesetztes Passwort im Klartext über das Netz.
 
 ---
 

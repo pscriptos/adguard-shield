@@ -210,7 +210,7 @@ func TestParseHistoryLine(t *testing.T) {
 
 func TestStartWebLifecycle(t *testing.T) {
 	cfg := webTestConfig(t)
-	cfg.WebEnabled, cfg.WebListen, cfg.WebBasePath = true, "127.0.0.1:0", "/"
+	cfg.WebEnabled, cfg.WebPort, cfg.WebBasePath = true, 0, "/"
 	var buf safeBuffer
 	d, _ := newTestDaemon(t, cfg)
 	d.Logger = syslog.New(&buf, "INFO")
@@ -227,13 +227,6 @@ func TestStartWebLifecycle(t *testing.T) {
 		t.Fatalf("nicht geordnet gestoppt: %s", buf.String())
 	}
 
-	buf.Reset()
-	cfg.WebTLSCert = "/nur/zertifikat.pem"
-	stop = d.startWeb(context.Background())
-	stop()
-	if out := buf.String(); !strings.Contains(out, "[WARN]") || !strings.Contains(out, "nicht gestartet") || strings.Contains(out, "Web-Statusseite gestartet") {
-		t.Fatalf("unvollständiges TLS-Paar: %s", out)
-	}
 }
 
 type safeBuffer struct {

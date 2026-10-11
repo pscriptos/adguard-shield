@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"adguard-shield/internal/config"
 )
 
 const maliciousDomain = `<script>alert(1)</script>.evil.example`
@@ -387,24 +389,23 @@ func TestStatusProviderError(t *testing.T) {
 	}
 }
 
-func TestNewRejectsIncompleteTLS(t *testing.T) {
-	for _, o := range []Options{{TLSCert: "/x/cert.pem"}, {TLSKey: "/x/key.pem"}} {
-		if _, err := New(o, &countingProvider{}, nil); !errors.Is(err, ErrTLSIncomplete) {
-			t.Fatalf("%+v: err = %v", o, err)
-		}
-	}
-	if _, err := New(Options{TLSCert: "/x/c", TLSKey: "/x/k"}, &countingProvider{}, nil); err != nil {
-		t.Fatalf("vollständiges TLS-Paar abgelehnt: %v", err)
-	}
+func TestNewRejectsInvalidOptions(t *testing.T) {
 	if _, err := New(Options{BasePath: "/../etc"}, &countingProvider{}, nil); err == nil {
 		t.Fatal("ungültiger Basispfad akzeptiert")
 	}
+	if _, err := New(Options{Listen: "8080"}, &countingProvider{}, nil); err == nil {
+		t.Fatal("ungültige Adresse akzeptiert")
+	}
+	s, _, _ := newServer(t, Options{})
+	if s.opts.Listen != ":8080" {
+		t.Fatalf("Standardadresse %q", s.opts.Listen)
+	}
 }
 
-func TestRunFailsWithMissingTLSFiles(t *testing.T) {
-	s, _, _ := newServer(t, Options{Listen: "127.0.0.1:0", TLSCert: "/nonexistent/c.pem", TLSKey: "/nonexistent/k.pem"})
-	if err := s.Run(context.Background()); err == nil {
-		t.Fatal("Run ohne lesbares Zertifikat muss fehlschlagen")
+func TestOptionsFromConfig(t *testing.T) {
+	o := OptionsFromConfig(&config.Config{WebPort: 9090, WebBasePath: "/x/", WebUser: "u", WebPassword: "p"})
+	if o.Listen != ":9090" || o.BasePath != "/x/" || o.User != "u" || o.Password != "p" {
+		t.Fatalf("%+v", o)
 	}
 }
 
@@ -418,8 +419,7 @@ func TestStartupWarnings(t *testing.T) {
 		{Options{Listen: "localhost:8443"}, ""},
 		{Options{Listen: "0.0.0.0:8443"}, "ohne Anmeldung auf 0.0.0.0:8443"},
 		{Options{Listen: ":8443"}, "ohne Anmeldung"},
-		{Options{Listen: "192.0.2.1:8443", Password: "x"}, "Klartext"},
-		{Options{Listen: "192.0.2.1:8443", Password: "x", TLSCert: "c", TLSKey: "k"}, ""},
+		{Options{Listen: ":8080", Password: "x"}, ""},
 	}
 	for _, c := range cases {
 		s, _, _ := newServer(t, c.opts)
@@ -439,7 +439,7 @@ func TestServeAndGracefulShutdown(t *testing.T) {
 	addr := ln.Addr().String()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.Serve(ctx, ln, nil) }()
+	go func() { done <- s.Serve(ctx, ln) }()
 
 	r, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/api/status", nil)
 	r.SetBasicAuth("admin", "s3cret-pass")

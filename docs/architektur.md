@@ -389,7 +389,7 @@ Der Daemon läuft als root, die Unit beschränkt die Capabilities aber auf das, 
 |---|---|
 | `CAP_NET_ADMIN` | `iptables`, `ip6tables`, `ipset` (Chain, Regeln, Sets) |
 | `CAP_NET_RAW` | `iptables-legacy` öffnet einen Raw-Socket |
-| `CAP_NET_BIND_SERVICE` | nur nötig, wenn `WEB_LISTEN` einen Port unter 1024 nutzt |
+| `CAP_NET_BIND_SERVICE` | nur nötig, wenn `WEB_PORT` unter 1024 liegt |
 
 Alles andere (u. a. `CAP_DAC_OVERRIDE`, `CAP_SETUID`, `CAP_KILL`) ist entfernt. Zusätzlich gelten `NoNewPrivileges=true`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime`, `ProtectClock`, `ProtectControlGroups`, `ProtectKernelLogs` und `SystemCallArchitectures=native`. `ProtectKernelTunables` und `ProtectKernelModules` sind bewusst nicht gesetzt, damit iptables/ipset Netfilter-Einstellungen und -Module wie bisher nutzen können.
 
