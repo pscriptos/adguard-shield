@@ -38,6 +38,7 @@ Ungültige Werte führen nicht zum Abbruch, damit der Schutz weiterläuft. Statt
 | Ungültige Ports | `BLOCKED_PORTS="53 abc 70000"` (ungültige Einträge werden ignoriert; ist kein Port gültig, gilt `53 443 853`) |
 | Ungültige Auswahlwerte | `GEOIP_MODE`, `FIREWALL_MODE`, `LOG_LEVEL`, `NOTIFY_TYPE`, `REPORT_FORMAT`, `REPORT_INTERVAL` |
 | Ungültige Web-Adresse/-Pfade | `WEB_LISTEN="8443"`, `WEB_BASE_PATH="/../x"`, nur `WEB_TLS_CERT` ohne `WEB_TLS_KEY` |
+| Listen-URLs ohne `https://` | `EXTERNAL_BLOCKLIST_URLS="http://..."` oder `file://...` (die Quelle wird nicht geladen, siehe [Externe Listen: Transport und Größe](#externe-listen-transport-und-größe)) |
 
 Veraltete Schlüssel der Shell-Version wie `BAN_HISTORY_FILE` werden ignoriert und mit einem eigenen Hinweis gemeldet.
 
@@ -99,7 +100,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 /control/querylog?limit=<API_QUERY_LIMIT>&response_status=all
 ```
 
-**Hinweis:** Standardmäßig (`ADGUARD_TLS_INSECURE=false`) prüft AdGuard Shield das TLS-Zertifikat der AdGuard-Home-API. Nutzt AdGuard Home ein selbstsigniertes Zertifikat, schlägt die Verbindung fehl. Abhilfe: gültiges Zertifikat, die API lokal per `http://127.0.0.1:<port>` ansprechen oder `ADGUARD_TLS_INSECURE=true` setzen. Letzteres erlaubt Man-in-the-Middle-Angriffe auf die API-Verbindung (Zugangsdaten und Querylog) und sollte nur in vertrauenswürdigen Netzen genutzt werden. Benachrichtigungen prüfen Zertifikate standardmäßig; nur mit `NOTIFY_TLS_INSECURE=true` werden für das Benachrichtigungsziel auch selbstsignierte Zertifikate akzeptiert. AbuseIPDB, externe Listen und der MaxMind-Download prüfen Zertifikate immer.
+**Hinweis:** Standardmäßig (`ADGUARD_TLS_INSECURE=false`) prüft AdGuard Shield das TLS-Zertifikat der AdGuard-Home-API. Nutzt AdGuard Home ein selbstsigniertes Zertifikat, schlägt die Verbindung fehl. Abhilfe: gültiges Zertifikat, die API lokal per `http://127.0.0.1:<port>` ansprechen oder `ADGUARD_TLS_INSECURE=true` setzen. Letzteres erlaubt Man-in-the-Middle-Angriffe auf die API-Verbindung (Zugangsdaten und Querylog) und sollte nur in vertrauenswürdigen Netzen genutzt werden. Benachrichtigungen prüfen Zertifikate standardmäßig; nur mit `NOTIFY_TLS_INSECURE=true` werden für das Benachrichtigungsziel auch selbstsignierte Zertifikate akzeptiert. AbuseIPDB, externe Listen und der MaxMind-Download prüfen Zertifikate immer. Externe Listen werden außerdem nur per `https://` geladen (siehe [Externe Listen: Transport und Größe](#externe-listen-transport-und-größe)).
 
 ---
 
@@ -556,6 +557,24 @@ EXTERNAL_BLOCKLIST_NOTIFY=false
 - UTF-8 ohne BOM
 - Unix-Zeilenenden (`LF`)
 - IP-Listen und Hostname-Listen möglichst getrennt pflegen
+
+---
+
+## Externe Listen: Transport und Größe
+
+Die externe Whitelist und die externe Blocklist fließen direkt in Firewall-Entscheidungen ein. Deshalb gelten für beide dieselben Regeln beim Download:
+
+| Parameter | Standard | Beschreibung |
+|---|---|---|
+| `ALLOW_INSECURE_LIST_URLS` | `false` | `true` = Listen auch unverschlüsselt per `http://` laden (unsicher) |
+
+- Erlaubt sind nur `https://`-URLs mit Host. `http://` wird nur mit `ALLOW_INSECURE_LIST_URLS=true` akzeptiert, andere Schemata wie `file://` oder `ftp://` nie.
+- Eine abgelehnte URL meldet schon beim Start eine Konfigurationswarnung und bei jedem Sync eine Download-Warnung. Sie zählt als fehlgeschlagene Quelle: Die externe Whitelist bleibt dann unverändert, der Auto-Unban der Blocklist wird übersprungen. Ein vorhandener Cache dieser Quelle wird bewusst nicht genutzt, da er aus einem unverschlüsselten Download stammen kann.
+- Mit `ALLOW_INSECURE_LIST_URLS=true` wird für jede `http://`-Quelle beim Start und beim ersten Download eine Warnung geschrieben.
+- Weiterleitungen müssen dieselben Regeln erfüllen. Eine Weiterleitung von `https://` auf `http://` wird ohne `ALLOW_INSECURE_LIST_URLS=true` abgelehnt; dann wird wie bei anderen Download-Fehlern der Cache der Quelle verwendet.
+- Eine Liste darf höchstens 50 MB groß sein. Größere Downloads werden verworfen statt abgeschnitten: Der Cache bleibt unverändert und wird verwendet (Warnung im Log); ohne Cache gilt die Quelle als fehlgeschlagen.
+
+**Hinweis für Updates:** Bis v1.1.x wurden `http://`-Listen ohne Rückfrage geladen. Nach dem Update werden sie abgelehnt, im Log steht z.B. `blocklist Download Warnung Quelle #1 (http://example.com): unverschlüsseltes http:// ist nicht erlaubt ...`. Abhilfe: die URL in `EXTERNAL_WHITELIST_URLS` bzw. `EXTERNAL_BLOCKLIST_URLS` auf `https://` umstellen (die meisten Anbieter unterstützen das) und den Dienst neu starten. Nur wenn die Quelle kein HTTPS anbietet und das Netz vertrauenswürdig ist, bewusst `ALLOW_INSECURE_LIST_URLS=true` setzen. Ein Angreifer im Netzwerkpfad kann sonst beliebige IPs auf die Blocklist setzen oder die Whitelist verändern.
 
 ---
 

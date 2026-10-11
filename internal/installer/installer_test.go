@@ -82,6 +82,29 @@ func TestServiceUnitMatchesRepoService(t *testing.T) {
 	}
 }
 
+func TestServiceUnitHardening(t *testing.T) {
+	d := directives(serviceUnit(DefaultInstallDir))
+	has := map[string]bool{}
+	for _, line := range d {
+		has[line] = true
+	}
+	for _, want := range []string{
+		"NoNewPrivileges=true",
+		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE",
+	} {
+		if !has[want] {
+			t.Errorf("serviceUnit enthaelt %q nicht", want)
+		}
+	}
+	for _, line := range d {
+		for _, bad := range []string{"CAP_DAC_OVERRIDE", "CAP_DAC_READ_SEARCH", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_FOWNER", "CAP_KILL", "CAP_SYS_ADMIN"} {
+			if strings.Contains(line, bad) {
+				t.Errorf("serviceUnit gewaehrt %s: %q", bad, line)
+			}
+		}
+	}
+}
+
 func TestServiceUnitUsesInstallDir(t *testing.T) {
 	unit := serviceUnit("/srv/shield")
 	for _, want := range []string{

@@ -184,7 +184,7 @@ func TestKnownKeysContainsNewKeys(t *testing.T) {
 	for _, k := range KnownKeys() {
 		keys[k] = true
 	}
-	for _, k := range []string{"ADGUARD_TLS_INSECURE", "NOTIFY_TLS_INSECURE", "BAN_HISTORY_RETENTION_DAYS", "LOG_MAX_SIZE_MB", "CHECK_INTERVAL", "GEOIP_CACHE_TTL"} {
+	for _, k := range []string{"ADGUARD_TLS_INSECURE", "NOTIFY_TLS_INSECURE", "ALLOW_INSECURE_LIST_URLS", "BAN_HISTORY_RETENTION_DAYS", "LOG_MAX_SIZE_MB", "CHECK_INTERVAL", "GEOIP_CACHE_TTL"} {
 		if !keys[k] {
 			t.Fatalf("KnownKeys misses %s", k)
 		}
@@ -321,5 +321,54 @@ func TestLoadWebTLSPairWarning(t *testing.T) {
 	}
 	if c := loadString(t, "WEB_USER=\"a:b\"\n"); !hasWarning(c, "WEB_USER") {
 		t.Errorf("Doppelpunkt im Benutzernamen nicht gewarnt: %v", c.Warnings)
+	}
+}
+
+func TestCheckListURL(t *testing.T) {
+	cases := []struct {
+		url          string
+		allow        bool
+		wantInsecure bool
+		wantErr      bool
+	}{
+		{"https://example.com/list.txt", false, false, false},
+		{"HTTPS://example.com/list.txt", false, false, false},
+		{"http://example.com/list.txt", false, false, true},
+		{"http://example.com/list.txt", true, true, false},
+		{"file:///etc/passwd", true, false, true},
+		{"ftp://example.com/list.txt", true, false, true},
+		{"https:///list.txt", true, false, true},
+		{"http://", true, false, true},
+		{"example.com/list.txt", true, false, true},
+		{"", true, false, true},
+	}
+	for _, tc := range cases {
+		insecure, err := CheckListURL(tc.url, tc.allow)
+		if (err != nil) != tc.wantErr || insecure != tc.wantInsecure {
+			t.Errorf("CheckListURL(%q, %v) = %v, %v", tc.url, tc.allow, insecure, err)
+		}
+	}
+	if _, err := CheckListURL("http://example.com/x?token=geheim", false); err == nil || !strings.Contains(err.Error(), "ALLOW_INSECURE_LIST_URLS=true") || strings.Contains(err.Error(), "geheim") {
+		t.Fatalf("Fehler muss die Abhilfe nennen und darf die URL nicht enthalten: %v", err)
+	}
+}
+
+func TestLoadWarnsAboutListURLs(t *testing.T) {
+	c := loadString(t, `EXTERNAL_BLOCKLIST_URLS="https://ok.example/a.txt,http://plain.example/b.txt?token=geheim"
+EXTERNAL_WHITELIST_URLS="file:///etc/hosts"
+`)
+	if c.AllowInsecureListURLs {
+		t.Fatal("ALLOW_INSECURE_LIST_URLS must default to false")
+	}
+	if !hasWarning(c, "EXTERNAL_BLOCKLIST_URLS: Quelle #2 (http://plain.example) wird nicht geladen") || !hasWarning(c, "EXTERNAL_WHITELIST_URLS: Quelle #1 wird nicht geladen") {
+		t.Fatalf("missing warnings: %v", c.Warnings)
+	}
+	if hasWarning(c, "Quelle #1 (https://ok.example)") || hasWarning(c, "geheim") {
+		t.Fatalf("unexpected warning: %v", c.Warnings)
+	}
+
+	c = loadString(t, "ALLOW_INSECURE_LIST_URLS=true\nEXTERNAL_BLOCKLIST_URLS=\"http://plain.example/b.txt\"\n")
+	if !c.AllowInsecureListURLs || !hasWarning(c, "unverschlüsselt per http://") {
+		t.Fatalf("insecure URL must be allowed with a warning: %v", c.Warnings)
 	}
 }

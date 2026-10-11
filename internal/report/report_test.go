@@ -346,3 +346,88 @@ func TestGenerateDoesNotReplacePlaceholdersInValues(t *testing.T) {
 		t.Fatalf("placeholder inside value was replaced\n%s", txt)
 	}
 }
+
+func TestBuildMessageRejectsHeaderInjection(t *testing.T) {
+	const (
+		from    = "shield@example.test"
+		to      = "admin@example.test"
+		subject = "AdGuard Shield Test"
+		mailer  = "test"
+	)
+	tests := []struct {
+		name                       string
+		from, to, subject, xMailer string
+		wantErr                    string
+	}{
+		{"From mit LF und Bcc", "shield@example.test\nBcc: evil@example.org", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mit CRLF", "shield@example.test\r\nBcc: evil@example.org", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mit CR", "shield@example.test\rTo: evil@example.org", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mit NUL", "shield@example.test\x00", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From ungueltig", "kein-at-zeichen", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From mehrere Adressen", "a@example.test, b@example.test", to, subject, mailer, "REPORT_EMAIL_FROM"},
+		{"From leer", "  ", to, subject, mailer, "REPORT_EMAIL_FROM ist leer"},
+		{"To mit LF und Bcc", from, "admin@example.test\nBcc: evil@example.org", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To mit CRLF und To", from, "admin@example.test\r\nTo: evil@example.org", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To mit Tab", from, "admin@example.test\tx", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To ungueltig", from, "admin@", subject, mailer, "REPORT_EMAIL_TO"},
+		{"To leer", from, "", subject, mailer, "REPORT_EMAIL_TO ist leer"},
+		{"Betreff mit LF", from, to, "Report\nBcc: evil@example.org", mailer, "Betreff"},
+		{"Betreff mit CRLF", from, to, "Report\r\nBcc: evil@example.org", mailer, "Betreff"},
+		{"X-Mailer mit LF", from, to, subject, "test\nBcc: evil@example.org", "X-Mailer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := buildMessage(tt.from, tt.to, tt.subject, "body", "txt", tt.xMailer)
+			if err == nil {
+				t.Fatalf("expected error, got message\n%s", msg)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error %q does not mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestBuildMessageValidAddresses(t *testing.T) {
+	tests := []struct {
+		name, from, to   string
+		wantFrom, wantTo string
+	}{
+		{"einzelner Empfaenger", "shield@example.test", "admin@example.test", "<shield@example.test>", "<admin@example.test>"},
+		{"mehrere Empfaenger", "shield@example.test", "admin@example.test, ops@example.test,noc@example.test", "<shield@example.test>", "<admin@example.test>, <ops@example.test>, <noc@example.test>"},
+		{"Anzeigename", "AdGuard Shield <shield@example.test>", `"Admin, Team" <admin@example.test>, Ops <ops@example.test>`, `"AdGuard Shield" <shield@example.test>`, `"Admin, Team" <admin@example.test>, "Ops" <ops@example.test>`},
+		{"Anzeigename mit Umlaut", "Schutzschild Größe <shield@example.test>", "admin@example.test", "=?utf-8?q?Schutzschild_Gr=C3=B6=C3=9Fe?= <shield@example.test>", "<admin@example.test>"},
+		{"Leerzeichen am Rand", "  shield@example.test ", " admin@example.test ", "<shield@example.test>", "<admin@example.test>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := buildMessage(tt.from, tt.to, "AdGuard Shield Wochenbericht – Test", "body", "txt", "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			header, _, _ := strings.Cut(msg, "\n\n")
+			lines := strings.Split(header, "\n")
+			if lines[0] != "From: "+tt.wantFrom {
+				t.Fatalf("From header = %q, want %q", lines[0], "From: "+tt.wantFrom)
+			}
+			if lines[1] != "To: "+tt.wantTo {
+				t.Fatalf("To header = %q, want %q", lines[1], "To: "+tt.wantTo)
+			}
+			if !strings.HasPrefix(lines[2], "Subject: =?utf-8?q?") {
+				t.Fatalf("subject not Q-encoded: %q", lines[2])
+			}
+			if len(lines) != 7 {
+				t.Fatalf("expected 7 header lines, got %d\n%s", len(lines), header)
+			}
+		})
+	}
+}
+
+func TestValidateEmailConfig(t *testing.T) {
+	if err := ValidateEmailConfig(&config.Config{ReportEmailFrom: "shield@example.test", ReportEmailTo: "a@example.test, b@example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateEmailConfig(&config.Config{ReportEmailFrom: "shield@example.test", ReportEmailTo: "a@example.test\nBcc: evil@example.org"}); err == nil {
+		t.Fatal("expected error for injected Bcc header")
+	}
+}

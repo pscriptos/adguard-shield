@@ -53,6 +53,8 @@ Sie werden ins Binary eingebettet und bei `install` sowie `update` nach `/opt/ad
 | `REPORT_MAIL_CMD` | `msmtp` | Mailprogramm für den Versand |
 | `REPORT_BUSIEST_DAY_RANGE` | `30` | Zeitraum für "Aktivster Tag"; `0` nutzt den Berichtszeitraum |
 
+`REPORT_EMAIL_FROM` erwartet genau eine Adresse, `REPORT_EMAIL_TO` eine oder mehrere kommagetrennte Adressen; beide auch in der Form `Name <adresse@example.com>`. Werte mit Zeilenumbrüchen oder anderen Steuerzeichen werden abgelehnt.
+
 ### Versandintervalle
 
 | Intervall | Versandzeitpunkt |

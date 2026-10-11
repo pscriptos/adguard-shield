@@ -22,9 +22,9 @@ func TestListURLsNotExposed(t *testing.T) {
 	var body atomic.Value
 	body.Store("203.0.113.5\n")
 	srv := listServer(t, &body)
-	host := strings.TrimPrefix(srv.URL, "http://")
-	blockURL := "http://listuser:pw-geheim-77@" + host + "/block.txt?token=list-token-999"
-	dead := httptest.NewServer(http.NotFoundHandler())
+	host := strings.TrimPrefix(srv.URL, "https://")
+	blockURL := "https://listuser:pw-geheim-77@" + host + "/block.txt?token=list-token-999"
+	dead := httptest.NewTLSServer(http.NotFoundHandler())
 	deadURL := dead.URL + "/x.txt?token=dead-token-555"
 	dead.Close()
 	wlURL := srv.URL + "/allow.txt?key=wl-token-4242"
@@ -37,6 +37,7 @@ func TestListURLsNotExposed(t *testing.T) {
 	cfg.ExternalWhitelistURLs = []string{wlURL}
 	cfg.NTFYServerURL = "https://ntfy-user:ntfy-pw-31337@ntfy.example"
 	d, _ := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	logFile, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestListURLsNotExposed(t *testing.T) {
 		t.Fatal(err)
 	}
 	logged := string(raw)
-	for _, want := range []string{"nutze Cache: Quelle #1 (http://" + host + ")", "Quelle #2 (http://"} {
+	for _, want := range []string{"nutze Cache: Quelle #1 (https://" + host + ")", "Quelle #2 (https://"} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("Log enthält %q nicht:\n%s", want, logged)
 		}
@@ -169,6 +170,7 @@ func TestSyncBlocklistReportsStaleCache(t *testing.T) {
 	cfg.ExternalBlocklistURLs = []string{srv.URL}
 	cfg.ExternalBlocklistCacheDir = t.TempDir()
 	d, _ := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	if err := d.SyncBlocklist(context.Background()); err != nil {
 		t.Fatal(err)
 	}

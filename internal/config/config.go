@@ -2,8 +2,10 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -83,6 +85,8 @@ type Config struct {
 	ExternalBlocklistDuration  int64
 	ExternalBlocklistAutoUnban bool
 	ExternalBlocklistNotify    bool
+	// AllowInsecureListURLs erlaubt http:// für externe Block-/Whitelists.
+	AllowInsecureListURLs bool
 
 	ProgressiveBanEnabled    bool
 	ProgressiveBanMultiplier int
@@ -193,6 +197,9 @@ func load(values map[string]string) (*Config, *reader) {
 	c.ExternalBlocklistDuration = int64(r.intMin("EXTERNAL_BLOCKLIST_BAN_DURATION", 0, 0))
 	c.ExternalBlocklistAutoUnban = r.bool("EXTERNAL_BLOCKLIST_AUTO_UNBAN", true)
 	c.ExternalBlocklistNotify = r.bool("EXTERNAL_BLOCKLIST_NOTIFY", false)
+	c.AllowInsecureListURLs = r.bool("ALLOW_INSECURE_LIST_URLS", false)
+	r.checkListURLs("EXTERNAL_WHITELIST_URLS", c.ExternalWhitelistURLs, c.AllowInsecureListURLs)
+	r.checkListURLs("EXTERNAL_BLOCKLIST_URLS", c.ExternalBlocklistURLs, c.AllowInsecureListURLs)
 	c.ProgressiveBanEnabled = r.bool("PROGRESSIVE_BAN_ENABLED", true)
 	c.ProgressiveBanMultiplier = r.intMin("PROGRESSIVE_BAN_MULTIPLIER", 2, 1)
 	c.ProgressiveBanMaxLevel = r.intMin("PROGRESSIVE_BAN_MAX_LEVEL", 5, 0)
@@ -483,6 +490,54 @@ func (r *reader) listen(k, def string) string {
 		return def
 	}
 	return v
+}
+
+// ErrInsecureListURL meldet eine http://-Liste ohne ALLOW_INSECURE_LIST_URLS=true.
+var ErrInsecureListURL = errors.New("unverschlüsseltes http:// ist nicht erlaubt, da die Liste per Man-in-the-Middle manipuliert werden kann; URL auf https:// umstellen oder bewusst ALLOW_INSECURE_LIST_URLS=true setzen")
+
+// CheckListURL prüft eine URL für externe Block-/Whitelists: https:// ist
+// immer erlaubt, http:// nur mit allowInsecure (dann ist insecure true), andere
+// Schemata und URLs ohne Host nie. Fehler enthalten die URL bewusst nicht, da
+// Pfad und Query Tokens enthalten können.
+func CheckListURL(raw string, allowInsecure bool) (insecure bool, err error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false, errors.New("ungültige URL")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+	case "http":
+		if !allowInsecure {
+			return false, ErrInsecureListURL
+		}
+		insecure = true
+	case "":
+		return false, errors.New("URL ohne Schema, erlaubt ist nur https://")
+	default:
+		return false, fmt.Errorf("Schema %s:// wird nicht unterstützt, erlaubt ist nur https://", strings.ToLower(u.Scheme))
+	}
+	if u.Hostname() == "" {
+		return false, errors.New("URL ohne Host")
+	}
+	return insecure, nil
+}
+
+// checkListURLs warnt beim Laden vor Listen-URLs, die der Download ablehnen
+// wird oder die unverschlüsselt geladen werden.
+func (r *reader) checkListURLs(k string, urls []string, allowInsecure bool) {
+	for i, raw := range urls {
+		src := fmt.Sprintf("Quelle #%d", i+1)
+		if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+			src += fmt.Sprintf(" (%s://%s)", u.Scheme, u.Host)
+		}
+		insecure, err := CheckListURL(raw, allowInsecure)
+		switch {
+		case err != nil:
+			r.warnf("%s: %s wird nicht geladen: %v", k, src, err)
+		case insecure:
+			r.warnf("%s: %s wird unverschlüsselt per http:// geladen (ALLOW_INSECURE_LIST_URLS=true); Inhalte können unterwegs manipuliert werden, https:// wird dringend empfohlen", k, src)
+		}
+	}
 }
 
 // basePath normalisiert einen URL-Pfad auf führenden und abschließenden Slash.

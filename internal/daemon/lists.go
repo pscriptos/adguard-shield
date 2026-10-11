@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"adguard-shield/internal/config"
 	"adguard-shield/internal/db"
 	"adguard-shield/internal/firewall"
 )
@@ -249,6 +250,48 @@ func previewList(items []string, n int) string {
 	return strings.Join(items[:n], ", ") + ", ..."
 }
 
+// maxListBytes begrenzt die Größe einer heruntergeladenen Liste.
+const maxListBytes = 50 << 20
+
+// maxListRedirects entspricht der Standardgrenze von net/http.
+const maxListRedirects = 10
+
+// listClient liefert eine Kopie von d.Client, deren Weiterleitungen dieselben
+// Regeln wie die konfigurierte URL erfüllen müssen (kein https→http ohne
+// ALLOW_INSECURE_LIST_URLS). d.Client selbst bleibt unverändert, da ihn auch
+// andere Module (z.B. AbuseIPDB) nutzen.
+func (d *Daemon) listClient() *http.Client {
+	base := d.Client
+	if base == nil {
+		base = http.DefaultClient
+	}
+	c := *base
+	allow := d.Config.AllowInsecureListURLs
+	prev := base.CheckRedirect
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if _, err := config.CheckListURL(req.URL.String(), allow); err != nil {
+			return fmt.Errorf("Weiterleitung abgelehnt: %w", err)
+		}
+		if prev != nil {
+			return prev(req, via)
+		}
+		if len(via) >= maxListRedirects {
+			return fmt.Errorf("mehr als %d Weiterleitungen", maxListRedirects)
+		}
+		return nil
+	}
+	return &c
+}
+
+// warnInsecureList warnt einmal pro Prozess und Quelle vor einem
+// unverschlüsselten Listen-Download.
+func (d *Daemon) warnInsecureList(prefix, src string) {
+	if _, loaded := d.insecureListWarned.LoadOrStore(prefix+"|"+src, true); loaded {
+		return
+	}
+	d.warn("%s %s wird unverschlüsselt per http:// geladen (ALLOW_INSECURE_LIST_URLS=true); Inhalte können unterwegs manipuliert werden, bitte auf https:// umstellen", prefix, src)
+}
+
 // fetchCachedLines lädt eine Liste; fromCache meldet, dass der Download
 // fehlschlug und stattdessen der Cache genutzt wurde.
 func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, prefix string, index int) (lines []string, fromCache bool, err error) {
@@ -256,6 +299,16 @@ func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, pref
 	etagFile := filepath.Join(cacheDir, fmt.Sprintf("%s_%d.etag", prefix, index))
 	tmpFile := filepath.Join(cacheDir, fmt.Sprintf("%s_%d.tmp", prefix, index))
 	src := listSource(index, sourceURL)
+
+	// Abgelehnte URLs nutzen bewusst keinen Cache: Dessen Inhalt stammt ggf.
+	// aus einem unverschlüsselten Download.
+	insecure, err := config.CheckListURL(sourceURL, d.Config.AllowInsecureListURLs)
+	if err != nil {
+		return nil, false, err
+	}
+	if insecure {
+		d.warnInsecureList(prefix, src)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
@@ -266,7 +319,7 @@ func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, pref
 			req.Header.Set("If-None-Match", value)
 		}
 	}
-	resp, err := d.Client.Do(req)
+	resp, err := d.listClient().Do(req)
 	if err != nil {
 		err = listErr(err)
 		if b, readErr := os.ReadFile(cacheFile); readErr == nil {
@@ -291,9 +344,18 @@ func (d *Daemon) fetchCachedLines(ctx context.Context, sourceURL, cacheDir, pref
 		}
 		return nil, false, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxListBytes+1))
 	if err != nil {
 		return nil, false, listErr(err)
+	}
+	if len(b) > maxListBytes {
+		// Nie abgeschnitten übernehmen: Eine gekürzte Liste würde Einträge
+		// verlieren (Auto-Unban bzw. Whitelist-Abgleich).
+		if cached, readErr := os.ReadFile(cacheFile); readErr == nil {
+			d.warn("%s Liste größer als %d MB, nutze Cache: %s", prefix, maxListBytes>>20, src)
+			return strings.Split(string(cached), "\n"), true, nil
+		}
+		return nil, false, fmt.Errorf("Liste größer als %d MB", maxListBytes>>20)
 	}
 	if err := os.WriteFile(tmpFile, b, 0644); err != nil {
 		return nil, false, err

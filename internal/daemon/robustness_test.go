@@ -326,8 +326,11 @@ func TestBanSkipsWhenRowInsertedByOtherProcess(t *testing.T) {
 	}
 }
 
+// listServer liefert einen HTTPS-Testserver; externe Listen werden ohne
+// ALLOW_INSECURE_LIST_URLS nur per https:// geladen. Der Daemon braucht dafür
+// srv.Client() (siehe useListServer).
 func listServer(t *testing.T, body *atomic.Value) *httptest.Server {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v, _ := body.Load().(string)
 		if v == "FAIL" {
 			http.Error(w, "kaputt", http.StatusInternalServerError)
@@ -339,8 +342,13 @@ func listServer(t *testing.T, body *atomic.Value) *httptest.Server {
 	return srv
 }
 
+// useListServer lässt d dem Zertifikat des Testservers vertrauen.
+func useListServer(d *Daemon, srv *httptest.Server) {
+	d.Client = srv.Client()
+}
+
 func deadURL(t *testing.T) string {
-	srv := httptest.NewServer(http.NotFoundHandler())
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
 	u := srv.URL + "/list.txt"
 	srv.Close()
 	return u
@@ -352,6 +360,7 @@ func TestSyncWhitelistFailureKeepsOldEntries(t *testing.T) {
 	srv := listServer(t, &body)
 	cfg := &config.Config{ExternalWhitelistURLs: []string{srv.URL, deadURL(t)}, ExternalWhitelistCacheDir: t.TempDir()}
 	d, _ := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	if err := d.Store.ReplaceWhitelist([]string{"192.0.2.1"}, "external"); err != nil {
 		t.Fatal(err)
 	}
@@ -393,6 +402,7 @@ func TestSyncBlocklistFailureSkipsAutoUnban(t *testing.T) {
 		ExternalBlocklistAutoUnban: true,
 	}
 	d, _ := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	if err := d.Store.InsertBan(db.Ban{IP: "198.51.100.7", Source: "external-blocklist", Reason: "external-blocklist", Permanent: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -428,6 +438,7 @@ func TestSyncBlocklistAddsOnlyNewEntriesInOneBatch(t *testing.T) {
 		ExternalBlocklistDuration: 7200,
 	}
 	d, ex := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	if err := d.Store.InsertBan(db.Ban{IP: "203.0.113.2", Source: "monitor", Reason: "rate-limit", BanUntil: time.Now().Unix() + 100, Duration: 100}); err != nil {
 		t.Fatal(err)
 	}
@@ -492,6 +503,7 @@ func TestSyncBlocklistNotificationSummary(t *testing.T) {
 				NotifyEnabled: true, NotifyType: "generic", NotifyWebhook: sink.srv.URL,
 				ExternalBlocklistNotify: true, ExternalBlocklistURLs: []string{srv.URL}, ExternalBlocklistCacheDir: t.TempDir(),
 			})
+			useListServer(d, srv)
 			if err := d.SyncBlocklist(context.Background()); err != nil {
 				t.Fatal(err)
 			}

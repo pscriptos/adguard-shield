@@ -529,13 +529,6 @@ func flushSource(ctx context.Context, d *daemon.Daemon, source string) error {
 	return nil
 }
 
-func writePID(path string) error {
-	if path == "" {
-		return nil
-	}
-	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())+"\n"), 0644)
-}
-
 func commandContext(d *daemon.Daemon, daemonMode bool) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	signals := make(chan os.Signal, 1)

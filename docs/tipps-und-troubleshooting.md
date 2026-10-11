@@ -53,6 +53,8 @@ sudo journalctl -u adguard-shield --no-pager -n 100
 | Systempakete fehlen | `which iptables ip6tables ipset systemctl` prüfen |
 | API nicht erreichbar | Erst AdGuard Home starten |
 | Alte Shell-Artefakte | Go-Installer meldet Konflikte, alte Version deinstallieren |
+| `permission denied` auf Log-, State- oder Cache-Dateien | Der Service hat kein `CAP_DAC_OVERRIDE` mehr (siehe [Rechte des systemd-Service](architektur.md#rechte-des-systemd-service)). Betroffene Dateien müssen root gehören bzw. für root beschreibbar sein, z. B. `sudo chown root: /var/log/adguard-shield.log` |
+| `PID-Datei ... ist keine reguläre Datei` | `PID_FILE` zeigt auf einen Symlink, ein Verzeichnis o. Ä.; aus Sicherheitsgründen wird das abgelehnt. Eintrag entfernen oder `PID_FILE` auf eine normale Datei setzen |
 | Unit manuell geändert | `sudo systemctl daemon-reload` ausführen |
 | Konfiguration geändert, aber ohne Wirkung | `sudo systemctl restart adguard-shield` ausführen; `systemctl reload` lädt die Konfiguration nicht neu |
 | Warnungen zur Konfiguration im Log | Tippfehler oder ungültige Werte; betroffene Parameter nutzen den Standardwert (siehe [Konfiguration](konfiguration.md#prüfung-beim-laden)) |

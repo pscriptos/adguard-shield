@@ -70,6 +70,9 @@ type Daemon struct {
 
 	queryLogLimitWarned time.Time
 
+	// insecureListWarned merkt sich bereits gemeldete http://-Listen.
+	insecureListWarned sync.Map
+
 	banMu sync.Mutex
 
 	geoMu      sync.Mutex

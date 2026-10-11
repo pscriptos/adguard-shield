@@ -589,16 +589,33 @@ Restart=on-failure
 RestartSec=30
 
 # Sicherheits-Hardening
+# Der Daemon läuft als root, aber nur mit den Capabilities, die er wirklich
+# nutzt. Log, State-DB, Listen-Caches, GeoIP-Downloads und PID-Datei gehören
+# root, daher sind CAP_DAC_OVERRIDE, CAP_DAC_READ_SEARCH, CAP_FOWNER und
+# CAP_CHOWN nicht nötig. Der Daemon wechselt keine Benutzer (kein CAP_SETUID/
+# CAP_SETGID) und signalisiert keine fremden Prozesse (kein CAP_KILL).
+# E-Mail-Reports laufen per Cron (report-send) außerhalb dieses Service;
+# NoNewPrivileges betrifft sendmail/postdrop daher nicht.
 ProtectSystem=full
 ReadWritePaths=/var/log /var/lib/adguard-shield /var/run %[1]s/geoip
 ProtectHome=true
-NoNewPrivileges=false
 PrivateTmp=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+SystemCallArchitectures=native
+# Bewusst nicht gesetzt: ProtectKernelTunables (iptables/ipset können
+# /proc/sys/net beschreiben) und ProtectKernelModules (Netfilter-Module).
 
-# iptables benötigt CAP_NET_ADMIN + CAP_NET_RAW
-# Weitere Capabilities für Dateizugriff, Signale und Prozessverwaltung
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_KILL CAP_SETUID CAP_SETGID CAP_CHOWN
+# CAP_NET_ADMIN: iptables, ip6tables, ipset
+# CAP_NET_RAW: iptables-legacy nutzt einen Raw-Socket
+# CAP_NET_BIND_SERVICE: nur für WEB_LISTEN mit einem Port unter 1024
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 # Logging
 StandardOutput=journal
@@ -732,6 +749,10 @@ EXTERNAL_BLOCKLIST_BAN_DURATION=0   # 0 = permanent bis IP aus Liste entfernt
 EXTERNAL_BLOCKLIST_AUTO_UNBAN=true
 EXTERNAL_BLOCKLIST_NOTIFY=false     # Bei großen Listen auf false lassen
 EXTERNAL_BLOCKLIST_CACHE_DIR="/var/lib/adguard-shield/external-blocklist"
+
+# --- Externe Listen: Transport ---
+# Externe White-/Blocklisten werden standardmäßig nur per https:// geladen.
+ALLOW_INSECURE_LIST_URLS=false      # true = auch http:// erlauben (unsicher, Listen können manipuliert werden)
 
 # --- Progressive Sperren (Recidive) ---
 # Wiederholungstäter werden stufenweise länger gesperrt

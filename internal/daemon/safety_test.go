@@ -60,6 +60,7 @@ func TestSyncWhitelistIgnoresBroadEntries(t *testing.T) {
 	srv := listServer(t, &body)
 	cfg := &config.Config{ExternalWhitelistURLs: []string{srv.URL}, ExternalWhitelistCacheDir: t.TempDir()}
 	d, _ := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	for _, ip := range []string{"203.0.113.1", "198.51.100.7"} {
 		if err := d.Store.InsertBan(db.Ban{IP: ip, Source: "monitor", Reason: "rate-limit", Permanent: true}); err != nil {
 			t.Fatal(err)
@@ -124,6 +125,7 @@ func TestSyncWhitelistSafetyBrake(t *testing.T) {
 	srv := listServer(t, &body)
 	cfg := &config.Config{ExternalWhitelistURLs: []string{srv.URL}, ExternalWhitelistCacheDir: t.TempDir()}
 	d, _ := newTestDaemon(t, cfg)
+	useListServer(d, srv)
 	insertBans(t, d.Store, "10.0.0", 150)
 	insertBans(t, d.Store, "203.0.113", 10)
 	if err := d.SyncWhitelist(context.Background()); err != nil {

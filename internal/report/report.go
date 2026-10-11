@@ -11,12 +11,14 @@ import (
 	"mime"
 	"mime/quotedprintable"
 	"net/http"
+	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"adguard-shield/internal/appinfo"
 	"adguard-shield/internal/config"
@@ -131,6 +133,9 @@ func InstallCron(binary, configPath string, c *config.Config) error {
 	if !c.ReportEnabled {
 		return fmt.Errorf("Report ist deaktiviert (REPORT_ENABLED=false)")
 	}
+	if err := ValidateEmailConfig(c); err != nil {
+		return err
+	}
 	minute, hour, err := parseReportTime(c.ReportTime)
 	if err != nil {
 		return err
@@ -169,16 +174,16 @@ func sendMail(ctx context.Context, c *config.Config, subject, body, format, xMai
 	if strings.TrimSpace(c.ReportEmailTo) == "" {
 		return fmt.Errorf("REPORT_EMAIL_TO ist leer")
 	}
+	msg, err := buildMessage(c.ReportEmailFrom, c.ReportEmailTo, subject, body, format, xMailer)
+	if err != nil {
+		return err
+	}
 	parts := strings.Fields(c.ReportMailCmd)
 	if len(parts) == 0 {
 		return fmt.Errorf("REPORT_MAIL_CMD ist leer")
 	}
 	if _, err := exec.LookPath(parts[0]); err != nil {
 		return fmt.Errorf("Mail-Befehl nicht gefunden: %s", parts[0])
-	}
-	msg, err := buildMessage(c.ReportEmailFrom, c.ReportEmailTo, subject, body, format, xMailer)
-	if err != nil {
-		return err
 	}
 	args := append(parts[1:], "-t")
 	cmd := exec.CommandContext(ctx, parts[0], args...)
@@ -188,10 +193,74 @@ func sendMail(ctx context.Context, c *config.Config, subject, body, format, xMai
 	return cmd.Run()
 }
 
+// ValidateEmailConfig prüft REPORT_EMAIL_FROM und REPORT_EMAIL_TO, damit eine
+// Fehlkonfiguration früh auffällt (z. B. beim Start oder bei report-install).
+// Erlaubt sind eine Absenderadresse und eine oder mehrere kommagetrennte
+// Empfängeradressen, jeweils auch in der Form "Name <adresse@example.com>".
+func ValidateEmailConfig(c *config.Config) error {
+	_, _, err := parseAddresses(c.ReportEmailFrom, c.ReportEmailTo)
+	return err
+}
+
+// parseAddresses validiert Absender und Empfänger und liefert die Header-Werte
+// aus den geparsten Adressen. Da sendmail mit -t läuft, würden per CR/LF
+// eingeschleuste Header (z. B. Bcc:) sonst zu echten Empfängern.
+func parseAddresses(from, to string) (string, string, error) {
+	if err := checkHeaderValue("REPORT_EMAIL_FROM", from); err != nil {
+		return "", "", err
+	}
+	if err := checkHeaderValue("REPORT_EMAIL_TO", to); err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(from) == "" {
+		return "", "", fmt.Errorf("REPORT_EMAIL_FROM ist leer")
+	}
+	if strings.TrimSpace(to) == "" {
+		return "", "", fmt.Errorf("REPORT_EMAIL_TO ist leer")
+	}
+	fromAddr, err := mail.ParseAddress(from)
+	if err != nil {
+		return "", "", fmt.Errorf("REPORT_EMAIL_FROM ist keine gueltige E-Mail-Adresse (%q): %v", from, err)
+	}
+	toAddrs, err := mail.ParseAddressList(to)
+	if err != nil {
+		return "", "", fmt.Errorf("REPORT_EMAIL_TO enthaelt keine gueltige E-Mail-Adressliste (%q): %v", to, err)
+	}
+	if len(toAddrs) == 0 {
+		return "", "", fmt.Errorf("REPORT_EMAIL_TO ist leer")
+	}
+	list := make([]string, 0, len(toAddrs))
+	for _, a := range toAddrs {
+		list = append(list, a.String())
+	}
+	return fromAddr.String(), strings.Join(list, ", "), nil
+}
+
+// checkHeaderValue lehnt Steuerzeichen (insbesondere CR/LF) in Header-Werten ab.
+func checkHeaderValue(name, value string) error {
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%s enthaelt unzulaessige Steuerzeichen (z. B. Zeilenumbruch): %q", name, value)
+		}
+	}
+	return nil
+}
+
 // buildMessage baut die Mail für "sendmail -t". Der Body wird quoted-printable
 // kodiert, da generierte Tabellen sonst Zeilen über 998 Zeichen erzeugen (RFC 5322).
 // Zeilenenden bleiben LF wie bei den Headern; der MTA wandelt sie in CRLF um.
+// Alle Header-Werte werden vorher validiert, damit keine Header eingeschleust werden können.
 func buildMessage(from, to, subject, body, format, xMailer string) (string, error) {
+	fromHeader, toHeader, err := parseAddresses(from, to)
+	if err != nil {
+		return "", err
+	}
+	if err := checkHeaderValue("Betreff", subject); err != nil {
+		return "", err
+	}
+	if err := checkHeaderValue("X-Mailer", xMailer); err != nil {
+		return "", err
+	}
 	contentType := "text/plain; charset=UTF-8"
 	if strings.EqualFold(format, "html") {
 		contentType = "text/html; charset=UTF-8"
@@ -205,8 +274,8 @@ func buildMessage(from, to, subject, body, format, xMailer string) (string, erro
 		return "", err
 	}
 	return strings.Join([]string{
-		"From: " + from,
-		"To: " + to,
+		"From: " + fromHeader,
+		"To: " + toHeader,
 		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
 		"MIME-Version: 1.0",
 		"Content-Type: " + contentType,

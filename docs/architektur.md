@@ -381,6 +381,25 @@ Nach einer Standardinstallation sieht die Struktur so aus:
 └── adguard-shield-report          # Cron-Job für Reports (optional)
 ```
 
+### Rechte des systemd-Service
+
+Der Daemon läuft als root, die Unit beschränkt die Capabilities aber auf das, was er tatsächlich braucht:
+
+| Capability | Wofür |
+|---|---|
+| `CAP_NET_ADMIN` | `iptables`, `ip6tables`, `ipset` (Chain, Regeln, Sets) |
+| `CAP_NET_RAW` | `iptables-legacy` öffnet einen Raw-Socket |
+| `CAP_NET_BIND_SERVICE` | nur nötig, wenn `WEB_LISTEN` einen Port unter 1024 nutzt |
+
+Alles andere (u. a. `CAP_DAC_OVERRIDE`, `CAP_SETUID`, `CAP_KILL`) ist entfernt. Zusätzlich gelten `NoNewPrivileges=true`, `RestrictSUIDSGID`, `LockPersonality`, `RestrictRealtime`, `ProtectClock`, `ProtectControlGroups`, `ProtectKernelLogs` und `SystemCallArchitectures=native`. `ProtectKernelTunables` und `ProtectKernelModules` sind bewusst nicht gesetzt, damit iptables/ipset Netfilter-Einstellungen und -Module wie bisher nutzen können.
+
+Ein Betrieb als eigener Benutzer (`User=`) ist nicht vorgesehen: Firewall-Befehle, `/var/run`, `/var/log` und die Installation unter `/opt` setzen root voraus, und eine Umstellung würde bestehende Dateirechte ändern.
+
+Folgen für die Praxis:
+
+- **Dateirechte:** Ohne `CAP_DAC_OVERRIDE` gelten auch für root die normalen Dateirechte. Alle Pfade, die der Daemon schreibt (`LOG_FILE`, `STATE_DIR`, Listen-Caches, `geoip/`, `PID_FILE`), müssen root gehören oder für root beschreibbar sein; gelesene Dateien (Konfiguration, `GEOIP_MMDB_PATH`) müssen für root lesbar sein. Bei der Standardinstallation ist das der Fall.
+- **E-Mail-Reports:** Reports werden nicht vom Service, sondern per Cron (`report-send`) bzw. per CLI versendet und unterliegen diesen Einschränkungen nicht. `NoNewPrivileges` würde z. B. den setgid-Helfer `postdrop` von Postfix ausbremsen – das betrifft den Report-Versand daher nicht.
+
 ## Hintergrundjobs im Daemon
 
 Es gibt in der Go-Version keine separaten Worker-Skripte mehr. Diese Aufgaben laufen als Goroutines im Daemon:
