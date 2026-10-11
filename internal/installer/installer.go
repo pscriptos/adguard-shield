@@ -663,7 +663,7 @@ const defaultConfig = `#########################################################
 ADGUARD_URL="https://dns1.domain.com"
 ADGUARD_USER="admin"
 ADGUARD_PASS='changeme'
-ADGUARD_TLS_INSECURE=true           # TLS-Zertifikat der AdGuard-API nicht prüfen (selbstsigniert); gilt nur für die AdGuard-API
+ADGUARD_TLS_INSECURE=false          # true = TLS-Zertifikat der AdGuard-API nicht prüfen (nur selbstsigniert/intern)
 
 # --- Rate-Limit ---
 RATE_LIMIT_MAX_REQUESTS=30          # Max. Anfragen pro Domain/Client im Zeitfenster

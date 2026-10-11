@@ -75,7 +75,7 @@ sudo adguard-shield dry-run
 | `ADGUARD_URL` | `https://dns1.domain.com` | URL der AdGuard-Home-Weboberfläche/API |
 | `ADGUARD_USER` | `admin` | Benutzername für die API-Authentifizierung |
 | `ADGUARD_PASS` | `changeme` | Passwort für die API-Authentifizierung |
-| `ADGUARD_TLS_INSECURE` | `true` | TLS-Zertifikat der AdGuard-Home-API nicht prüfen (z.B. selbstsigniert) |
+| `ADGUARD_TLS_INSECURE` | `false` | `true` = TLS-Zertifikat der AdGuard-Home-API nicht prüfen (nur selbstsigniert/intern) |
 
 ### Beispiel: Lokale Instanz
 
@@ -99,7 +99,7 @@ AdGuard Shield ruft intern diesen Endpunkt ab:
 /control/querylog?limit=<API_QUERY_LIMIT>&response_status=all
 ```
 
-**Hinweis:** Mit `ADGUARD_TLS_INSECURE=true` (Standard) akzeptiert AdGuard Shield für die AdGuard-Home-API auch selbstsignierte TLS-Zertifikate. Das erleichtert lokale Setups, ersetzt aber keine saubere Absicherung der AdGuard-Home-Oberfläche. Hat AdGuard Home ein gültiges Zertifikat, sollte `ADGUARD_TLS_INSECURE=false` gesetzt werden. Benachrichtigungen prüfen Zertifikate standardmäßig; nur mit `NOTIFY_TLS_INSECURE=true` werden für das Benachrichtigungsziel auch selbstsignierte Zertifikate akzeptiert. AbuseIPDB, externe Listen und der MaxMind-Download prüfen Zertifikate immer.
+**Hinweis:** Standardmäßig (`ADGUARD_TLS_INSECURE=false`) prüft AdGuard Shield das TLS-Zertifikat der AdGuard-Home-API. Nutzt AdGuard Home ein selbstsigniertes Zertifikat, schlägt die Verbindung fehl. Abhilfe: gültiges Zertifikat, die API lokal per `http://127.0.0.1:<port>` ansprechen oder `ADGUARD_TLS_INSECURE=true` setzen. Letzteres erlaubt Man-in-the-Middle-Angriffe auf die API-Verbindung (Zugangsdaten und Querylog) und sollte nur in vertrauenswürdigen Netzen genutzt werden. Benachrichtigungen prüfen Zertifikate standardmäßig; nur mit `NOTIFY_TLS_INSECURE=true` werden für das Benachrichtigungsziel auch selbstsignierte Zertifikate akzeptiert. AbuseIPDB, externe Listen und der MaxMind-Download prüfen Zertifikate immer.
 
 ---
 

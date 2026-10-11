@@ -2,6 +2,8 @@ module adguard-shield
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require (
 	github.com/oschwald/maxminddb-golang v1.13.1
 	golang.org/x/net v0.61.0

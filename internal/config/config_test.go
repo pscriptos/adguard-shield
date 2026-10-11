@@ -71,8 +71,8 @@ func TestLoadDefaultsWithoutWarnings(t *testing.T) {
 	if len(c.Warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", c.Warnings)
 	}
-	if !c.AdGuardTLSInsecure {
-		t.Fatal("ADGUARD_TLS_INSECURE should default to true")
+	if c.AdGuardTLSInsecure {
+		t.Fatal("ADGUARD_TLS_INSECURE must default to false")
 	}
 	if c.HistoryRetentionDays != 0 {
 		t.Fatalf("BAN_HISTORY_RETENTION_DAYS default: %d", c.HistoryRetentionDays)
@@ -86,8 +86,8 @@ func TestLoadDefaultsWithoutWarnings(t *testing.T) {
 }
 
 func TestLoadNewKeys(t *testing.T) {
-	c := loadString(t, "ADGUARD_TLS_INSECURE=false\nBAN_HISTORY_RETENTION_DAYS=30\nLOG_MAX_SIZE_MB=0\n")
-	if c.AdGuardTLSInsecure || c.HistoryRetentionDays != 30 || c.LogMaxSizeMB != 0 {
+	c := loadString(t, "ADGUARD_TLS_INSECURE=true\nBAN_HISTORY_RETENTION_DAYS=30\nLOG_MAX_SIZE_MB=0\n")
+	if !c.AdGuardTLSInsecure || c.HistoryRetentionDays != 30 || c.LogMaxSizeMB != 0 {
 		t.Fatalf("unexpected values: tls=%v retention=%d logmax=%d", c.AdGuardTLSInsecure, c.HistoryRetentionDays, c.LogMaxSizeMB)
 	}
 	if len(c.Warnings) != 0 {

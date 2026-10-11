@@ -140,7 +140,7 @@ func load(values map[string]string) (*Config, *reader) {
 	c.AdGuardURL = r.str("ADGUARD_URL", "")
 	c.AdGuardUser = r.str("ADGUARD_USER", "")
 	c.AdGuardPass = r.str("ADGUARD_PASS", "")
-	c.AdGuardTLSInsecure = r.bool("ADGUARD_TLS_INSECURE", true)
+	c.AdGuardTLSInsecure = r.bool("ADGUARD_TLS_INSECURE", false)
 	c.RateLimitMaxRequests = r.intMin("RATE_LIMIT_MAX_REQUESTS", 30, 1)
 	c.RateLimitWindow = r.intMin("RATE_LIMIT_WINDOW", 60, 1)
 	c.CheckInterval = r.intMin("CHECK_INTERVAL", 10, 1)

@@ -79,6 +79,8 @@ cd adguard-shield
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o adguard-shield ./cmd/adguard-shieldd
 ```
 
+Benötigt wird Go 1.26.9 oder neuer (ältere 1.26.x-Patchversionen enthalten bekannte Sicherheitslücken in der Standardbibliothek). `go.mod` gibt `toolchain go1.26.9` vor; bei älterem lokalem Go lädt `go` diese Toolchain automatisch nach, sofern `GOTOOLCHAIN` nicht auf `local` steht.
+
 ### Variante C: Ohne lokales Go per Docker bauen
 
 ```bash
