@@ -3,7 +3,6 @@ package web
 
 import (
 	"context"
-	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +26,6 @@ const (
 	errorLogEvery     = time.Minute
 	contentSecPolicy  = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
 	staticCacheHeader = "private, max-age=3600"
-	hstsHeader        = "max-age=31536000"
 )
 
 //go:embed assets
@@ -39,9 +38,8 @@ var staticFiles = map[string]string{
 }
 
 var (
-	ErrTLSIncomplete = errors.New("WEB_TLS_CERT und WEB_TLS_KEY müssen gemeinsam gesetzt sein")
-	ErrNoProvider    = errors.New("kein Status-Provider")
-	errStopping      = errors.New("Statusseite wird beendet")
+	ErrNoProvider = errors.New("kein Status-Provider")
+	errStopping   = errors.New("Statusseite wird beendet")
 )
 
 type Logger interface {
@@ -57,25 +55,26 @@ func (nopLogger) Warnf(string, ...any)  {}
 func (nopLogger) Errorf(string, ...any) {}
 
 type Options struct {
+	// Listen ist host:port; leerer Host = alle Schnittstellen.
 	Listen   string
 	BasePath string
 	User     string
 	// Password leer = Statusseite ohne Anmeldung.
 	Password string
-	TLSCert  string
-	TLSKey   string
 	Version  string
 	Hostname string
 }
 
-// OptionsFromConfig übernimmt die WEB_*-Schlüssel.
+// OptionsFromConfig übernimmt die WEB_*-Schlüssel. Die Seite lauscht auf allen
+// Schnittstellen; HTTPS übernimmt bei Bedarf ein Reverse-Proxy.
 func OptionsFromConfig(c *config.Config) Options {
 	return Options{
-		Listen: c.WebListen, BasePath: c.WebBasePath,
+		Listen: listenAddr(c.WebPort), BasePath: c.WebBasePath,
 		User: c.WebUser, Password: c.WebPassword,
-		TLSCert: c.WebTLSCert, TLSKey: c.WebTLSKey,
 	}
 }
+
+func listenAddr(port int) string { return net.JoinHostPort("", strconv.Itoa(port)) }
 
 type Server struct {
 	opts     Options
@@ -108,11 +107,8 @@ func New(opts Options, p Provider, log Logger) (*Server, error) {
 	if log == nil {
 		log = nopLogger{}
 	}
-	if (opts.TLSCert == "") != (opts.TLSKey == "") {
-		return nil, ErrTLSIncomplete
-	}
 	if opts.Listen == "" {
-		opts.Listen = config.DefaultWebListen
+		opts.Listen = listenAddr(config.DefaultWebPort)
 	}
 	if _, _, err := net.SplitHostPort(opts.Listen); err != nil {
 		return nil, fmt.Errorf("ungültige Adresse %q: %w", opts.Listen, err)
@@ -133,8 +129,6 @@ func New(opts Options, p Provider, log Logger) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) TLS() bool { return s.opts.TLSCert != "" }
-
 func (s *Server) AuthEnabled() bool { return s.auth != nil }
 
 // StartupWarnings beschreibt unsichere, aber zulässige Konfigurationen.
@@ -144,10 +138,7 @@ func (s *Server) StartupWarnings() []string {
 		return nil
 	}
 	if s.auth == nil {
-		return []string{fmt.Sprintf("Web-Statusseite ohne Anmeldung auf %s erreichbar – WEB_PASSWORD setzen oder an 127.0.0.1 binden", s.opts.Listen)}
-	}
-	if !s.TLS() {
-		return []string{fmt.Sprintf("Web-Statusseite auf %s ohne TLS: Basic-Auth-Zugangsdaten werden im Klartext übertragen – WEB_TLS_CERT/WEB_TLS_KEY setzen, an 127.0.0.1 binden (SSH-Tunnel) oder einen HTTPS-Reverse-Proxy nutzen", s.opts.Listen)}
+		return []string{fmt.Sprintf("Web-Statusseite ohne Anmeldung auf %s erreichbar – WEB_PASSWORD setzen oder den Port per Firewall auf den Reverse-Proxy beschränken", s.opts.Listen)}
 	}
 	return nil
 }
@@ -163,22 +154,14 @@ func isLoopbackHost(host string) bool {
 // Run lauscht auf Options.Listen, bis ctx endet, und fährt den Server dann
 // geordnet herunter.
 func (s *Server) Run(ctx context.Context) error {
-	var tlsCfg *tls.Config
-	if s.TLS() {
-		certs, err := newCertReloader(s.opts.TLSCert, s.opts.TLSKey, s.log)
-		if err != nil {
-			return fmt.Errorf("TLS-Zertifikat: %w", err)
-		}
-		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: certs.getCertificate}
-	}
 	ln, err := net.Listen("tcp", s.opts.Listen)
 	if err != nil {
 		return err
 	}
-	return s.Serve(ctx, ln, tlsCfg)
+	return s.Serve(ctx, ln)
 }
 
-func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config) error {
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	for _, w := range s.StartupWarnings() {
 		s.log.Warnf("%s", w)
 	}
@@ -189,12 +172,6 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
-		TLSConfig:         tlsCfg,
-	}
-	scheme := "http"
-	if tlsCfg != nil {
-		scheme = "https"
-		ln = tls.NewListener(ln, tlsCfg)
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
@@ -202,7 +179,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener, tlsCfg *tls.Config)
 	if s.auth != nil {
 		auth = "Basic Auth"
 	}
-	s.log.Infof("Web-Statusseite gestartet: %s://%s%s (Anmeldung: %s)", scheme, ln.Addr(), s.base, auth)
+	s.log.Infof("Web-Statusseite gestartet: http://%s%s (Anmeldung: %s)", ln.Addr(), s.base, auth)
 	select {
 	case err := <-errc:
 		s.finish()
@@ -264,9 +241,6 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
-	if s.TLS() {
-		h.Set("Strict-Transport-Security", hstsHeader)
-	}
 	if s.auth == nil && !s.hostAllowed(r.Host) {
 		http.Error(w, "Unbekannter Host", http.StatusMisdirectedRequest)
 		return
@@ -308,7 +282,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // hostAllowed schützt die Seite ohne Anmeldung vor DNS-Rebinding: Erlaubt
-// sind nur IP-Literale, localhost und der Host aus WEB_LISTEN.
+// sind nur IP-Literale, localhost und der Host aus Options.Listen.
 func (s *Server) hostAllowed(host string) bool {
 	if host == "" {
 		return true

@@ -23,23 +23,21 @@ Hell/Dunkel folgt standardmäßig der Systemeinstellung (`prefers-color-scheme`)
 
 ## Konfiguration
 
+Der eingebaute Webserver spricht nur HTTP und lauscht auf allen Schnittstellen. Einen eigenen Webserver braucht es dafür nicht. Soll die Seite per HTTPS oder unter einem Hostnamen erreichbar sein, übernimmt das ein Reverse-Proxy (nginx, Caddy, Traefik, ...), wie bei den meisten selbst gehosteten Anwendungen.
+
 | Parameter | Standard | Beschreibung |
 |---|---|---|
 | `WEB_ENABLED` | `false` | Statusseite aktivieren |
-| `WEB_LISTEN` | `127.0.0.1:8443` | Adresse und Port (`host:port`). Standard nur lokal (Loopback). `:8443` oder `0.0.0.0:8443` = alle Schnittstellen |
-| `WEB_BASE_PATH` | `/` | Basispfad, z.B. `/adguard-shield/` hinter einem Reverse-Proxy. Wird automatisch auf führenden und abschließenden `/` ergänzt |
+| `WEB_PORT` | `8080` | HTTP-Port der Statusseite (1–65535) |
+| `WEB_BASE_PATH` | `/` | Basispfad, z.B. `/adguard-shield/`, wenn der Reverse-Proxy die Seite in einem Unterordner ausliefert. Wird automatisch auf führenden und abschließenden `/` ergänzt |
 | `WEB_USER` | `admin` | Benutzername für HTTP Basic Auth |
 | `WEB_PASSWORD` | *(leer)* | Passwort für HTTP Basic Auth. **Leer = Statusseite ohne Anmeldung** |
-| `WEB_TLS_CERT` | *(leer)* | Pfad zum TLS-Zertifikat (PEM). Zusammen mit `WEB_TLS_KEY` = HTTPS |
-| `WEB_TLS_KEY` | *(leer)* | Pfad zum privaten Schlüssel (PEM) |
 
 Beispiel:
 
 ```bash
 WEB_ENABLED=true
-WEB_LISTEN="127.0.0.1:8443"
-WEB_BASE_PATH="/"
-WEB_USER="admin"
+WEB_PORT=8080
 WEB_PASSWORD='ein-langes-zufaelliges-passwort'
 ```
 
@@ -53,46 +51,67 @@ sudo adguard-shield logs --limit 20
 Im Log steht beim Start z.B.:
 
 ```text
-[INFO] [ADGUARD-SHIELDD] Web-Statusseite gestartet: http://127.0.0.1:8443/ (Anmeldung: Basic Auth)
+[INFO] [ADGUARD-SHIELDD] Web-Statusseite gestartet: http://[::]:8080/ (Anmeldung: Basic Auth)
 ```
+
+Die Seite ist dann unter `http://<server-ip>:8080/` erreichbar.
 
 ### Prüfungen und Warnungen
 
 | Situation | Verhalten |
 |---|---|
-| `WEB_LISTEN` ist kein gültiges `host:port` oder der Port liegt nicht in 1–65535 | Warnung, Standard `127.0.0.1:8443` wird verwendet |
+| `WEB_PORT` ist keine Zahl von 1–65535 | Warnung, Standard `8080` wird verwendet |
 | `WEB_BASE_PATH` enthält andere Zeichen als Buchstaben, Ziffern, `- _ . ~ /` oder `.`/`..`-Segmente | Warnung, Standard `/` wird verwendet |
-| Nur `WEB_TLS_CERT` oder nur `WEB_TLS_KEY` gesetzt | Warnung, die Statusseite wird **nicht** gestartet (der Daemon läuft normal weiter) |
-| Zertifikat/Schlüssel nicht lesbar oder Port belegt | Fehler im Log, die Statusseite läuft nicht, der Daemon läuft normal weiter |
-| `WEB_PASSWORD` leer und `WEB_LISTEN` nicht auf Loopback | Warnung: `Web-Statusseite ohne Anmeldung auf … erreichbar – WEB_PASSWORD setzen oder an 127.0.0.1 binden` |
-| `WEB_PASSWORD` gesetzt, kein TLS und `WEB_LISTEN` nicht auf Loopback | Warnung: Basic-Auth-Zugangsdaten werden im Klartext übertragen |
+| Port belegt | Fehler im Log, die Statusseite läuft nicht, der Daemon läuft normal weiter |
+| `WEB_PASSWORD` leer | Warnung: `Web-Statusseite ohne Anmeldung auf … erreichbar – WEB_PASSWORD setzen oder den Port per Firewall auf den Reverse-Proxy beschränken` |
 | `WEB_USER` enthält `:` | Warnung, eine Anmeldung ist so nicht möglich (Basic Auth erlaubt keinen Doppelpunkt im Benutzernamen) |
-
-## Zugriff per SSH-Tunnel (empfohlen)
-
-Mit dem Standard `WEB_LISTEN="127.0.0.1:8443"` ist die Seite nur auf dem Server selbst erreichbar. Vom eigenen Rechner aus:
-
-```bash
-ssh -L 8443:127.0.0.1:8443 root@dns-server
-```
-
-Danach im Browser `http://127.0.0.1:8443/` öffnen. Der Tunnel verschlüsselt die Verbindung, TLS ist dafür nicht nötig. Auf einem Server, auf dem nur Administratoren per SSH arbeiten, kann `WEB_PASSWORD` in diesem Fall auch leer bleiben.
+| `WEB_LISTEN`, `WEB_TLS_CERT` oder `WEB_TLS_KEY` gesetzt (bis v1.2.0) | Hinweis, der Wert wird ignoriert (siehe [Update von v1.2.0 auf v1.2.1](update.md#update-von-v120-auf-v121)) |
 
 ## Hinter einem Reverse-Proxy
 
-`WEB_BASE_PATH` muss dem Pfad entsprechen, unter dem der Proxy die Seite ausliefert. Der Proxy reicht den Pfad **unverändert** (mit Präfix) weiter.
+Der Reverse-Proxy terminiert HTTPS und reicht die Anfragen per HTTP an `127.0.0.1:<WEB_PORT>` weiter. Damit Port 8080 nicht direkt aus dem Internet erreichbar ist, den Port in der Firewall sperren, wenn der Proxy auf demselben Server läuft (bzw. nur für den Proxy freigeben, wenn er woanders läuft).
+
+### Eigene Subdomain
+
+Beispiel `https://shield.example.com/`, `WEB_BASE_PATH` bleibt `/`.
+
+nginx:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name shield.example.com;
+    # ssl_certificate / ssl_certificate_key wie gewohnt
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+Caddy (holt das Zertifikat automatisch):
+
+```text
+shield.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+### Unterordner einer bestehenden Domain
+
+Beispiel `https://dns1.example.com/adguard-shield/`, während AdGuard Home unter `https://dns1.example.com/` läuft. Der Proxy reicht den Pfad **unverändert** (mit Präfix) weiter:
 
 ```bash
-WEB_LISTEN="127.0.0.1:8443"
+WEB_PORT=8080
 WEB_BASE_PATH="/adguard-shield/"
-WEB_PASSWORD='ein-langes-zufaelliges-passwort'
 ```
 
 nginx:
 
 ```nginx
 location /adguard-shield/ {
-    proxy_pass http://127.0.0.1:8443;
+    proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
 }
 ```
@@ -101,26 +120,27 @@ Caddy:
 
 ```text
 handle /adguard-shield/* {
-    reverse_proxy 127.0.0.1:8443
+    reverse_proxy 127.0.0.1:8080
 }
 ```
 
-Hinweise:
+Dafür muss der Reverse-Proxy auch vor AdGuard Home stehen: AdGuard Home belegt sonst selbst Port 443 und kann keine Pfade an andere Dienste weiterreichen. AdGuard Home läuft dann auf einem internen Port (z.B. `127.0.0.1:3000`), und der Proxy leitet `/` dorthin weiter.
 
-- Der Proxy sollte HTTPS terminieren, sonst laufen die Basic-Auth-Zugangsdaten im Klartext über das Netz.
+### Hinweise
+
+- Von außen nur über HTTPS zugreifen, sonst laufen die Basic-Auth-Zugangsdaten im Klartext über das Netz.
 - Die Sperre nach zu vielen Fehlversuchen gilt pro Client-IP. Hinter einem Proxy sieht AdGuard Shield nur die IP des Proxys; `X-Forwarded-For` wird bewusst nicht ausgewertet, weil der Header fälschbar ist. Zehn Fehlversuche irgendeines Nutzers sperren dann für bis zu eine Minute **alle** Anfragen über den Proxy – auch mit gültigen Zugangsdaten, damit das Passwort während der Sperre nicht weiter geraten werden kann.
-- Alternativ kann die Anmeldung auch am Proxy erfolgen und `WEB_PASSWORD` leer bleiben, solange `WEB_LISTEN` auf `127.0.0.1` gebunden ist. Ohne Anmeldung prüft AdGuard Shield den `Host`-Header (Schutz vor DNS-Rebinding): Der Proxy darf dann **keinen** fremden Hostnamen weiterreichen, also bei nginx `proxy_set_header Host $host;` weglassen (bzw. `Host 127.0.0.1` setzen), bei Caddy `header_up Host 127.0.0.1`.
+- Alternativ kann die Anmeldung auch am Proxy erfolgen und `WEB_PASSWORD` leer bleiben, solange Port 8080 per Firewall nur für den Proxy erreichbar ist. Ohne Anmeldung prüft AdGuard Shield den `Host`-Header (Schutz vor DNS-Rebinding): Der Proxy darf dann **keinen** fremden Hostnamen weiterreichen, also bei nginx `proxy_set_header Host $host;` weglassen (bzw. `Host 127.0.0.1` setzen), bei Caddy `header_up Host 127.0.0.1`.
 
-## Direkt mit HTTPS
+## Zugriff per SSH-Tunnel
+
+Ohne Reverse-Proxy und mit gesperrtem Port 8080 geht es auch per SSH-Tunnel vom eigenen Rechner aus:
 
 ```bash
-WEB_LISTEN="0.0.0.0:8443"
-WEB_PASSWORD='ein-langes-zufaelliges-passwort'
-WEB_TLS_CERT="/etc/ssl/adguard-shield/cert.pem"
-WEB_TLS_KEY="/etc/ssl/adguard-shield/key.pem"
+ssh -L 8080:127.0.0.1:8080 root@dns-server
 ```
 
-Es wird mindestens TLS 1.2 verwendet, zusätzlich wird `Strict-Transport-Security: max-age=31536000` gesendet. Zertifikat und Schlüssel werden beim Start gelesen; der Daemon prüft höchstens einmal pro Minute, ob sich die Dateien geändert haben (Änderungszeit/Größe), und lädt ein erneuertes Zertifikat (z.B. Let's Encrypt) ohne Neustart. Ist das neue Paar unvollständig oder defekt, bleibt das bisherige Zertifikat aktiv und es wird eine Warnung geloggt. Den Port bei Bedarf in der Firewall freigeben, und zwar nur für vertrauenswürdige Netze.
+Danach im Browser `http://127.0.0.1:8080/` öffnen. Der Tunnel verschlüsselt die Verbindung.
 
 ## Sicherheit
 
@@ -129,8 +149,8 @@ Es wird mindestens TLS 1.2 verwendet, zusätzlich wird `Strict-Transport-Securit
 | Nur Lesen | Ausschließlich `GET`/`HEAD`; andere Methoden werden mit `405` abgelehnt, unbekannte Pfade (nach der Anmeldung) mit `404` |
 | Anmeldung | HTTP Basic Auth (Realm `AdGuard Shield`), sobald `WEB_PASSWORD` gesetzt ist. Gilt für alle Pfade, auch Skripte, Styles und die API. Vergleich in konstanter Zeit über SHA-256-Hashes |
 | Drosselung | Nach 10 fehlgeschlagenen Anmeldungen pro Client (IPv4-Adresse bzw. IPv6-/64) innerhalb einer Minute werden Anfragen dieses Clients ohne gültige Zugangsdaten bis zum Ende der Minute mit `429` abgewiesen. Zusätzlich gilt ein globales Limit von 100 Fehlversuchen pro Minute für alle Clients zusammen. Gültige Zugangsdaten werden immer angenommen. Fehlversuche werden gedrosselt als `WARN` geloggt (ohne Benutzername oder Passwort) |
-| DNS-Rebinding | Ohne `WEB_PASSWORD` werden nur Anfragen beantwortet, deren `Host`-Header eine IP-Adresse, `localhost` oder der Host aus `WEB_LISTEN` ist; sonst `421 Misdirected Request`. Mit Anmeldung entfällt die Prüfung (Reverse-Proxys mit eigenem Hostnamen) |
-| HTTPS | Mit `WEB_TLS_CERT`/`WEB_TLS_KEY` wird `Strict-Transport-Security` gesendet |
+| DNS-Rebinding | Ohne `WEB_PASSWORD` werden nur Anfragen beantwortet, deren `Host`-Header eine IP-Adresse oder `localhost` ist; sonst `421 Misdirected Request`. Mit Anmeldung entfällt die Prüfung (Reverse-Proxys mit eigenem Hostnamen) |
+| HTTPS | Übernimmt der Reverse-Proxy; HSTS bei Bedarf dort setzen |
 | Browser-Schutz | Strenge Content-Security-Policy (`default-src 'self'`, keine Inline-Skripte oder -Styles, keine externen Quellen), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` für die API |
 | Keine externen Abhängigkeiten | HTML, CSS, JavaScript und Icon sind im Programm eingebettet; es werden keine CDNs oder Web-Fonts geladen |
 | XSS-Schutz | Daten (Domains, Client-Namen, Logzeilen) werden im Browser nur als Text eingefügt, nie als HTML |
@@ -142,7 +162,7 @@ Es wird mindestens TLS 1.2 verwendet, zusätzlich wird `Strict-Transport-Securit
 Die Seite lädt ihre Daten von `<WEB_BASE_PATH>api/status` (JSON). Die Schnittstelle kann auch direkt abgefragt werden, z.B. für eigene Auswertungen:
 
 ```bash
-curl -s -u admin:PASSWORT http://127.0.0.1:8443/api/status | jq .tiles
+curl -s -u admin:PASSWORT http://127.0.0.1:8080/api/status | jq .tiles
 ```
 
 | Pfad | Inhalt |

@@ -241,14 +241,14 @@ func TestLoadNotifyTLSInsecure(t *testing.T) {
 
 func TestLoadWebDefaults(t *testing.T) {
 	c := loadString(t, "ADGUARD_URL=\"https://dns.example\"\n")
-	if c.WebEnabled || c.WebListen != "127.0.0.1:8443" || c.WebBasePath != "/" || c.WebUser != "admin" || c.WebPassword != "" || c.WebTLSCert != "" || c.WebTLSKey != "" {
+	if c.WebEnabled || c.WebPort != 8080 || c.WebBasePath != "/" || c.WebUser != "admin" || c.WebPassword != "" {
 		t.Fatalf("unexpected web defaults: %+v", c)
 	}
 	keys := map[string]bool{}
 	for _, k := range KnownKeys() {
 		keys[k] = true
 	}
-	for _, k := range []string{"WEB_ENABLED", "WEB_LISTEN", "WEB_BASE_PATH", "WEB_USER", "WEB_PASSWORD", "WEB_TLS_CERT", "WEB_TLS_KEY"} {
+	for _, k := range []string{"WEB_ENABLED", "WEB_PORT", "WEB_BASE_PATH", "WEB_USER", "WEB_PASSWORD"} {
 		if !keys[k] {
 			t.Fatalf("KnownKeys misses %s", k)
 		}
@@ -257,14 +257,12 @@ func TestLoadWebDefaults(t *testing.T) {
 
 func TestLoadWebValues(t *testing.T) {
 	c := loadString(t, `WEB_ENABLED=true
-WEB_LISTEN="[::1]:9000"
+WEB_PORT=9000
 WEB_BASE_PATH="adguard-shield"
 WEB_USER="viewer"
 WEB_PASSWORD='p#ss word'
-WEB_TLS_CERT="/etc/ssl/c.pem"
-WEB_TLS_KEY="/etc/ssl/k.pem"
 `)
-	if !c.WebEnabled || c.WebListen != "[::1]:9000" || c.WebBasePath != "/adguard-shield/" || c.WebUser != "viewer" || c.WebPassword != "p#ss word" || c.WebTLSCert != "/etc/ssl/c.pem" || c.WebTLSKey != "/etc/ssl/k.pem" {
+	if !c.WebEnabled || c.WebPort != 9000 || c.WebBasePath != "/adguard-shield/" || c.WebUser != "viewer" || c.WebPassword != "p#ss word" {
 		t.Fatalf("unexpected web values: %+v", c)
 	}
 	if len(c.Warnings) != 0 {
@@ -272,18 +270,30 @@ WEB_TLS_KEY="/etc/ssl/k.pem"
 	}
 }
 
-func TestLoadWebListenValidation(t *testing.T) {
-	for _, v := range []string{"8443", "127.0.0.1", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:70000", "127.0.0.1:http", "::1:8443"} {
-		c := loadString(t, "WEB_LISTEN=\""+v+"\"\n")
-		if c.WebListen != DefaultWebListen || !hasWarning(c, "WEB_LISTEN") {
-			t.Errorf("%q: listen=%q warnings=%v", v, c.WebListen, c.Warnings)
+func TestLoadWebPortValidation(t *testing.T) {
+	for _, v := range []string{"0", "70000", "-1", "http", "8080x", "127.0.0.1:8080"} {
+		c := loadString(t, "WEB_PORT=\""+v+"\"\n")
+		if c.WebPort != DefaultWebPort || !hasWarning(c, "WEB_PORT") {
+			t.Errorf("%q: port=%d warnings=%v", v, c.WebPort, c.Warnings)
 		}
 	}
-	for _, v := range []string{":8443", "0.0.0.0:443", "localhost:8080"} {
-		c := loadString(t, "WEB_LISTEN=\""+v+"\"\n")
-		if c.WebListen != v || len(c.Warnings) != 0 {
-			t.Errorf("%q: listen=%q warnings=%v", v, c.WebListen, c.Warnings)
+	for v, want := range map[string]int{"1": 1, "443": 443, " 8081 ": 8081, "65535": 65535} {
+		c := loadString(t, "WEB_PORT=\""+v+"\"\n")
+		if c.WebPort != want || len(c.Warnings) != 0 {
+			t.Errorf("%q: port=%d warnings=%v", v, c.WebPort, c.Warnings)
 		}
+	}
+}
+
+func TestLoadRemovedWebKeys(t *testing.T) {
+	c := loadString(t, "WEB_LISTEN=\"127.0.0.1:8443\"\nWEB_TLS_CERT=\"/c.pem\"\nWEB_TLS_KEY=\"/k.pem\"\n")
+	for _, k := range []string{"WEB_LISTEN wird ignoriert", "WEB_TLS_CERT wird ignoriert", "WEB_TLS_KEY wird ignoriert"} {
+		if !hasWarning(c, k) {
+			t.Errorf("fehlende Warnung %q: %v", k, c.Warnings)
+		}
+	}
+	if c.WebPort != DefaultWebPort {
+		t.Fatalf("WEB_LISTEN darf den Port nicht beeinflussen: %d", c.WebPort)
 	}
 }
 
@@ -313,12 +323,7 @@ func TestNormalizeBasePath(t *testing.T) {
 	}
 }
 
-func TestLoadWebTLSPairWarning(t *testing.T) {
-	for _, content := range []string{"WEB_TLS_CERT=\"/c.pem\"\n", "WEB_TLS_KEY=\"/k.pem\"\n"} {
-		if c := loadString(t, content); !hasWarning(c, "WEB_TLS_CERT und WEB_TLS_KEY") {
-			t.Errorf("%q: warnings=%v", content, c.Warnings)
-		}
-	}
+func TestLoadWebUserColonWarning(t *testing.T) {
 	if c := loadString(t, "WEB_USER=\"a:b\"\n"); !hasWarning(c, "WEB_USER") {
 		t.Errorf("Doppelpunkt im Benutzernamen nicht gewarnt: %v", c.Warnings)
 	}

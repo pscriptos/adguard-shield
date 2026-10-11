@@ -613,7 +613,7 @@ SystemCallArchitectures=native
 
 # CAP_NET_ADMIN: iptables, ip6tables, ipset
 # CAP_NET_RAW: iptables-legacy nutzt einen Raw-Socket
-# CAP_NET_BIND_SERVICE: nur für WEB_LISTEN mit einem Port unter 1024
+# CAP_NET_BIND_SERVICE: nur für WEB_PORT unter 1024
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
@@ -780,15 +780,13 @@ GEOIP_MMDB_PATH=""                  # Manueller DB-Pfad (optional, hat Vorrang)
 GEOIP_CACHE_TTL=86400               # GeoIP-Cache in Sekunden (0 = kein Ablauf)
 
 # --- Web-Statusseite (optional) ---
-# Schreibgeschützte Statusseite (nur Anzeige, keine Aktionen). Zugriff z.B. per SSH-Tunnel:
-#   ssh -L 8443:127.0.0.1:8443 root@server  ->  http://127.0.0.1:8443/
+# Schreibgeschützte Statusseite (nur Anzeige, keine Aktionen). Spricht nur HTTP auf
+# allen Schnittstellen; HTTPS übernimmt ein Reverse-Proxy (nginx, Caddy, ...).
 WEB_ENABLED=false
-WEB_LISTEN="127.0.0.1:8443"         # host:port; Standard nur lokal (Loopback)
-WEB_BASE_PATH="/"                   # Basispfad hinter Reverse-Proxy, z.B. "/adguard-shield/"
+WEB_PORT=8080                       # HTTP-Port der Statusseite
+WEB_BASE_PATH="/"                   # Unterordner hinter dem Reverse-Proxy, z.B. "/adguard-shield/"
 WEB_USER="admin"
-WEB_PASSWORD=""                     # leer = ohne Anmeldung (nur lokal empfohlen); gesetzt = HTTP Basic Auth
-WEB_TLS_CERT=""                     # Zertifikat (PEM); mit WEB_TLS_KEY zusammen = HTTPS
-WEB_TLS_KEY=""                      # Privater Schlüssel (PEM)
+WEB_PASSWORD=""                     # leer = ohne Anmeldung; gesetzt = HTTP Basic Auth
 
 # --- Erweiterte Einstellungen ---
 STATE_DIR="/var/lib/adguard-shield"  # SQLite-DB: ${STATE_DIR}/adguard-shield.db

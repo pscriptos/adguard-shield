@@ -2,20 +2,9 @@ package web
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -167,21 +156,6 @@ func TestHostCheckWithoutAuth(t *testing.T) {
 	}
 }
 
-func TestHSTSOnlyWithTLS(t *testing.T) {
-	opts := authOpts
-	s, _, _ := newServer(t, opts)
-	if h := do(s, req{path: "/", user: "admin", pass: "s3cret-pass"}).Header().Get("Strict-Transport-Security"); h != "" {
-		t.Fatalf("HSTS ohne TLS: %q", h)
-	}
-	opts.TLSCert, opts.TLSKey = "/x/cert.pem", "/x/key.pem"
-	s, _, _ = newServer(t, opts)
-	for _, r := range []req{{path: "/", user: "admin", pass: "s3cret-pass"}, {path: "/api/status"}} {
-		if h := do(s, r).Header().Get("Strict-Transport-Security"); h != "max-age=31536000" {
-			t.Fatalf("%s: HSTS = %q", r.path, h)
-		}
-	}
-}
-
 type slowProvider struct {
 	entered   chan struct{}
 	once      sync.Once
@@ -218,7 +192,7 @@ func serveSlow(t *testing.T, p *slowProvider, timeout time.Duration) (*Server, *
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.Serve(ctx, ln, nil) }()
+	go func() { done <- s.Serve(ctx, ln) }()
 	go func() {
 		c := &http.Client{Timeout: 10 * time.Second}
 		if resp, err := c.Get("http://" + ln.Addr().String() + "/api/status"); err == nil {
@@ -272,98 +246,5 @@ func TestShutdownWaitIsBounded(t *testing.T) {
 	}
 	if s.beginCall() {
 		t.Fatal("nach dem Herunterfahren darf kein Provider-Aufruf mehr starten")
-	}
-}
-
-func writeTestCert(t *testing.T, certFile, keyFile, cn string, mtime time.Time) {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: cn},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), DNSNames: []string{cn},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kb, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{certFile, keyFile} {
-		if err := os.Chtimes(f, mtime, mtime); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func certCN(t *testing.T, c *tls.Certificate) string {
-	t.Helper()
-	leaf, err := x509.ParseCertificate(c.Certificate[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	return leaf.Subject.CommonName
-}
-
-func TestCertReloader(t *testing.T) {
-	dir := t.TempDir()
-	certFile, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
-	mtime := time.Now().Add(-time.Hour).Truncate(time.Second)
-	writeTestCert(t, certFile, keyFile, "eins", mtime)
-	log := &memLogger{}
-	r, err := newCertReloader(certFile, keyFile, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Unix(1_700_000_000, 0)
-	r.now = func() time.Time { return now }
-	r.checkedAt = now
-	get := func() string {
-		c, err := r.getCertificate(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return certCN(t, c)
-	}
-	if cn := get(); cn != "eins" {
-		t.Fatalf("CN %q", cn)
-	}
-	writeTestCert(t, certFile, keyFile, "zwei", mtime.Add(time.Minute))
-	now = now.Add(certCheckEvery / 2)
-	if cn := get(); cn != "eins" {
-		t.Fatalf("Dateien dürfen höchstens alle %s geprüft werden: %q", certCheckEvery, cn)
-	}
-	now = now.Add(certCheckEvery)
-	if cn := get(); cn != "zwei" {
-		t.Fatalf("erneuertes Zertifikat nicht geladen: %q", cn)
-	}
-	if log.count("INFO Web-Statusseite: TLS-Zertifikat neu geladen") != 1 {
-		t.Fatalf("Neuladen nicht geloggt: %v", log.lines)
-	}
-	if err := os.WriteFile(certFile, []byte("kaputt"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.Chtimes(certFile, mtime.Add(2*time.Minute), mtime.Add(2*time.Minute))
-	now = now.Add(certCheckEvery)
-	if cn := get(); cn != "zwei" {
-		t.Fatalf("defektes Zertifikat muss das bisherige behalten: %q", cn)
-	}
-	if !strings.Contains(strings.Join(log.lines, "\n"), "nicht neu geladen") {
-		t.Fatalf("fehlende Warnung: %v", log.lines)
-	}
-	_ = os.Remove(keyFile)
-	now = now.Add(certCheckEvery)
-	if cn := get(); cn != "zwei" {
-		t.Fatalf("fehlende Datei muss das bisherige behalten: %q", cn)
 	}
 }

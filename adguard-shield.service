@@ -39,7 +39,7 @@ SystemCallArchitectures=native
 
 # CAP_NET_ADMIN: iptables, ip6tables, ipset
 # CAP_NET_RAW: iptables-legacy nutzt einen Raw-Socket
-# CAP_NET_BIND_SERVICE: nur für WEB_LISTEN mit einem Port unter 1024
+# CAP_NET_BIND_SERVICE: nur für WEB_PORT unter 1024
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 

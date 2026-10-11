@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path"
@@ -108,12 +107,10 @@ type Config struct {
 	GeoIPCheckInterval int
 
 	WebEnabled  bool
-	WebListen   string
+	WebPort     int
 	WebBasePath string
 	WebUser     string
 	WebPassword string
-	WebTLSCert  string
-	WebTLSKey   string
 }
 
 func Load(path string) (*Config, error) {
@@ -217,22 +214,17 @@ func load(values map[string]string) (*Config, *reader) {
 	c.GeoIPCacheTTL = int64(r.intMin("GEOIP_CACHE_TTL", 86400, 0))
 	c.GeoIPCheckInterval = r.intMin("GEOIP_CHECK_INTERVAL", 0, 0)
 	c.WebEnabled = r.bool("WEB_ENABLED", false)
-	c.WebListen = r.listen("WEB_LISTEN", DefaultWebListen)
+	c.WebPort = r.port("WEB_PORT", DefaultWebPort)
 	c.WebBasePath = r.basePath("WEB_BASE_PATH", "/")
 	c.WebUser = r.str("WEB_USER", "admin")
 	c.WebPassword = r.str("WEB_PASSWORD", "")
-	c.WebTLSCert = strings.TrimSpace(r.str("WEB_TLS_CERT", ""))
-	c.WebTLSKey = strings.TrimSpace(r.str("WEB_TLS_KEY", ""))
 	if strings.Contains(c.WebUser, ":") {
 		r.warnf("WEB_USER=%q enthält einen Doppelpunkt; Basic Auth erlaubt das nicht, eine Anmeldung ist so nicht möglich", c.WebUser)
-	}
-	if (c.WebTLSCert == "") != (c.WebTLSKey == "") {
-		r.warnf("WEB_TLS_CERT und WEB_TLS_KEY müssen gemeinsam gesetzt sein; die Web-Statusseite wird nicht gestartet")
 	}
 	return c, r
 }
 
-const DefaultWebListen = "127.0.0.1:8443"
+const DefaultWebPort = 8080
 
 // Muss zu firewall.normalizeMode passen.
 var firewallModes = []string{"host", "classic", "native", "docker-host", "docker", "docker-bridge", "docker-published", "published", "hybrid", "both"}
@@ -240,6 +232,9 @@ var firewallModes = []string{"host", "classic", "native", "docker-host", "docker
 // Schlüssel der Shell-Version, die die Go-Version bewusst ignoriert.
 var deprecatedKeys = map[string]string{
 	"BAN_HISTORY_FILE": "BAN_HISTORY_FILE wird ignoriert (History liegt in der SQLite-Datenbank)",
+	"WEB_LISTEN":       "WEB_LISTEN wird ignoriert; die Web-Statusseite lauscht auf allen Schnittstellen, den Port legt WEB_PORT fest",
+	"WEB_TLS_CERT":     "WEB_TLS_CERT wird ignoriert; die Web-Statusseite spricht nur HTTP, HTTPS übernimmt ein Reverse-Proxy",
+	"WEB_TLS_KEY":      "WEB_TLS_KEY wird ignoriert; die Web-Statusseite spricht nur HTTP, HTTPS übernimmt ein Reverse-Proxy",
 }
 
 func DefaultPath() string {
@@ -475,21 +470,19 @@ func portNumber(s string) (int, bool) {
 	return n, true
 }
 
-// listen prüft eine Adresse der Form host:port (host darf leer sein).
-func (r *reader) listen(k, def string) string {
+// port liest einen einzelnen TCP-Port (1-65535).
+func (r *reader) port(k string, def int) int {
 	v, ok := r.lookup(k)
 	v = strings.TrimSpace(v)
 	if !ok || v == "" {
 		return def
 	}
-	if _, port, err := net.SplitHostPort(v); err != nil {
-		r.warnf("%s=%q ist keine gültige Adresse (host:port), verwende Standardwert %s", k, v, def)
-		return def
-	} else if _, ok := portNumber(port); !ok {
-		r.warnf("%s=%q enthält keinen gültigen Port (1-65535), verwende Standardwert %s", k, v, def)
+	n, ok := portNumber(v)
+	if !ok {
+		r.warnf("%s=%q ist kein gültiger Port (1-65535), verwende Standardwert %d", k, v, def)
 		return def
 	}
-	return v
+	return n
 }
 
 // ErrInsecureListURL meldet eine http://-Liste ohne ALLOW_INSECURE_LIST_URLS=true.

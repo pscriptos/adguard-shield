@@ -26,6 +26,23 @@ sudo journalctl -u adguard-shield --no-pager -n 50
 
 ---
 
+## Update von v1.2.0 auf v1.2.1
+
+Die Web-Statusseite wird einfacher konfiguriert: Sie spricht nur noch HTTP auf allen Schnittstellen, HTTPS übernimmt ein Reverse-Proxy.
+
+| Bisher (v1.2.0) | Neu (v1.2.1) |
+|---|---|
+| `WEB_LISTEN="127.0.0.1:8443"` | `WEB_PORT=8080` (lauscht auf allen Schnittstellen) |
+| `WEB_TLS_CERT`, `WEB_TLS_KEY` | entfallen, HTTPS macht der Reverse-Proxy |
+
+Der Updater ergänzt `WEB_PORT=8080`. `WEB_LISTEN`, `WEB_TLS_CERT` und `WEB_TLS_KEY` bleiben in der Datei stehen, werden aber ignoriert und beim Start als `WARNUNG` gemeldet; die Zeilen kannst du löschen. Wer die Statusseite bereits nutzt, muss Folgendes anpassen:
+
+- Port: Lief die Seite auf einem anderen Port als 8080, `WEB_PORT` entsprechend setzen und ggf. den Reverse-Proxy auf den neuen Port umstellen.
+- Erreichbarkeit: Die Seite ist jetzt auf allen Schnittstellen erreichbar statt nur auf `127.0.0.1`. `WEB_PASSWORD` setzen oder den Port per Firewall auf den Reverse-Proxy beschränken.
+- HTTPS: Lief die Seite mit eigenem Zertifikat, einen Reverse-Proxy davorsetzen (Beispiele in [Web-Statusseite](webinterface.md#hinter-einem-reverse-proxy)).
+
+---
+
 ## Update von v1.1.x auf v1.2.0
 
 Das Update läuft wie gewohnt über `sudo ./adguard-shield update`. Datenbank, Sperren und Konfiguration werden übernommen. Vorher solltest du trotzdem ein Backup anlegen:
